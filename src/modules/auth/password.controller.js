@@ -12,10 +12,35 @@ export const forgotPassword = async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   const token = crypto.randomBytes(32).toString('hex');
   resetTokens[token] = { userId: user._id, expires: Date.now() + 3600000 };
-  // Send email (console log for now)
-  // TODO: Replace with real email sending
-  console.log(`Reset link: http://localhost:5000/api/auth/reset-password/${token}`);
-  res.json({ message: 'Password reset link sent to email (check console in dev)' });
+
+  // Build reset link for frontend
+  const resetUrl = `${process.env.RESET_PASSWORD_URL}/${token}`;
+
+  // Configure nodemailer transporter
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  const mailOptions = {
+    from: `"MMS Support" <${process.env.EMAIL_USER}>`,
+    to: user.email,
+    subject: 'Password Reset Request',
+    html: `<p>You requested a password reset.</p><p>Click <a href="${resetUrl}">here</a> to reset your password. This link will expire in 1 hour.</p>`
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    res.json({ message: 'Password reset link sent to your email.' });
+  } catch (err) {
+    console.error('Error sending email:', err);
+    res.status(500).json({ error: 'Failed to send reset email.' });
+  }
 };
 
 export const resetPassword = async (req, res) => {
