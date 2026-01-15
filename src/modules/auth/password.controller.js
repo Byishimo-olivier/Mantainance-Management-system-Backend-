@@ -1,12 +1,12 @@
-import User from '../user/user.model.js';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
-import nodemailer from 'nodemailer';
+const User = require('../user/user.model.js');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
 // In-memory store for reset tokens (replace with DB in production)
 const resetTokens = {};
 
-export const forgotPassword = async (req, res) => {
+const forgotPassword = async (req, res) => {
   const { email } = req.body;
   const user = await User.findOne({ email });
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -43,7 +43,7 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-export const resetPassword = async (req, res) => {
+const resetPassword = async (req, res) => {
   const { token } = req.params;
   const { password } = req.body;
   const data = resetTokens[token];
@@ -54,4 +54,9 @@ export const resetPassword = async (req, res) => {
   await user.save();
   delete resetTokens[token];
   res.json({ message: 'Password reset successful' });
+};
+
+module.exports = {
+  forgotPassword,
+  resetPassword,
 };

@@ -1,0 +1,10 @@
+model Technician {
+  id             Int      @id @default(autoincrement())
+  name           String
+  email          String   @unique
+  phone          String
+  specialization String[]
+  rating         Float    @default(0)
+  completed      Int      @default(0)
+  status         String   @default("Active")
+}

@@ -12,7 +12,7 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(auto()) @map("_id")
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   name      String
   phone     String   @unique
   email     String   @unique
@@ -29,7 +29,7 @@ enum Role {
 }
 
 model MaintenanceRequest {
-  id           String   @id @default(auto()) @map("_id")
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
   clientId     String
   issueType    String
   description  String
@@ -40,7 +40,7 @@ model MaintenanceRequest {
 }
 
 model JobEvidence {
-  id         String   @id @default(auto()) @map("_id")
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   requestId  String
   type       EvidenceType
   imageUrl   String
@@ -55,7 +55,7 @@ enum EvidenceType {
 }
 
 model Material {
-  id         String   @id @default(auto()) @map("_id")
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   name       String
   quantity   Int
   unitCost   Float
@@ -64,21 +64,21 @@ model Material {
 }
 
 model MaterialRequest {
-  id           String   @id @default(auto()) @map("_id")
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
   technicianId String
   requestId    String
   status       String
 }
 
 model MaterialRequestItem {
-  id           String   @id @default(auto()) @map("_id")
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
   materialId   String
   quantity     Int
   materialRequestId String
 }
 
 model Procurement {
-  id         String   @id @default(auto()) @map("_id")
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   supplier   String
   totalCost  Float
   invoiceUrl String
@@ -86,7 +86,7 @@ model Procurement {
 }
 
 model Subscription {
-  id         String   @id @default(auto()) @map("_id")
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   clientId   String
   plan       String
   amount     Float
@@ -95,12 +95,36 @@ model Subscription {
   endDate    DateTime
 }
 
-model Payment {
-  id         String   @id @default(auto()) @map("_id")
-  clientId   String
-  amount     Float
-  method     String
-  reference  String
-  status     String
-  createdAt  DateTime @default(now())
+
+model Technician {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  name           String
+  email          String   @unique
+  phone          String
+  specialization String[]
+  rating         Float    @default(0)
+  completed      Int      @default(0)
+  status         String   @default("Active")
+}
+
+model Issue {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String
+  location    String
+  tags        String[]
+  assignees   String[]
+  overdue     Boolean  @default(false)
+  time        String
+  photo       String?
+  userId      String?  // who posted the issue (optional)
+  assignedTo  String?  // technician assigned
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Manager {
+  id    String   @id @default(auto()) @map("_id") @db.ObjectId
+  name  String
+  email String   @unique
 }

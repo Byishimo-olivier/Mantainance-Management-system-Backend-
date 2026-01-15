@@ -1,21 +1,28 @@
 
-import User from './user.model.js';
-import bcrypt from 'bcryptjs';
+const User = require('./user.model.js');
+const bcrypt = require('bcryptjs');
 
-export const createUser = async (userData) => {
+const createUser = async (userData) => {
   const hashedPassword = await bcrypt.hash(userData.password, 10);
   const user = new User({ ...userData, password: hashedPassword });
   return await user.save();
 };
 
-export const findUserByEmail = async (email) => {
+const findUserByEmail = async (email) => {
   return await User.findOne({ email });
 };
 
-export const findUserById = async (id) => {
+const findUserById = async (id) => {
   return await User.findById(id);
 };
 
-export const getAllUsers = async () => {
+const getAllUsers = async () => {
   return await User.find();
+};
+
+module.exports = {
+  createUser,
+  findUserByEmail,
+  findUserById,
+  getAllUsers,
 };
