@@ -7,13 +7,13 @@ module.exports = {
   create: (data) => prisma.manager.create({ data }),
   update: (id, data) => prisma.manager.update({ where: { id: Number(id) }, data }),
   delete: (id) => prisma.manager.delete({ where: { id: Number(id) } }),
-  // Dashboard summary: counts by status
+  // Dashboard summary: counts by status (use Issue.status field)
   getDashboardSummary: async () => {
     const [pending, inProgress, completed, overdue] = await Promise.all([
-      prisma.issue.count({ where: { tags: { has: 'PENDING' } } }),
-      prisma.issue.count({ where: { tags: { has: 'IN PROGRESS' } } }),
-      prisma.issue.count({ where: { tags: { has: 'COMPLETED' } } }),
-      prisma.issue.count({ where: { overdue: true } }),
+      prisma.issue.count({ where: { status: 'PENDING' } }),
+      prisma.issue.count({ where: { status: 'IN PROGRESS' } }),
+      prisma.issue.count({ where: { status: 'COMPLETE' } }),
+      prisma.issue.count({ where: { status: 'OVERDUE' } }),
     ]);
     return { pending, inProgress, completed, overdue };
   },

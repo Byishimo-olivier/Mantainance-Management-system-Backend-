@@ -113,12 +113,18 @@ model Issue {
   description String
   location    String
   tags        String[]
-  assignees   String[]
+  assignees   Json
   overdue     Boolean  @default(false)
   time        String
   photo       String?
   userId      String?  // who posted the issue (optional)
   assignedTo  String?  // technician assigned
+  address     String?
+  beforeImage String?
+  afterImage  String?
+  fixTime     String?
+  fixDeadline DateTime?
+  status      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
