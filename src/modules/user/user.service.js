@@ -4,7 +4,25 @@ const bcrypt = require('bcryptjs');
 
 const createUser = async (userData) => {
   const hashedPassword = await bcrypt.hash(userData.password, 10);
-  const user = new User({ ...userData, password: hashedPassword });
+  
+  // Convert role to lowercase if provided, default to 'client'
+  let role = 'client';
+  if (userData.role) {
+    const roleMap = {
+      'ADMIN': 'admin',
+      'MANAGER': 'manager', 
+      'TECH': 'technician',
+      'TECHNICIAN': 'technician',
+      'CLIENT': 'client'
+    };
+    role = roleMap[userData.role.toUpperCase()] || userData.role.toLowerCase() || 'client';
+  }
+  
+  const user = new User({ 
+    ...userData, 
+    password: hashedPassword,
+    role: role
+  });
   return await user.save();
 };
 

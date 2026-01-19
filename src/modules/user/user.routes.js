@@ -6,6 +6,6 @@ const router = express.Router();
 
 router.post('/register', registerUser);
 // Only ADMIN can list all users
-router.get('/', authenticate, authorizeRoles('ADMIN'), listUsers);
+router.get('/', authenticate, authorizeRoles('admin'), listUsers);
 
 module.exports = router;

@@ -6,17 +6,17 @@ const { authenticate, authorizeRoles } = require('../../middleware/auth');
 const router = express.Router();
 
 // Technician uploads BEFORE evidence (address, before image, fix time)
-router.post('/:id/evidence/before', authenticate, authorizeRoles('TECH'), ctrl.uploadBeforeEvidence);
+router.post('/:id/evidence/before', authenticate, authorizeRoles('technician'), ctrl.uploadBeforeEvidence);
 // Technician uploads AFTER evidence (after image)
-router.post('/:id/evidence/after', authenticate, authorizeRoles('TECH'), ctrl.uploadAfterEvidence);
+router.post('/:id/evidence/after', authenticate, authorizeRoles('technician'), ctrl.uploadAfterEvidence);
 
 // Assign an issue to a technician (admin/manager only)
-router.post('/:id/assign', authenticate, authorizeRoles('ADMIN', 'MANAGER'), ctrl.assignToTech);
+router.post('/:id/assign', authenticate, authorizeRoles('admin', 'manager'), ctrl.assignToTech);
 
 // Admin: all issues, Tech: assigned, User: own
 router.get('/', authenticate, ctrl.getByRole);
-router.get('/user/:userId', authenticate, authorizeRoles('CLIENT'), ctrl.getByUserId);
-router.get('/assigned/:techId', authenticate, authorizeRoles('TECH'), ctrl.getByAssignedTech);
+router.get('/user/:userId', authenticate, authorizeRoles('client'), ctrl.getByUserId);
+router.get('/assigned/:techId', authenticate, authorizeRoles('technician'), ctrl.getByAssignedTech);
 router.get('/:id', authenticate, ctrl.getById);                                             
 router.post('/', authenticate, upload.single('photo'), ctrl.create);
 router.put('/:id', authenticate, ctrl.update);

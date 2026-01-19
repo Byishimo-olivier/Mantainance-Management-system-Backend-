@@ -71,7 +71,7 @@ exports.assignToTech = async (req, res) => {
   // The user assigning the task (from auth)
   const assigner = req.user;
   const assignerInfo = {
-    id: assigner.id,
+    id: assigner.userId,
     name: assigner.name,
     email: assigner.email,
     phone: assigner.phone,
@@ -105,14 +105,14 @@ async function attachClientNames(issues) {
 exports.getByRole = async (req, res) => {
   const user = req.user;
   let issues = [];
-  if (user.role === 'ADMIN') {
+  if (user.role === 'admin') {
     issues = await service.getAll();
     issues = await attachClientNames(issues);
-  } else if (user.role === 'TECH') {
-    issues = await service.getByAssignedTech(user.id);
+  } else if (user.role === 'technician') {
+    issues = await service.getByAssignedTech(user.userId);
     issues = await attachClientNames(issues);
-  } else if (user.role === 'CLIENT') {
-    issues = await service.getByUserId(user.id);
+  } else if (user.role === 'client') {
+    issues = await service.getByUserId(user.userId);
     issues = await attachClientNames(issues);
   }
   res.json(issues);
@@ -148,7 +148,7 @@ exports.create = async (req, res) => {
     data.photo = `/uploads/${req.file.filename}`;
   }
   // Attach userId from auth
-  data.userId = req.user.id;
+  data.userId = req.user.userId;
   // Always set status to PENDING on creation
   data.status = 'PENDING';
   const created = await service.create(data);
