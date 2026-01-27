@@ -104,9 +104,13 @@ async function attachClientNames(issues) {
 
 exports.getByRole = async (req, res) => {
   const user = req.user;
+  console.log('[getByRole] user:', user); // DEBUG: log user info
   let issues = [];
   if (user.role === 'admin') {
     issues = await service.getAll();
+    issues = await attachClientNames(issues);
+  } else if (user.role === 'manager') {
+    issues = await service.getByManagerId ? await service.getByManagerId(user.userId) : [];
     issues = await attachClientNames(issues);
   } else if (user.role === 'technician') {
     issues = await service.getByAssignedTech(user.userId);
@@ -115,6 +119,7 @@ exports.getByRole = async (req, res) => {
     issues = await service.getByUserId(user.userId);
     issues = await attachClientNames(issues);
   }
+  console.log('[getByRole] issues:', issues); // DEBUG: log issues array
   res.json(issues);
 };
 

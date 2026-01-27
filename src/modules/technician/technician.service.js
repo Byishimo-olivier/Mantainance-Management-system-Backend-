@@ -1,11 +1,11 @@
 const User = require('../user/user.model');
 
 module.exports = {
-  getAll: () => User.find({ role: 'TECH' }),
+  getAll: () => User.find({ role: 'technician' }),
   getById: (id) => User.findById(id),
   // The following create/update/delete methods are not relevant for TECH users here,
   // but kept for compatibility. You may want to remove or adapt them as needed.
-  create: async (data) => {
+  create: async (data) => { 
     // Optionally, create a TECH user
     data.role = 'TECH';
     if (!data.password) {
