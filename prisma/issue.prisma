@@ -1,3 +1,6 @@
+  rejected    Boolean  @default(false)
+  rejectedAt  DateTime?
+  rejectionReason String?
 model Issue {
   id          Int      @id @default(autoincrement())
   title       String
@@ -7,6 +10,9 @@ model Issue {
   assignees   String[]
   overdue     Boolean  @default(false)
   time        String
+  approved    Boolean  @default(false)
+  approvedAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  userId      String   // Add this line for user-issue relationship
 }

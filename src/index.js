@@ -7,7 +7,16 @@ const authRoutes = require('./modules/auth/auth.routes.js');
 const passwordRoutes = require('./modules/auth/password.routes.js');
 const technicianRoutes = require('./modules/technician/technician.routes.js');
 const issueRoutes = require('./modules/issue/issue.routes.js');
+
+const feedbackRoutes = require('./modules/feedback/feedback.routes.js');
 const managerRoutes = require('./modules/manager/manager.routes.js');
+
+
+const propertyRoutes = require('./modules/property/property.routes');
+const assetRoutes = require('./modules/asset/asset.routes');
+const internalTechnicianRoutes = require('./modules/internalTechnician/internalTechnician.routes');
+const maintenanceTemplateRoutes = require('./modules/maintenanceTemplate/maintenanceTemplate.routes');
+const maintenanceScheduleRoutes = require('./modules/maintenanceSchedule/maintenanceSchedule.routes');
 
 const app = express();
 
@@ -31,7 +40,17 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
 app.use('/api/technicians', technicianRoutes);
 app.use('/api/issues', issueRoutes);
+
+
+app.use('/api/feedback', feedbackRoutes);
 app.use('/api/managers', managerRoutes);
+
+// New maintenance and asset management routes
+app.use('/api/properties', propertyRoutes);
+app.use('/api/assets', assetRoutes);
+app.use('/api/internal-technicians', internalTechnicianRoutes);
+app.use('/api/maintenance-templates', maintenanceTemplateRoutes);
+app.use('/api/maintenance-schedules', maintenanceScheduleRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
