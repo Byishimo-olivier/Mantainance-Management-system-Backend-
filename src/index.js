@@ -11,12 +11,12 @@ const issueRoutes = require('./modules/issue/issue.routes.js');
 const feedbackRoutes = require('./modules/feedback/feedback.routes.js');
 const managerRoutes = require('./modules/manager/manager.routes.js');
 
-
 const propertyRoutes = require('./modules/property/property.routes');
 const assetRoutes = require('./modules/asset/asset.routes');
 const internalTechnicianRoutes = require('./modules/internalTechnician/internalTechnician.routes');
 const maintenanceTemplateRoutes = require('./modules/maintenanceTemplate/maintenanceTemplate.routes');
 const maintenanceScheduleRoutes = require('./modules/maintenanceSchedule/maintenanceSchedule.routes');
+const emailRoutes = require('./modules/emailService/email.routes');
 
 const app = express();
 
@@ -34,13 +34,11 @@ app.get('/', (req, res) => {
   res.send('Maintenance Management System API');
 });
 
-
 app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
 app.use('/api/technicians', technicianRoutes);
 app.use('/api/issues', issueRoutes);
-
 
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/managers', managerRoutes);
@@ -51,6 +49,7 @@ app.use('/api/assets', assetRoutes);
 app.use('/api/internal-technicians', internalTechnicianRoutes);
 app.use('/api/maintenance-templates', maintenanceTemplateRoutes);
 app.use('/api/maintenance-schedules', maintenanceScheduleRoutes);
+app.use('/api/email', emailRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

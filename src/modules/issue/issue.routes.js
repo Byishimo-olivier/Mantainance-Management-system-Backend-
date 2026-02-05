@@ -12,6 +12,9 @@ router.post('/:id/evidence/after', authenticate, authorizeRoles('technician'), c
 
 // Assign an issue to a technician (admin/manager only)
 router.post('/:id/assign', authenticate, authorizeRoles('admin', 'manager'), ctrl.assignToTech);
+// Manager/admin approve or decline an issue
+router.post('/:id/approve', authenticate, authorizeRoles('admin', 'manager'), ctrl.approveIssue);
+router.post('/:id/decline', authenticate, authorizeRoles('admin', 'manager'), ctrl.declineIssue);
 
 // Admin: all issues, Tech: assigned, User: own
 router.get('/', authenticate, ctrl.getByRole);

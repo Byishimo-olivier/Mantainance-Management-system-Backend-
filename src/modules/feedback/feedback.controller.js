@@ -1,11 +1,12 @@
 const feedbackService = require('./feedback.service');
+const { normalizeExtendedJSON } = require('../../utils/normalize');
 
 // GET /api/feedback/client/:userId
 exports.getFeedbackForClient = async (req, res) => {
   try {
     const { userId } = req.params;
     const feedbacks = await feedbackService.getFeedbackForClient(userId);
-    res.json(feedbacks);
+    res.json(normalizeExtendedJSON(feedbacks));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch feedback.' });
   }
@@ -15,7 +16,7 @@ exports.getFeedbackForClient = async (req, res) => {
 exports.createFeedback = async (req, res) => {
   try {
     const feedback = await feedbackService.createFeedback(req.body);
-    res.status(201).json(feedback);
+    res.status(201).json(normalizeExtendedJSON(feedback));
   } catch (err) {
     res.status(500).json({ error: 'Failed to create feedback.' });
   }
@@ -25,7 +26,7 @@ exports.createFeedback = async (req, res) => {
 exports.getAllFeedback = async (req, res) => {
   try {
     const feedbacks = await feedbackService.getAllFeedback();
-    res.json(feedbacks);
+    res.json(normalizeExtendedJSON(feedbacks));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch all feedback.' });
   }

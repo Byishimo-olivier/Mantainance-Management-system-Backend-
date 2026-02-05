@@ -10,6 +10,8 @@ router.use(authenticate);
 router.use(authorizeRoles('technician', 'admin'));
 
 router.get('/', ctrl.getAll);
+// Provide a manager/admin endpoint to fetch technicians for assignment
+router.get('/for-assignment', authenticate, authorizeRoles('admin', 'manager'), ctrl.getForAssignment);
 router.get('/:id', ctrl.getById);
 router.post('/', ctrl.create);
 router.put('/:id', ctrl.update);
