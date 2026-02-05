@@ -1,4 +1,7 @@
 const upload = require('../../middleware/upload');
+const emailService = require('../emailService/email.service');
+
+const { normalizeExtendedJSON } = require('../../utils/normalize');
 
 // Technician submits BEFORE evidence (address, before image, fix time)
 exports.uploadBeforeEvidence = [
@@ -28,7 +31,7 @@ exports.uploadBeforeEvidence = [
       overdue: false,
     };
     const updated = await service.update(id, updateData);
-    res.json(updated);
+    res.json(normalizeExtendedJSON(updated));
   }
 ];
 
@@ -56,7 +59,29 @@ exports.uploadAfterEvidence = [
       overdue,
     };
     const updated = await service.update(id, updateData);
-    res.json(updated);
+
+    // Send completion email notification
+    try {
+      const userService = require('../user/user.service');
+
+      const client = await userService.findUserById(updated.userId);
+      const technician = await userService.findUserById(req.user.userId);
+
+      if (client && technician) {
+        await emailService.sendIssueCompletedNotification({
+          title: updated.title,
+          description: updated.description,
+          location: updated.location || updated.address,
+          feedback: req.body.feedback || null,
+          afterImage: afterImage
+        }, technician, client);
+      }
+    } catch (emailError) {
+      console.error('Error sending completion notification:', emailError);
+      // Don't fail the request if email fails
+    }
+
+    res.json(normalizeExtendedJSON(updated));
   }
 ];
 // Assign an issue to a technician
@@ -83,7 +108,22 @@ exports.assignToTech = async (req, res) => {
     assignees: [assignerInfo],
   });
   console.log('[assignToTech] updated issue:', updated);
-  res.json(updated);
+  // Send email notification to technician
+  try {
+    await emailService.sendIssueAssignedNotification(
+      {
+        title: updated.title,
+        description: updated.description,
+        location: updated.location || updated.address,
+        priority: updated.priority || 'Normal'
+      },
+      tech,
+      assigner
+    );
+  } catch (emailError) {
+    console.error('Error sending technician assignment notification:', emailError);
+  }
+  res.json(normalizeExtendedJSON(updated));
 };
 const service = require('./issue.service');
 
@@ -120,23 +160,23 @@ exports.getByRole = async (req, res) => {
     issues = await attachClientNames(issues);
   }
   console.log('[getByRole] issues:', issues); // DEBUG: log issues array
-  res.json(issues);
+  res.json(normalizeExtendedJSON(issues));
 };
 
 exports.getByUserId = async (req, res) => {
   const issues = await service.getByUserId(req.params.userId);
-  res.json(issues);
+  res.json(normalizeExtendedJSON(issues));
 };
 
 exports.getByAssignedTech = async (req, res) => {
   const issues = await service.getByAssignedTech(req.params.techId);
-  res.json(issues);
+  res.json(normalizeExtendedJSON(issues));
 };
 
 exports.getById = async (req, res) => {
   const issue = await service.getById(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Not found' });
-  res.json(issue);
+  res.json(normalizeExtendedJSON(issue));
 };
 
 exports.create = async (req, res) => {
@@ -154,18 +194,176 @@ exports.create = async (req, res) => {
   }
   // Attach userId from auth
   data.userId = req.user.userId;
+  // Support linking to an asset by id
+  if (data.assetId && typeof data.assetId !== 'string') {
+    try { data.assetId = String(data.assetId); } catch (e) { /* ignore */ }
+  }
   // Always set status to PENDING on creation
   data.status = 'PENDING';
+  // Auto-detect preventive
+  try {
+    const title = (data.title || '').toString().toLowerCase();
+    const rawTags = Array.isArray(data.tags) ? data.tags : [];
+    const tagsLower = rawTags.map(t => {
+      if (!t) return '';
+      if (typeof t === 'string') return String(t).toLowerCase();
+      if (typeof t === 'object' && t.label) return String(t.label).toLowerCase();
+      return String(t).toLowerCase();
+    });
+    const issueType = String(data.issueType || data.type || data.category || '').toLowerCase();
+    const isPreventive = tagsLower.includes('preventive') || issueType === 'preventive' || title.includes('preventive');
+    if (isPreventive) {
+      // ensure tags array
+      if (!Array.isArray(data.tags)) data.tags = [];
+      if (!data.tags.map(t => (typeof t === 'string' ? t.toLowerCase() : (t && t.label ? String(t.label).toLowerCase() : String(t).toLowerCase()))).includes('preventive')) {
+        data.tags.push('preventive');
+      }
+      data.issueType = data.issueType || 'preventive';
+      data.category = data.category || 'preventive';
+    }
+  } catch (e) {
+    console.error('Error during preventive detection on create:', e);
+  }
   const created = await service.create(data);
-  res.status(201).json(created);
+
+  // Send email notification to admins/managers
+  try {
+    const userService = require('../user/user.service');
+    const client = await userService.findUserById(req.user.userId);
+
+    if (client) {
+      await emailService.sendNewRequestNotification({
+        title: data.title,
+        description: data.description,
+        location: data.location,
+        category: data.category || data.tags?.[0] || 'General',
+        priority: data.priority || 'Normal'
+      }, client);
+    }
+  } catch (emailError) {
+    console.error('Error sending new request notification:', emailError);
+    // Don't fail the request if email fails
+  }
+
+  res.status(201).json(normalizeExtendedJSON(created));
 };
 
 exports.update = async (req, res) => {
-  const updated = await service.update(req.params.id, req.body);
-  res.json(updated);
+  const oldIssue = await service.getById(req.params.id);
+  // Normalize tags in incoming body if provided
+  const incoming = { ...req.body };
+  if (typeof incoming.tags === 'string') {
+    try { incoming.tags = JSON.parse(incoming.tags); } catch (e) { /* keep as-is */ }
+  }
+  try {
+    // Build merged view to apply heuristic: prefer incoming fields when present
+    const merged = { ...(oldIssue || {}), ...(incoming || {}) };
+    const title = (merged.title || '').toString().toLowerCase();
+    const rawTags = Array.isArray(merged.tags) ? merged.tags : [];
+    const tagsLower = rawTags.map(t => {
+      if (!t) return '';
+      if (typeof t === 'string') return String(t).toLowerCase();
+      if (typeof t === 'object' && t.label) return String(t.label).toLowerCase();
+      return String(t).toLowerCase();
+    });
+    const issueType = String(merged.issueType || merged.type || merged.category || '').toLowerCase();
+    const isPreventive = tagsLower.includes('preventive') || issueType === 'preventive' || title.includes('preventive');
+    if (isPreventive) {
+      // ensure tags on incoming update include 'preventive'
+      if (!Array.isArray(incoming.tags)) incoming.tags = Array.isArray(oldIssue.tags) ? [...oldIssue.tags] : [];
+      const incomingTagsLower = incoming.tags.map(t => (typeof t === 'string' ? t.toLowerCase() : (t && t.label ? String(t.label).toLowerCase() : String(t).toLowerCase())));
+      if (!incomingTagsLower.includes('preventive')) {
+        incoming.tags.push('preventive');
+      }
+      incoming.issueType = incoming.issueType || incoming.type || incoming.category || 'preventive';
+      incoming.category = incoming.category || incoming.issueType || 'preventive';
+    }
+  } catch (e) {
+    console.error('Error during preventive detection on update:', e);
+  }
+
+  const updated = await service.update(req.params.id, incoming);
+
+  // Send email notifications based on status changes
+  try {
+    const userService = require('../user/user.service');
+
+    // If status changed to approved/declined, notify client
+    if (oldIssue && oldIssue.status !== updated.status) {
+      if (updated.status === 'APPROVED' || updated.status === 'DECLINED') {
+        const client = await userService.findUserById(updated.userId);
+        const manager = await userService.findUserById(req.user.userId);
+
+        if (client && manager) {
+          if (updated.status === 'APPROVED') {
+            await emailService.sendRequestApprovedNotification({
+              title: updated.title,
+              description: updated.description,
+              location: updated.location
+            }, client, manager);
+          } else if (updated.status === 'DECLINED') {
+            await emailService.sendRequestDeclinedNotification({
+              title: updated.title,
+              description: updated.description,
+              location: updated.location
+            }, client, manager, req.body.reason || 'No reason provided');
+          }
+        }
+      }
+    }
+
+    // If issue is completed (status changed to COMPLETE), notify manager and client
+    if (oldIssue && oldIssue.status !== 'COMPLETE' && updated.status === 'COMPLETE') {
+      const client = await userService.findUserById(updated.userId);
+      let technician = null;
+      if (updated.assignedTechnicianId) {
+        technician = await userService.findUserById(updated.assignedTechnicianId);
+      }
+
+      if (client && technician) {
+        await emailService.sendIssueCompletedNotification({
+          title: updated.title,
+          description: updated.description,
+          location: updated.location || updated.address,
+          feedback: updated.feedback || null,
+          afterImage: updated.afterImage || null
+        }, technician, client);
+      }
+    }
+  } catch (emailError) {
+    console.error('Error sending email notification:', emailError);
+    // Don't fail the request if email fails
+  }
+
+  res.json(normalizeExtendedJSON(updated));
 };
 
 exports.delete = async (req, res) => {
   await service.delete(req.params.id);
   res.status(204).end();
+};
+
+// Manager/admin approves an issue
+exports.approveIssue = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updated = await service.update(id, { approved: true, approvedAt: new Date(), status: 'APPROVED' });
+    res.json(normalizeExtendedJSON(updated));
+  } catch (err) {
+    console.error('[issue.controller.js:approveIssue]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Manager/admin declines an issue
+exports.declineIssue = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const reason = req.body.reason || 'Declined by manager';
+    const updated = await service.update(id, { rejected: true, rejectionReason: reason, rejectedAt: new Date(), status: 'DECLINED' });
+    res.json(normalizeExtendedJSON(updated));
+  } catch (err) {
+    console.error('[issue.controller.js:declineIssue]', err);
+    res.status(500).json({ error: err.message });
+  }
 };

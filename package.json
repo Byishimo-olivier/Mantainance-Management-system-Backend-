@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "prisma": "prisma"
+    "prisma": "prisma",
+    "seed:properties": "node scripts/seed-properties.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -1,10 +1,11 @@
 const model = require('./maintenanceTemplate.model');
+const { normalizeExtendedJSON } = require('../../utils/normalize');
 
 module.exports = {
   async create(req, res) {
     try {
       const template = await model.create(req.body);
-      res.status(201).json(template);
+      res.status(201).json(normalizeExtendedJSON(template));
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -12,7 +13,7 @@ module.exports = {
   async getAll(req, res) {
     try {
       const templates = await model.findAll();
-      res.json(templates);
+      res.json(normalizeExtendedJSON(templates));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -21,7 +22,7 @@ module.exports = {
     try {
       const template = await model.findById(req.params.id);
       if (!template) return res.status(404).json({ error: 'Not found' });
-      res.json(template);
+      res.json(normalizeExtendedJSON(template));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -29,7 +30,7 @@ module.exports = {
   async update(req, res) {
     try {
       const template = await model.update(req.params.id, req.body);
-      res.json(template);
+      res.json(normalizeExtendedJSON(template));
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
