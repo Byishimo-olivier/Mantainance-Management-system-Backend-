@@ -2,10 +2,31 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 module.exports = {
-  create: (data) => prisma.asset.create({ data: { ...data, quantity: data.quantity ?? 1 } }),
+  create: (data) => {
+    const payload = { ...data };
+    const rel = {};
+    if (payload.propertyId) {
+      rel.property = { connect: { id: payload.propertyId } };
+      delete payload.propertyId;
+    }
+    return prisma.asset.create({ data: { ...payload, ...rel, quantity: payload.quantity ?? 1 } });
+  },
   findAll: (filter = {}) => prisma.asset.findMany({ where: filter, include: { property: true, spareParts: true } }),
   findById: (id) => prisma.asset.findUnique({ where: { id }, include: { property: true, spareParts: true, movements: true } }),
-  update: (id, data) => prisma.asset.update({ where: { id }, data: { ...data, quantity: data.quantity ?? 1 } }),
+  update: (id, data) => {
+    const payload = { ...data };
+    const rel = {};
+    if (Object.prototype.hasOwnProperty.call(payload, 'propertyId')) {
+      if (payload.propertyId) {
+        rel.property = { connect: { id: payload.propertyId } };
+      } else {
+        // disconnect if null/empty supplied
+        rel.property = { disconnect: true };
+      }
+      delete payload.propertyId;
+    }
+    return prisma.asset.update({ where: { id }, data: { ...payload, ...rel, quantity: payload.quantity ?? 1 } });
+  },
   delete: (id) => prisma.asset.delete({ where: { id } }),
   count: (filter = {}) => prisma.asset.count({ where: filter }),
 
