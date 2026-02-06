@@ -174,6 +174,10 @@ exports.getByAssignedTech = async (req, res) => {
 };
 
 exports.getById = async (req, res) => {
+  // Validate ID parameter
+  if (!req.params.id || req.params.id === 'undefined' || !/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid issue ID' });
+  }
   const issue = await service.getById(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Not found' });
   res.json(normalizeExtendedJSON(issue));
@@ -200,6 +204,20 @@ exports.create = async (req, res) => {
   }
   // Always set status to PENDING on creation
   data.status = 'PENDING';
+
+  // Filter data to only include valid Issue model fields
+  const validFields = [
+    'rejected', 'rejectedAt', 'rejectionReason', 'id', 'title', 'description', 'location',
+    'assetId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
+    'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
+    'approvedAt', 'createdAt', 'updatedAt'
+  ];
+  const filteredData = {};
+  for (const field of validFields) {
+    if (data[field] !== undefined) {
+      filteredData[field] = data[field];
+    }
+  }
   // Auto-detect preventive
   try {
     const title = (data.title || '').toString().toLowerCase();
@@ -224,7 +242,7 @@ exports.create = async (req, res) => {
   } catch (e) {
     console.error('Error during preventive detection on create:', e);
   }
-  const created = await service.create(data);
+  const created = await service.create(filteredData);
 
   // Send email notification to admins/managers
   try {
@@ -249,6 +267,10 @@ exports.create = async (req, res) => {
 };
 
 exports.update = async (req, res) => {
+  // Validate ID parameter
+  if (!req.params.id || req.params.id === 'undefined' || !/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid issue ID' });
+  }
   const oldIssue = await service.getById(req.params.id);
   // Normalize tags in incoming body if provided
   const incoming = { ...req.body };
@@ -275,8 +297,7 @@ exports.update = async (req, res) => {
       if (!incomingTagsLower.includes('preventive')) {
         incoming.tags.push('preventive');
       }
-      incoming.issueType = incoming.issueType || incoming.type || incoming.category || 'preventive';
-      incoming.category = incoming.category || incoming.issueType || 'preventive';
+
     }
   } catch (e) {
     console.error('Error during preventive detection on update:', e);
