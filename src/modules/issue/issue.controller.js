@@ -467,18 +467,59 @@ exports.create = async (req, res) => {
   } catch (e) {
     console.error('Error during preventive detection on create:', e);
   }
+  // Handle explicit internal technician assignment by client
+  let assignedInternalTechConfig = null;
+  if (data.internalTechnicianId) {
+    try {
+      const internalTechModel = require('../internalTechnician/internalTechnician.model');
+      const tech = await internalTechModel.findById(data.internalTechnicianId);
+      if (tech) {
+        // Build assignee object for internal tech
+        const internalAssignee = {
+          id: tech.id || tech._id,
+          name: tech.name,
+          email: tech.email || '',
+          phone: tech.phone || null,
+          role: 'internal'
+        };
+
+        // Add to assignees list
+        if (!filteredData.assignees) filteredData.assignees = [];
+        filteredData.assignees.push(internalAssignee);
+        filteredData.status = 'IN PROGRESS'; // Auto-start if assigned
+
+        // Try to link to a User account for assignedTo field
+        const userService = require('../user/user.service');
+        let linkedUser = null;
+        if (tech.email) linkedUser = await userService.findUserByEmail(tech.email);
+        if (!linkedUser && tech.phone) {
+          const allUsers = await userService.getAllUsers();
+          linkedUser = allUsers.find(u => (u.email === tech.email) || (u.phone === tech.phone)) || null;
+        }
+
+        if (linkedUser) {
+          filteredData.assignedTo = linkedUser.id || linkedUser._id;
+        }
+
+        // Store config to send email AFTER creation
+        assignedInternalTechConfig = { tech, internalAssignee };
+      }
+    } catch (e) {
+      console.error('Error handling internal technician assignment:', e);
+    }
+  }
+
   const created = await service.create(filteredData);
 
   console.log('[CREATE ISSUE] Issue created with id:', created?.id, 'userId:', created?.userId);
 
-  // Send email notification to admins/managers
+  // Send email notification to admins/managers AND newly assigned internal tech
   try {
     const userService = require('../user/user.service');
     let client = null;
     if (req.user && req.user.userId) {
       client = await userService.findUserById(req.user.userId);
     }
-
     const requestPayload = {
       title: data.title,
       description: data.description,
@@ -487,6 +528,20 @@ exports.create = async (req, res) => {
       priority: data.priority || 'Normal'
     };
 
+    const assignerInfo = client
+      ? { name: client.name, email: client.email }
+      : { name: data.name || 'Anonymous', email: data.email || '' };
+
+    // 1. Notify Assigned Internal Technician (if any)
+    if (assignedInternalTechConfig && assignedInternalTechConfig.tech.email) {
+      await emailService.sendNewRequestToRecipients(
+        requestPayload,
+        assignerInfo,
+        [assignedInternalTechConfig.tech.email]
+      );
+    }
+
+    // 2. Notify Admins/Managers (Standard flow)
     if (client) {
       // Authenticated submitter: notify admins/managers as before
       await emailService.sendNewRequestNotification(requestPayload, client);
@@ -514,9 +569,15 @@ exports.create = async (req, res) => {
         // Build a client-like object from submitted fields when available
         const anonClient = { name: data.name || 'Anonymous', email: data.email || '' };
 
-        // Notify property staff if any
+        // Notify property staff if any (only if NOT already notified via direct assignment)
         if (staffEmails.length) {
-          await emailService.sendNewRequestToRecipients(requestPayload, anonClient, staffEmails);
+          // Filter out the explicitly assigned tech if they are in the property staff list to avoid double email
+          const explicitlyAssignedEmail = assignedInternalTechConfig?.tech?.email;
+          const uniqueStaffEmails = staffEmails.filter(e => e !== explicitlyAssignedEmail);
+
+          if (uniqueStaffEmails.length > 0) {
+            await emailService.sendNewRequestToRecipients(requestPayload, anonClient, uniqueStaffEmails);
+          }
         }
 
         // Also notify global admins/managers
