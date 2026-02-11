@@ -21,12 +21,29 @@ const materialRequestRoutes = require('./modules/materialRequest/materialRequest
 
 const app = express();
 
-// CORS configuration - allow requests from frontend
-const frontendUrl = process.env.FRONTEND_URL || '*';
+// CORS configuration
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
 app.use(cors({
-  origin: frontendUrl,
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      console.log('Blocked by CORS:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(express.json());
 // Serve uploaded files statically
 app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')));
@@ -37,7 +54,11 @@ mongoose.connect(process.env.DATABASE_URL)
   .catch((err) => console.error('MongoDB connection error:', err));
 
 app.get('/', (req, res) => {
-  res.send('Maintenance Management System API');
+  res.send('Maintenance Management System API is running');
+});
+
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', environment: process.env.NODE_ENV });
 });
 
 app.use('/api/users', userRoutes);
@@ -59,6 +80,11 @@ app.use('/api/email', emailRoutes);
 app.use('/api/material-requests', materialRequestRoutes);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;
