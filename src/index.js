@@ -21,7 +21,12 @@ const materialRequestRoutes = require('./modules/materialRequest/materialRequest
 
 const app = express();
 
-app.use(cors());
+// CORS configuration - allow requests from frontend
+const frontendUrl = process.env.FRONTEND_URL || '*';
+app.use(cors({
+  origin: frontendUrl,
+  credentials: true
+}));
 app.use(express.json());
 // Serve uploaded files statically
 app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')));

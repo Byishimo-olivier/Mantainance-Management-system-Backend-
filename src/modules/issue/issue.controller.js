@@ -294,7 +294,7 @@ exports.getByRole = async (req, res) => {
   // Anonymous users cannot view issues - they can only submit them
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  console.log('[getByRole] user:', user); // DEBUG: log user info
+
   let issues = [];
 
   // If a propertyId query param is provided, return issues for that property
@@ -325,7 +325,7 @@ exports.getByRole = async (req, res) => {
     // - Authenticated issues submitted by this user for their properties
     // - Anonymous issues submitted for their properties
 
-    console.log('[getByRole] Fetching issues for client userId:', user.userId);
+
 
     // Fetch properties owned by this client (userId is the owner)
     // Also include properties where clientId matches, just in case
@@ -339,7 +339,7 @@ exports.getByRole = async (req, res) => {
       select: { id: true, name: true }
     });
     const propertyIds = clientProperties.map(p => p.id);
-    console.log('[getByRole] client owns', propertyIds.length, 'properties:', propertyIds.map((id, i) => `${clientProperties[i].name}(${id})`).join(', '));
+
 
     if (propertyIds.length > 0) {
       issues = await service.getByPropertyIds(propertyIds);
@@ -347,11 +347,11 @@ exports.getByRole = async (req, res) => {
       issues = [];
     }
 
-    console.log('[getByRole] total client issues from their properties:', issues.length);
+
 
     issues = await attachClientNames(issues);
   }
-  console.log('[getByRole] returning issues count:', issues.length); // DEBUG: log issues array
+
   res.json(normalizeExtendedJSON(issues));
 };
 
