@@ -20,7 +20,12 @@ module.exports = {
   },
   async getAll(req, res) {
     try {
-      const assets = await assetModel.findAll();
+      // Build a simple filter from query params. Support ?propertyId=... (and alias ?property=...)
+      const q = req.query || {};
+      const filter = {};
+      if (q.propertyId) filter.propertyId = q.propertyId;
+      else if (q.property) filter.propertyId = q.property;
+      const assets = await assetModel.findAll(filter);
       res.json(normalizeExtendedJSON(assets));
     } catch (err) {
       res.status(500).json({ error: err.message });

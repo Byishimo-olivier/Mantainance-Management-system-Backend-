@@ -13,10 +13,11 @@ const login = async (req, res) => {
     token, 
     user: { 
       _id: user._id, 
+      id: user._id ? String(user._id) : null,
       name: user.name, 
       email: user.email,
       role: user.role 
-    } 
+    }
   });
 };
 
