@@ -3,6 +3,27 @@ const emailService = require('../emailService/email.service');
 
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
+function normalizeId(val) {
+  if (val === undefined || val === null) return null;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') return String(val);
+  if (typeof val === 'object') {
+    if (val.id) return String(val.id);
+    if (val._id) return String(val._id);
+    if (val.$oid) return String(val.$oid);
+    if (val.$id) return String(val.$id);
+    try {
+      if (typeof val.toString === 'function') {
+        const s = val.toString();
+        if (s && s !== '[object Object]') return s;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  return null;
+}
+
 // Technician submits BEFORE evidence (address, before image, fix time)
 exports.uploadBeforeEvidence = [
   upload.single('beforeImage'),
@@ -125,7 +146,133 @@ exports.assignToTech = async (req, res) => {
   }
   res.json(normalizeExtendedJSON(updated));
 };
+// Assign an issue to an internal technician (property staff)
+exports.assignToInternal = async (req, res) => {
+  const { id } = req.params; // issue id
+  const { internalTechId } = req.body;
+  if (!internalTechId) return res.status(400).json({ error: 'internalTechId is required' });
+  try {
+    const internalTechModel = require('../internalTechnician/internalTechnician.model');
+    const tech = await internalTechModel.findById(internalTechId);
+    if (!tech) return res.status(404).json({ error: 'Internal technician not found' });
+    // Validate the issue and the assigner
+    const issue = await service.getById(id);
+    if (!issue) return res.status(404).json({ error: 'Issue not found' });
+    // Only allow clients to assign their own issues
+    if (req.user && req.user.role === 'client') {
+      const issueUserId = normalizeId(issue.userId);
+      const requesterId = normalizeId(req.user.userId);
+      console.log('[assignToInternal] ownership check:', { issueUserIdRaw: issue.userId, requesterRaw: req.user.userId, issueUserId, requesterId });
+      // If the issue has an owner, only that owner can assign. If issue has no owner (null/''), allow client to request assignment.
+      if (issueUserId && issueUserId !== requesterId) {
+        return res.status(403).json({ error: 'Clients can only assign their own issues' });
+      }
+    }
+    // The user assigning the task (from auth)
+    const assigner = req.user || { userId: null, name: 'System' };
+    const assignerInfo = {
+      id: assigner.userId || null,
+      name: assigner.name || 'System',
+      email: assigner.email || '',
+      phone: assigner.phone || null,
+      role: assigner.role || 'system'
+    };
+
+    // Try to find a linked User account for this internal technician (match by email or phone)
+    const userService = require('../user/user.service');
+    let linkedUser = null;
+    try {
+      if (tech.email) linkedUser = await userService.findUserByEmail(tech.email);
+      // If not found by email, try by phone (if phone lookup exists in user service)
+      if (!linkedUser && tech.phone) {
+        // userService doesn't have a findByPhone helper; try getAll and match
+        const allUsers = await userService.getAllUsers();
+        linkedUser = allUsers.find(u => (u.email === tech.email) || (u.phone === tech.phone)) || null;
+      }
+    } catch (e) {
+      linkedUser = null;
+    }
+
+    // Build assignees array: include the assigner and record the internal tech info
+    const internalAssignee = {
+      id: tech.id || tech._id || tech.id || null,
+      name: tech.name,
+      email: tech.email || '',
+      phone: tech.phone || null,
+      role: 'internal'
+    };
+
+    const updatePayload = {
+      assignees: [assignerInfo, internalAssignee],
+      status: 'IN PROGRESS'
+    };
+
+    // If a linked User exists, set assignedTo to that user's id so they can fetch assigned issues
+    if (linkedUser && (linkedUser.id || linkedUser._id)) {
+      updatePayload.assignedTo = linkedUser.id || linkedUser._id;
+    }
+
+    const updated = await service.update(id, updatePayload);
+
+    // Notify internal technician via email (using their email)
+    try {
+      await emailService.sendNewRequestToRecipients({
+        title: updated.title,
+        description: updated.description,
+        location: updated.location || updated.address,
+        category: updated.category || (updated.tags && updated.tags[0]) || 'General',
+        priority: updated.priority || 'Normal'
+      }, { name: assignerInfo.name, email: assignerInfo.email }, [tech.email]);
+    } catch (emailErr) {
+      console.error('Error notifying internal technician:', emailErr);
+    }
+
+    res.json(normalizeExtendedJSON(updated));
+  } catch (err) {
+    console.error('[assignToInternal]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Resubmit an issue so admins/managers can reassign (flag for review)
+exports.resubmitIssue = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const user = req.user || {};
+    const updateData = {
+      resubmitted: true,
+      resubmittedAt: new Date(),
+      resubmittedBy: user.userId || null,
+      status: 'PENDING'
+    };
+    const updated = await service.update(id, updateData);
+
+    // Notify admins/managers about the resubmission
+    try {
+      const userService = require('../user/user.service');
+      let client = null;
+      if (updated.userId) client = await userService.findUserById(updated.userId);
+      const anonClient = client || { name: user.name || 'Requester', email: user.email || '' };
+      await emailService.sendNewRequestNotification({
+        title: updated.title,
+        description: updated.description,
+        location: updated.location || updated.address,
+        category: updated.category || (updated.tags && updated.tags[0]) || 'General',
+        priority: updated.priority || 'Normal'
+      }, anonClient);
+    } catch (emailErr) {
+      console.error('Error sending resubmission notification:', emailErr);
+    }
+
+    res.json(normalizeExtendedJSON(updated));
+  } catch (err) {
+    console.error('[resubmitIssue]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
 const service = require('./issue.service');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 // Get issues based on user role
 
@@ -144,22 +291,67 @@ async function attachClientNames(issues) {
 
 exports.getByRole = async (req, res) => {
   const user = req.user;
+  // Anonymous users cannot view issues - they can only submit them
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
   console.log('[getByRole] user:', user); // DEBUG: log user info
   let issues = [];
+
+  // If a propertyId query param is provided, return issues for that property
+  const propertyId = req.query && (req.query.propertyId || req.query.propertyID || req.query.propertyid);
+  if (propertyId) {
+    issues = await service.getByPropertyId(propertyId);
+    issues = await attachClientNames(issues);
+    return res.json(normalizeExtendedJSON(issues));
+  }
   if (user.role === 'admin') {
     issues = await service.getAll();
     issues = await attachClientNames(issues);
   } else if (user.role === 'manager') {
     issues = await service.getByManagerId ? await service.getByManagerId(user.userId) : [];
     issues = await attachClientNames(issues);
-  } else if (user.role === 'technician') {
-    issues = await service.getByAssignedTech(user.userId);
+  } else if (user.role === 'technician' || user.role === 'internal') {
+    // Issues explicitly assigned to this technician
+    const assigned = await service.getByAssignedTech(user.userId);
+    // Issues linked to properties where this technician is listed (by email/phone)
+    const propLinked = await service.getByTechnicianProperties(user.userId);
+    // Merge and deduplicate
+    const map = new Map();
+    [...assigned, ...propLinked].forEach(i => { if (i && i.id) map.set(i.id, i); });
+    issues = Array.from(map.values());
     issues = await attachClientNames(issues);
   } else if (user.role === 'client') {
-    issues = await service.getByUserId(user.userId);
+    // For clients: show ONLY issues from their properties
+    // - Authenticated issues submitted by this user for their properties
+    // - Anonymous issues submitted for their properties
+
+    console.log('[getByRole] Fetching issues for client userId:', user.userId);
+
+    // Fetch properties owned by this client (userId is the owner)
+    // Also include properties where clientId matches, just in case
+    const clientProperties = await prisma.property.findMany({
+      where: {
+        OR: [
+          { userId: user.userId },
+          { clientId: user.userId }
+        ]
+      },
+      select: { id: true, name: true }
+    });
+    const propertyIds = clientProperties.map(p => p.id);
+    console.log('[getByRole] client owns', propertyIds.length, 'properties:', propertyIds.map((id, i) => `${clientProperties[i].name}(${id})`).join(', '));
+
+    if (propertyIds.length > 0) {
+      issues = await service.getByPropertyIds(propertyIds);
+    } else {
+      issues = [];
+    }
+
+    console.log('[getByRole] total client issues from their properties:', issues.length);
+
     issues = await attachClientNames(issues);
   }
-  console.log('[getByRole] issues:', issues); // DEBUG: log issues array
+  console.log('[getByRole] returning issues count:', issues.length); // DEBUG: log issues array
   res.json(normalizeExtendedJSON(issues));
 };
 
@@ -185,6 +377,10 @@ exports.getById = async (req, res) => {
 
 exports.create = async (req, res) => {
   let data = req.body;
+
+  console.log('[CREATE ISSUE] Received request with userId from auth:', req.user?.userId);
+  console.log('[CREATE ISSUE] Received data fields:', Object.keys(data).slice(0, 10));
+
   // Parse JSON fields sent as strings (tags, assignees)
   if (typeof data.tags === 'string') data.tags = JSON.parse(data.tags);
   if (typeof data.assignees === 'string') data.assignees = JSON.parse(data.assignees);
@@ -196,11 +392,19 @@ exports.create = async (req, res) => {
   if (req.file) {
     data.photo = `/uploads/${req.file.filename}`;
   }
-  // Attach userId from auth
-  data.userId = req.user.userId;
+  // Attach userId from auth (guard when anonymous requests are allowed)
+  if (req.user && req.user.userId) {
+    data.userId = req.user.userId;
+    console.log('[CREATE ISSUE] Set userId from auth:', data.userId);
+  }
   // Support linking to an asset by id
   if (data.assetId && typeof data.assetId !== 'string') {
     try { data.assetId = String(data.assetId); } catch (e) { /* ignore */ }
+  }
+  // Clean up assetId if it contains commas (multiple IDs concatenated incorrectly)
+  if (data.assetId && typeof data.assetId === 'string' && data.assetId.includes(',')) {
+    const ids = data.assetId.split(',').filter(id => id && id.trim());
+    data.assetId = ids.length > 0 ? ids[0].trim() : null;
   }
   // Always set status to PENDING on creation
   data.status = 'PENDING';
@@ -208,7 +412,8 @@ exports.create = async (req, res) => {
   // Filter data to only include valid Issue model fields
   const validFields = [
     'rejected', 'rejectedAt', 'rejectionReason', 'id', 'title', 'description', 'location',
-    'assetId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
+    'assetId', 'propertyId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
+    'anonId', 'submissionType', 'name', 'email', 'phone',
     'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
     'approvedAt', 'createdAt', 'updatedAt'
   ];
@@ -218,6 +423,26 @@ exports.create = async (req, res) => {
       filteredData[field] = data[field];
     }
   }
+
+  // Validate userId if present
+  if (filteredData.userId) {
+    try {
+      const userService = require('../user/user.service');
+      const user = await userService.findUserById(filteredData.userId);
+      if (!user) {
+        console.warn('[CREATE ISSUE] userId does not exist in Users table:', filteredData.userId);
+        delete filteredData.userId;
+      }
+    } catch (e) {
+      console.error('[CREATE ISSUE] Error validating userId:', e);
+      delete filteredData.userId;
+    }
+  }
+
+  console.log('[CREATE ISSUE] Filtered data userId:', filteredData.userId);
+  console.log('[CREATE ISSUE] Filtered data propertyId:', filteredData.propertyId);
+  console.log('[CREATE ISSUE] Filtered data title:', filteredData.title);
+
   // Auto-detect preventive
   try {
     const title = (data.title || '').toString().toLowerCase();
@@ -244,19 +469,61 @@ exports.create = async (req, res) => {
   }
   const created = await service.create(filteredData);
 
+  console.log('[CREATE ISSUE] Issue created with id:', created?.id, 'userId:', created?.userId);
+
   // Send email notification to admins/managers
   try {
     const userService = require('../user/user.service');
-    const client = await userService.findUserById(req.user.userId);
+    let client = null;
+    if (req.user && req.user.userId) {
+      client = await userService.findUserById(req.user.userId);
+    }
+
+    const requestPayload = {
+      title: data.title,
+      description: data.description,
+      location: data.location,
+      category: data.category || data.tags?.[0] || 'General',
+      priority: data.priority || 'Normal'
+    };
 
     if (client) {
-      await emailService.sendNewRequestNotification({
-        title: data.title,
-        description: data.description,
-        location: data.location,
-        category: data.category || data.tags?.[0] || 'General',
-        priority: data.priority || 'Normal'
-      }, client);
+      // Authenticated submitter: notify admins/managers as before
+      await emailService.sendNewRequestNotification(requestPayload, client);
+    } else {
+      // Anonymous submit: notify property staff (internalTechnicians) and admins/managers
+      try {
+        const assetModel = require('../asset/asset.model');
+        const propertyModel = require('../property/property.model');
+        let staffEmails = [];
+
+        if (data.assetId) {
+          try {
+            const asset = await assetModel.findById(data.assetId);
+            if (asset && asset.propertyId) {
+              const property = await propertyModel.findById(asset.propertyId);
+              if (property && Array.isArray(property.internalTechnicians)) {
+                staffEmails = property.internalTechnicians.map(t => t.email).filter(Boolean);
+              }
+            }
+          } catch (e) {
+            console.error('Error looking up asset/property for anonymous notification:', e);
+          }
+        }
+
+        // Build a client-like object from submitted fields when available
+        const anonClient = { name: data.name || 'Anonymous', email: data.email || '' };
+
+        // Notify property staff if any
+        if (staffEmails.length) {
+          await emailService.sendNewRequestToRecipients(requestPayload, anonClient, staffEmails);
+        }
+
+        // Also notify global admins/managers
+        await emailService.sendNewRequestNotification(requestPayload, anonClient);
+      } catch (notifyErr) {
+        console.error('Error notifying on anonymous issue create:', notifyErr);
+      }
     }
   } catch (emailError) {
     console.error('Error sending new request notification:', emailError);

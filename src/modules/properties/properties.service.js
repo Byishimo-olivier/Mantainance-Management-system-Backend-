@@ -7,6 +7,13 @@ exports.create = async (data) => {
 
 exports.findAll = async () => {
   return await prisma.property.findMany();
+// Accept filter for userId
+exports.findAll = async (filter = {}) => {
+  if (filter.userId) {
+    return await prisma.property.findMany({ where: { userId: filter.userId } });
+  }
+  return await prisma.property.findMany();
+};
 };
 
 const { ObjectId } = require('mongodb');

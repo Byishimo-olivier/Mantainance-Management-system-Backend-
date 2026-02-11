@@ -385,6 +385,30 @@ module.exports = {
   }
   ,
 
+  // Send 'new request' notification to arbitrary recipient emails (e.g., property staff)
+  async sendNewRequestToRecipients(requestData, clientData, recipientEmails = []) {
+    try {
+      if (!Array.isArray(recipientEmails) || recipientEmails.length === 0) {
+        console.log('No recipient emails provided for property staff notification');
+        return;
+      }
+      const template = templates.newRequest({
+        ...requestData,
+        clientName: clientData.name || 'Anonymous',
+        clientEmail: clientData.email || ''
+      });
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: recipientEmails.join(','),
+        subject: template.subject,
+        html: template.html
+      });
+      console.log('✅ New request notification sent to recipients:', recipientEmails);
+    } catch (error) {
+      console.error('Error sending new request to recipients:', error);
+    }
+  },
+
   // Send reminder emails for routine maintenance
   async sendMaintenanceReminder(schedule, recipients) {
     try {

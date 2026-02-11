@@ -12,7 +12,14 @@ module.exports = {
   },
   async getAll(req, res) {
     try {
-      const properties = await propertyModel.findAll();
+      // Anonymous and admin/manager see all, others see only their own
+      const user = req.user;
+      let properties;
+      if (!user || user.role === 'admin' || user.role === 'manager') {
+        properties = await propertyModel.findAll();
+      } else {
+        properties = await propertyModel.findAll({ userId: user.userId });
+      }
       res.json(normalizeExtendedJSON(properties));
     } catch (err) {
       res.status(500).json({ error: err.message });

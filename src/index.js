@@ -17,6 +17,7 @@ const internalTechnicianRoutes = require('./modules/internalTechnician/internalT
 const maintenanceTemplateRoutes = require('./modules/maintenanceTemplate/maintenanceTemplate.routes');
 const maintenanceScheduleRoutes = require('./modules/maintenanceSchedule/maintenanceSchedule.routes');
 const emailRoutes = require('./modules/emailService/email.routes');
+const materialRequestRoutes = require('./modules/materialRequest/materialRequest.routes');
 
 const app = express();
 
@@ -50,6 +51,7 @@ app.use('/api/internal-technicians', internalTechnicianRoutes);
 app.use('/api/maintenance-templates', maintenanceTemplateRoutes);
 app.use('/api/maintenance-schedules', maintenanceScheduleRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/material-requests', materialRequestRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

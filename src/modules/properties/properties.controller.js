@@ -3,11 +3,19 @@ const { normalizeExtendedJSON } = require('../../utils/normalize');
 
 exports.getAll = async (req, res) => {
   try {
-    const properties = await service.findAll();
+    // Only return properties owned by the logged-in user
+    const user = req.user;
+    if (!user || !user.id) {
+      return res.status(401).json({ error: 'User not authenticated.' });
+    }
+    const properties = await service.findAll({ userId: user.id });
     res.json(normalizeExtendedJSON(properties));
   } catch (err) {
     console.error('[properties.controller.js:getAll]', err);
-    res.status(500).json({ error: err.message });
+    if (err instanceof Error && err.stack) {
+      console.error('Stack trace:', err.stack);
+    }
+    res.status(500).json({ error: err.message, details: err.stack });
   }
 };
 
@@ -30,7 +38,13 @@ exports.getById = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const property = await service.create(req.body);
+    // Use userId from authenticated user (req.user)
+    const user = req.user;
+    if (!user || !user.id) {
+      return res.status(401).json({ error: 'User not authenticated.' });
+    }
+    const data = { ...req.body, userId: user.id };
+    const property = await service.create(data);
     res.status(201).json(normalizeExtendedJSON(property));
   } catch (err) {
     console.error('[properties.controller.js:create]', err);
