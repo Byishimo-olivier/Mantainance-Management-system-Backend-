@@ -12,9 +12,17 @@ module.exports = {
   },
   async create(req, res) {
     try {
-      const asset = await assetModel.create(req.body);
+      const data = { ...req.body };
+      console.log('[Asset Create] req.user:', req.user);
+
+      if (req.user && req.user.userId) {
+        data.userId = String(req.user.userId);
+      }
+
+      const asset = await assetModel.create(data);
       res.status(201).json(normalizeExtendedJSON(asset));
     } catch (err) {
+      console.error('[Asset Create] Prisma Error:', err.message);
       res.status(400).json({ error: err.message });
     }
   },

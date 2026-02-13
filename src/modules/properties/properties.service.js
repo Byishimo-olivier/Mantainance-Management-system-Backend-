@@ -1,19 +1,24 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const mongoose = require('mongoose');
 
 exports.create = async (data) => {
   return await prisma.property.create({ data });
 };
 
-exports.findAll = async () => {
-  return await prisma.property.findMany();
-// Accept filter for userId
 exports.findAll = async (filter = {}) => {
-  if (filter.userId) {
-    return await prisma.property.findMany({ where: { userId: filter.userId } });
+  try {
+    return await prisma.property.findMany({ where: filter });
+  } catch (err) {
+    if (err.message.includes('userId') && (err.message.includes('null') || err.message.includes('converting'))) {
+      console.error('CRITICAL: Prisma conversion error detected for Property (Old Service). Falling back to raw MongoDB.');
+      const db = mongoose.connection.db;
+      if (!db) throw err;
+      const props = await db.collection('Property').find(filter).toArray();
+      return props.map(p => ({ ...p, id: p._id.toString() }));
+    }
+    throw err;
   }
-  return await prisma.property.findMany();
-};
 };
 
 const { ObjectId } = require('mongodb');

@@ -9,7 +9,7 @@ const router = express.Router();
 router.post('/', authenticate, controller.create);
 const { optionalAuthenticate } = require('../../middleware/auth');
 router.get('/', optionalAuthenticate, controller.getAll);
-router.get('/:id', authenticate, controller.getById);
+router.get('/:id', optionalAuthenticate, controller.getById);
 router.put('/:id', authenticate, controller.update);
 router.delete('/:id', authenticate, controller.remove);
 

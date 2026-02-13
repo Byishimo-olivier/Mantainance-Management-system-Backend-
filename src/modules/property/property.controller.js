@@ -4,9 +4,28 @@ const { normalizeExtendedJSON } = require('../../utils/normalize');
 module.exports = {
   async create(req, res) {
     try {
-      const property = await propertyModel.create(req.body);
+      const data = { ...req.body };
+      console.log('[Property Create] req.user:', req.user);
+      console.log('[Property Create] initial data:', data);
+
+      if (req.user && req.user.userId) {
+        data.userId = req.user.userId;
+      }
+
+      // Fallback: if userId is still missing but clientId is present, use it
+      if (!data.userId && data.clientId) {
+        console.log('[Property Create] Falling back: using clientId for userId');
+        data.userId = data.clientId;
+      }
+
+      if (!data.userId) {
+        console.error('[Property Create] Error: userId is still missing!');
+      }
+
+      const property = await propertyModel.create(data);
       res.status(201).json(normalizeExtendedJSON(property));
     } catch (err) {
+      console.error('[Property Create] Prisma Error:', err.message);
       res.status(400).json({ error: err.message });
     }
   },
