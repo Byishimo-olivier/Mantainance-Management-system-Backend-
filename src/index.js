@@ -25,17 +25,25 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  process.env.FRONTEND_URL
+  process.env.FRONTEND_URL,
+  'https://mms-frontend.vercel.app', // Common pattern, user might have this
 ].filter(Boolean);
+
+console.log('Allowed Origins:', allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+
+    const isAllowed = allowedOrigins.includes(origin) ||
+      (process.env.NODE_ENV !== 'production') ||
+      origin.endsWith('.vercel.app'); // Allow all vercel subdomains for easier setup
+
+    if (isAllowed) {
       callback(null, true);
     } else {
-      console.log('Blocked by CORS:', origin);
+      console.error('CORS blocked for origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -58,7 +66,12 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', environment: process.env.NODE_ENV });
+  res.status(200).json({
+    status: 'ok',
+    environment: process.env.NODE_ENV,
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.use('/api/users', userRoutes);
@@ -81,10 +94,8 @@ app.use('/api/material-requests', materialRequestRoutes);
 
 const PORT = process.env.PORT || 5000;
 
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-}
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
 
 module.exports = app;
