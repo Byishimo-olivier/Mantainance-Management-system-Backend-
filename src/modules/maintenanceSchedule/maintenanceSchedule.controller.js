@@ -40,6 +40,10 @@ module.exports = {
           data.nextDate = new Date(data.date);
         }
       }
+      if (req.user && req.user.userId) {
+        data.userId = String(req.user.userId);
+      }
+      console.log('[Schedule Create] Creating with userId:', data.userId);
       // If date/time fields are present they remain on the object as strings for clients if needed
       const schedule = await model.create(data);
       res.status(201).json(normalizeExtendedJSON(schedule));
@@ -154,11 +158,10 @@ module.exports = {
       if (schedule.email) recipients.push(schedule.email);
       if (schedule.employees) {
         const ids = typeof schedule.employees === 'string' ? schedule.employees.split(',').map(x => x.trim()).filter(Boolean) : Array.isArray(schedule.employees) ? schedule.employees : [];
-        const { PrismaClient } = require('@prisma/client');
-        const prisma = new PrismaClient();
+        const techModel = require('../internalTechnician/internalTechnician.model');
         for (const tid of ids) {
           try {
-            const tech = await prisma.internalTechnician.findUnique({ where: { id: tid } });
+            const tech = await techModel.findById(tid);
             if (tech && tech.email) recipients.push(tech.email);
           } catch (e) {
             // ignore

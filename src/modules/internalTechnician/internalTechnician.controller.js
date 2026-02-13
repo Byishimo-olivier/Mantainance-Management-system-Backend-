@@ -25,6 +25,11 @@ module.exports = {
         // remove password before saving internal technician record
         delete data.password;
       }
+      if (req.user && req.user.userId) {
+        data.userId = String(req.user.userId);
+      }
+      console.log('[InternalTech Create] req.user:', req.user);
+      console.log('[InternalTech Create] data:', data);
 
       const tech = await model.create(data);
       res.status(201).json(normalizeExtendedJSON(tech));

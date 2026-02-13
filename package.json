@@ -8,10 +8,12 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "build": "node node_modules/prisma/build/index.js generate",
-    "postinstall": "node node_modules/prisma/build/index.js generate",
+    "build": "npx prisma generate",
+    "postinstall": "npx prisma generate",
     "prisma": "prisma",
-    "seed:properties": "node scripts/seed-properties.js"
+    "seed:properties": "node scripts/seed-properties.js",
+    "patch-data": "node scripts/patch-legacy-data.js",
+    "repair-data": "node scripts/repair-data-mongoose.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -291,19 +291,24 @@ async function attachClientNames(issues) {
 
 exports.getByRole = async (req, res) => {
   const user = req.user;
-  // Anonymous users cannot view issues - they can only submit them
+  const propertyId = req.query && (req.query.propertyId || req.query.propertyID || req.query.propertyid);
+
+  // If a propertyId query param is provided, return issues for that property (allowing guest access)
+  if (propertyId) {
+    try {
+      let issues = await service.getByPropertyId(propertyId);
+      issues = await attachClientNames(issues);
+      return res.json(normalizeExtendedJSON(issues));
+    } catch (e) {
+      console.error('Error in getByRole with propertyId:', e);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  // Otherwise, unauthorized for anonymous users
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-
   let issues = [];
-
-  // If a propertyId query param is provided, return issues for that property
-  const propertyId = req.query && (req.query.propertyId || req.query.propertyID || req.query.propertyid);
-  if (propertyId) {
-    issues = await service.getByPropertyId(propertyId);
-    issues = await attachClientNames(issues);
-    return res.json(normalizeExtendedJSON(issues));
-  }
   if (user.role === 'admin') {
     issues = await service.getAll();
     issues = await attachClientNames(issues);
@@ -329,14 +334,12 @@ exports.getByRole = async (req, res) => {
 
     // Fetch properties owned by this client (userId is the owner)
     // Also include properties where clientId matches, just in case
-    const clientProperties = await prisma.property.findMany({
-      where: {
-        OR: [
-          { userId: user.userId },
-          { clientId: user.userId }
-        ]
-      },
-      select: { id: true, name: true }
+    const propertyModel = require('../property/property.model');
+    const clientProperties = await propertyModel.findAll({
+      OR: [
+        { userId: user.userId },
+        { clientId: user.userId }
+      ]
     });
     const propertyIds = clientProperties.map(p => p.id);
 

@@ -24,9 +24,11 @@ const app = express();
 // CORS configuration
 const allowedOrigins = [
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
   process.env.FRONTEND_URL,
-  'https://mms-frontend.vercel.app', // Common pattern, user might have this
+  'https://mms-frontend.vercel.app',
 ].filter(Boolean);
 
 console.log('Allowed Origins:', allowedOrigins);
@@ -38,12 +40,14 @@ app.use(cors({
 
     const isAllowed = allowedOrigins.includes(origin) ||
       (process.env.NODE_ENV !== 'production') ||
-      origin.endsWith('.vercel.app'); // Allow all vercel subdomains for easier setup
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.now.sh');
 
     if (isAllowed) {
       callback(null, true);
     } else {
-      console.error('CORS blocked for origin:', origin);
+      console.error('[CORS Blocked] Origin:', origin);
+      console.log('[CORS Allowed] Origins:', allowedOrigins);
       callback(new Error('Not allowed by CORS'));
     }
   },

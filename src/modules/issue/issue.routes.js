@@ -23,10 +23,10 @@ router.post('/:id/resubmit', authenticate, authorizeRoles('client', 'manager', '
 
 // Admin: all issues, Tech: assigned, User: own
 // GET endpoints require authentication; allow public POST to create issues
-router.get('/', authenticate, ctrl.getByRole);
+router.get('/', optionalAuthenticate, ctrl.getByRole);
 router.get('/user/:userId', authenticate, authorizeRoles('client'), ctrl.getByUserId);
 router.get('/assigned/:techId', authenticate, authorizeRoles('technician', 'internal'), ctrl.getByAssignedTech);
-router.get('/:id', authenticate, ctrl.getById);
+router.get('/:id', optionalAuthenticate, ctrl.getById);
 router.post('/', optionalAuthenticate, upload.single('photo'), ctrl.create);
 router.put('/:id', authenticate, ctrl.update);
 router.delete('/:id', authenticate, ctrl.delete);
