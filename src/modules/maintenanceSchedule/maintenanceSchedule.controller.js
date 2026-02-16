@@ -29,17 +29,26 @@ module.exports = {
   async create(req, res) {
     try {
       const data = { ...req.body };
+      console.log('[Schedule Create] Initial data:', JSON.stringify(data, null, 2));
       // Accept all new fields from the form
       // If date/time fields are present, combine into nextDate (preserve local time)
       if (data.date) {
         if (data.time) {
           // Combine date and time into local ISO-like string then create Date
           // e.g., date='2026-02-01', time='14:30' => new Date('2026-02-01T14:30:00')
-          data.nextDate = new Date(`${data.date}T${data.time}`);
+          const dateStr = `${data.date}T${data.time}`;
+          data.nextDate = new Date(dateStr);
+          console.log('[Schedule Create] Combined nextDate:', data.nextDate, 'from:', dateStr);
         } else {
           data.nextDate = new Date(data.date);
         }
       }
+
+      if (isNaN(data.nextDate?.getTime())) {
+        console.warn('[Schedule Create] Invalid nextDate generated, defaulting to now');
+        data.nextDate = new Date();
+      }
+
       if (req.user && req.user.userId) {
         data.userId = String(req.user.userId);
       }
@@ -48,8 +57,8 @@ module.exports = {
       const schedule = await model.create(data);
       res.status(201).json(normalizeExtendedJSON(schedule));
     } catch (err) {
-      console.error('[maintenanceSchedule.controller.js:create]', err);
-      res.status(400).json({ error: err.message });
+      console.error('[maintenanceSchedule.controller.js:create] ERROR:', err);
+      res.status(400).json({ error: err.message, stack: process.env.NODE_ENV === 'development' ? err.stack : undefined });
     }
   },
   async getAll(req, res) {
@@ -205,6 +214,7 @@ module.exports = {
   async update(req, res) {
     try {
       const data = { ...req.body };
+      console.log('[Schedule Update] ID:', req.params.id, 'Data:', JSON.stringify(data, null, 2));
       // Accept date/time fields for updates as well
       if (data.date) {
         if (data.time) {
@@ -218,7 +228,7 @@ module.exports = {
       const schedule = await model.update(req.params.id, data);
       res.json(normalizeExtendedJSON(schedule));
     } catch (err) {
-      console.error('[maintenanceSchedule.controller.js:update]', err);
+      console.error('[maintenanceSchedule.controller.js:update] ERROR:', err);
       res.status(400).json({ error: err.message });
     }
   },
