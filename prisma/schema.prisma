@@ -324,3 +324,14 @@ model Manager {
   name  String
   email String @unique
 }
+
+model Notification {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  title     String
+  message   String
+  type      String   @default("info") // info, success, warning, error
+  read      Boolean  @default(false)
+  link      String?  // Optional URL to navigate to
+  createdAt DateTime @default(now())
+}

@@ -4,7 +4,17 @@ const { normalizeExtendedJSON } = require('../../utils/normalize');
 // Returns users with role TECH from User table
 exports.getAll = async (req, res) => {
   const technicians = await service.getAll();
-  res.json(normalizeExtendedJSON(technicians));
+  // Ensure we return a plain object and ID is a string
+  const plainTechnicians = technicians.map(t => {
+    const obj = t.toObject ? t.toObject() : t;
+    const id = obj._id ? obj._id.toString() : obj.id;
+    return {
+      ...obj,
+      _id: id,
+      id: id
+    };
+  });
+  res.json(normalizeExtendedJSON(plainTechnicians));
 };
 
 exports.getById = async (req, res) => {
@@ -33,7 +43,17 @@ exports.delete = async (req, res) => {
 exports.getForAssignment = async (req, res) => {
   try {
     const all = await service.getAll();
-    const mapped = (all || []).map(t => ({ id: t.id || t._id, name: t.name, phone: t.phone, email: t.email, specialty: t.specialty }));
+    const mapped = (all || []).map(t => {
+      const id = t._id ? t._id.toString() : t.id;
+      return {
+        id,
+        _id: id,
+        name: t.name,
+        phone: t.phone,
+        email: t.email,
+        specialty: t.specialty
+      };
+    });
     res.json(normalizeExtendedJSON(mapped));
   } catch (err) {
     console.error('[technician.controller.js:getForAssignment]', err);

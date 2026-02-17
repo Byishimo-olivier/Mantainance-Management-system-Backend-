@@ -150,18 +150,20 @@ module.exports = {
       });
     } catch (err) {
       console.error('CRITICAL: Prisma conversion error in issue.service:getByPropertyId. Falling back to raw MongoDB.');
-      const db = mongoose.connection.db;
-      if (!db) throw err;
-      const assets = await db.collection('Asset').find({ propertyId }).toArray();
-      const assetIds = assets.map(a => a._id.toString());
-      const issues = await db.collection('Issue').find({
-        $or: [
-          { propertyId },
-          { assetId: { $in: assetIds } }
-        ]
-      }).toArray();
-      return issues.map(i => ({ ...i, id: i._id.toString() }));
-    }
+        const db = mongoose.connection.db;
+        if (!db) throw err;
+        const assetsFilter = translateFilterToMongo({ propertyId });
+        const assets = await db.collection('Asset').find(assetsFilter).toArray();
+        const assetIds = assets.map(a => a._id.toString());
+        const mongoFilter = translateFilterToMongo({
+          OR: [
+            { propertyId },
+            ...(assetIds.length ? [{ assetId: { in: assetIds } }] : [])
+          ]
+        });
+        const issues = await db.collection('Issue').find(mongoFilter).toArray();
+        return issues.map(i => ({ ...i, id: i._id.toString() }));
+      }
   },
 
   getByPropertyIds: async (propertyIds) => {
@@ -183,18 +185,20 @@ module.exports = {
       });
     } catch (err) {
       console.error('CRITICAL: Prisma conversion error in issue.service:getByPropertyIds. Falling back to raw MongoDB.');
-      const db = mongoose.connection.db;
-      if (!db) throw err;
-      const assets = await db.collection('Asset').find({ propertyId: { $in: propertyIds } }).toArray();
-      const assetIds = assets.map(a => a._id.toString());
-      const issues = await db.collection('Issue').find({
-        $or: [
-          { propertyId: { $in: propertyIds } },
-          { assetId: { $in: assetIds } }
-        ]
-      }).sort({ createdAt: -1 }).toArray();
-      return issues.map(i => ({ ...i, id: i._id.toString() }));
-    }
+        const db = mongoose.connection.db;
+        if (!db) throw err;
+        const assetsFilter = translateFilterToMongo({ propertyId: { in: propertyIds } });
+        const assets = await db.collection('Asset').find(assetsFilter).toArray();
+        const assetIds = assets.map(a => a._id.toString());
+        const mongoFilter = translateFilterToMongo({
+          OR: [
+            { propertyId: { in: propertyIds } },
+            ...(assetIds.length ? [{ assetId: { in: assetIds } }] : []),
+          ]
+        });
+        const issues = await db.collection('Issue').find(mongoFilter).sort({ createdAt: -1 }).toArray();
+        return issues.map(i => ({ ...i, id: i._id.toString() }));
+      }
   },
 
   getByManagerId: async (managerUserId) => {

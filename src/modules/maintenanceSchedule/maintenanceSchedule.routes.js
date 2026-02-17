@@ -4,6 +4,7 @@ const { authenticate } = require('../../middleware/auth');
 const router = express.Router();
 
 router.post('/', authenticate, controller.create);
+router.get('/technician/:id', authenticate, controller.getForTechnician);
 router.get('/', controller.getAll);
 router.get('/:id', controller.getById);
 router.post('/:id/dismiss', authenticate, controller.dismiss);

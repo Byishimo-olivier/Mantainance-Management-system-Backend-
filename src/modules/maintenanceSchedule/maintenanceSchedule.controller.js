@@ -198,6 +198,47 @@ module.exports = {
     }
   },
 
+  async getForTechnician(req, res) {
+    try {
+      const technicianUserId = req.params.id;
+      const techModel = require('../internalTechnician/internalTechnician.model');
+      // Find the internal technician record for this user
+      const techs = await techModel.findAll({ userId: technicianUserId });
+
+      if (!techs || techs.length === 0) {
+        return res.json([]);
+      }
+
+      const techId = techs[0].id || techs[0]._id;
+
+      const allSchedules = await model.findAll();
+
+      const filtered = allSchedules.filter(s => {
+        if (!s) return false;
+        // Match by technicianId
+        const sTechId = s.technicianId ? String(s.technicianId) : null;
+        if (sTechId === String(techId)) {
+          return true;
+        }
+
+        // Match in employees string (comma-separated IDs)
+        if (s.employees) {
+          const ids = String(s.employees).split(',').map(x => x.trim()).filter(Boolean);
+          if (ids.includes(String(techId))) {
+            return true;
+          }
+        }
+
+        return false;
+      });
+
+      res.json(normalizeExtendedJSON(filtered));
+    } catch (err) {
+      console.error('[maintenanceSchedule.controller.js:getForTechnician]', err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+
   async getReminderLogs(req, res) {
     try {
       const id = req.params.id;

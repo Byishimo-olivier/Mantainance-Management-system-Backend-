@@ -1,5 +1,6 @@
 const upload = require('../../middleware/upload');
 const emailService = require('../emailService/email.service');
+const notificationService = require('../notification/notification.service');
 
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
@@ -99,7 +100,27 @@ exports.uploadAfterEvidence = [
       }
     } catch (emailError) {
       console.error('Error sending completion notification:', emailError);
-      // Don't fail the request if email fails
+    }
+
+    // In-app notification for client
+    try {
+      await notificationService.createNotification({
+        userId: updated.userId,
+        title: "Issue Completed",
+        message: `Your issue "${updated.title}" has been completed.`,
+        type: "success",
+        link: `/client-dashboard?id=${updated.id}`
+      });
+
+      // Notify admins too
+      await notificationService.notifyAdmins({
+        title: "Issue Completed",
+        message: `Issue "${updated.title}" has been marked as complete by the technician.`,
+        type: "success",
+        link: `/manager-dashboard?tab=manage-issue&id=${updated.id}`
+      });
+    } catch (notifyErr) {
+      console.error('Error creating in-app completion notification:', notifyErr);
     }
 
     res.json(normalizeExtendedJSON(updated));
@@ -143,6 +164,19 @@ exports.assignToTech = async (req, res) => {
     );
   } catch (emailError) {
     console.error('Error sending technician assignment notification:', emailError);
+  }
+
+  // In-app notification for technician
+  try {
+    await notificationService.createNotification({
+      userId: tech.id || tech._id,
+      title: "New Issue Assigned",
+      message: `You have been assigned to: ${updated.title}`,
+      type: "info",
+      link: `/technician-dashboard?tab=assigned-issues&id=${updated.id}`
+    });
+  } catch (notifyErr) {
+    console.error('Error creating in-app assignment notification:', notifyErr);
   }
   res.json(normalizeExtendedJSON(updated));
 };
@@ -203,9 +237,14 @@ exports.assignToInternal = async (req, res) => {
     };
 
     const updatePayload = {
-      assignees: [assignerInfo, internalAssignee],
+      assignees: [assignerInfo],
       status: 'IN PROGRESS'
     };
+    // Add internalAssignee to assignees if not already present (e.g., if assigner is the internal tech)
+    if (!updatePayload.assignees.some(a => a.id === internalAssignee.id)) {
+      updatePayload.assignees.push(internalAssignee);
+    }
+
 
     // If a linked User exists, set assignedTo to that user's id so they can fetch assigned issues
     if (linkedUser && (linkedUser.id || linkedUser._id)) {
@@ -225,6 +264,21 @@ exports.assignToInternal = async (req, res) => {
       }, { name: assignerInfo.name, email: assignerInfo.email }, [tech.email]);
     } catch (emailErr) {
       console.error('Error notifying internal technician:', emailErr);
+    }
+
+    // In-app notification for internal technician
+    if (linkedUser) {
+      try {
+        await notificationService.createNotification({
+          userId: linkedUser.id || linkedUser._id,
+          title: "New Issue Assigned",
+          message: `You have been assigned to: ${updated.title}`,
+          type: "info",
+          link: `/technician-dashboard?tab=assigned-issues&id=${updated.id}`
+        });
+      } catch (notifyErr) {
+        console.error('Error creating in-app assignment notification for internal tech:', notifyErr);
+      }
     }
 
     res.json(normalizeExtendedJSON(updated));
@@ -262,6 +316,18 @@ exports.resubmitIssue = async (req, res) => {
       }, anonClient);
     } catch (emailErr) {
       console.error('Error sending resubmission notification:', emailErr);
+    }
+
+    // In-app notification for admins/managers about resubmission
+    try {
+      await notificationService.notifyAdmins({
+        title: "Issue Resubmitted for Review",
+        message: `Issue "${updated.title}" has been resubmitted and requires review.`,
+        type: "warning",
+        link: `/manager-dashboard?tab=manage-issue&id=${updated.id}`
+      });
+    } catch (notifyErr) {
+      console.error('Error creating in-app resubmission notification:', notifyErr);
     }
 
     res.json(normalizeExtendedJSON(updated));
@@ -505,7 +571,7 @@ exports.create = async (req, res) => {
         }
 
         // Store config to send email AFTER creation
-        assignedInternalTechConfig = { tech, internalAssignee };
+        assignedInternalTechConfig = { tech, internalAssignee, linkedUser };
       }
     } catch (e) {
       console.error('Error handling internal technician assignment:', e);
@@ -542,6 +608,21 @@ exports.create = async (req, res) => {
         assignerInfo,
         [assignedInternalTechConfig.tech.email]
       );
+
+      // In-app notification for internal technician
+      if (assignedInternalTechConfig.linkedUser) {
+        try {
+          await notificationService.createNotification({
+            userId: assignedInternalTechConfig.linkedUser.id || assignedInternalTechConfig.linkedUser._id,
+            title: "New Issue Assigned",
+            message: `You have been assigned to: ${created.title}`,
+            type: "info",
+            link: `/technician-dashboard?tab=assigned-issues&id=${created.id}`
+          });
+        } catch (notifyErr) {
+          console.error('Error creating in-app assignment notification for internal tech on create:', notifyErr);
+        }
+      }
     }
 
     // 2. Notify Admins/Managers (Standard flow)
@@ -591,7 +672,18 @@ exports.create = async (req, res) => {
     }
   } catch (emailError) {
     console.error('Error sending new request notification:', emailError);
-    // Don't fail the request if email fails
+  }
+
+  // In-app notification for admins
+  try {
+    await notificationService.notifyAdmins({
+      title: "New Maintenance Request",
+      message: `A new request "${data.title}" has been submitted.`,
+      type: "info",
+      link: `/manager-dashboard?tab=manage-issue&id=${created.id}`
+    });
+  } catch (notifyErr) {
+    console.error('Error creating in-app new request notification:', notifyErr);
   }
 
   res.status(201).json(normalizeExtendedJSON(created));
@@ -660,6 +752,21 @@ exports.update = async (req, res) => {
               location: updated.location
             }, client, manager, req.body.reason || 'No reason provided');
           }
+        }
+
+        // In-app notification for client
+        try {
+          await notificationService.createNotification({
+            userId: updated.userId,
+            title: updated.status === 'APPROVED' ? "Request Approved" : "Request Declined",
+            message: updated.status === 'APPROVED'
+              ? `Your request "${updated.title}" has been approved.`
+              : `Your request "${updated.title}" was declined. Reason: ${req.body.reason || 'No reason provided'}`,
+            type: updated.status === 'APPROVED' ? "success" : "error",
+            link: `/client-dashboard?id=${updated.id}`
+          });
+        } catch (notifyErr) {
+          console.error('Error creating in-app approval/decline notification:', notifyErr);
         }
       }
     }
