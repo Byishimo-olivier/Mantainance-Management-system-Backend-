@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "build": "npx prisma generate",
-    "postinstall": "npx prisma generate",
+    "build": "prisma generate",
+    "postinstall": "prisma generate",
     "prisma": "prisma",
     "seed:properties": "node scripts/seed-properties.js",
     "patch-data": "node scripts/patch-legacy-data.js",

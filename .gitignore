@@ -1,0 +1,13 @@
+node_modules
+.env
+*.log
+dist
+build
+.prisma/client
+prisma/generated
+uploads
+debug_out*.txt
+diagnostic_results.json
+models.json
+models_list.json
+models_list_clean.txt
