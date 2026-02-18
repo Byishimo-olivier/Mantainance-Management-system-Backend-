@@ -30,8 +30,15 @@ class AIService {
       const cleanedText = text.replace(/```json|```/g, "").trim();
       return JSON.parse(cleanedText);
     } catch (error) {
-      if (error.status === 429 || error.message?.includes("429") || error.message?.includes("quota")) {
-        console.warn("AI Service: Quota exceeded. Using high-quality mock fallback.");
+      if (
+        error.status === 429 ||
+        error.status === 403 ||
+        error.message?.includes("429") ||
+        error.message?.includes("403") ||
+        error.message?.includes("quota") ||
+        error.message?.includes("API key")
+      ) {
+        console.warn(`AI Service: Request failed (${error.status || 'Error'}). Using high-quality mock fallback.`);
         return fallbackData;
       }
       console.error("AI Service Error:", error.message);
@@ -105,8 +112,15 @@ class AIService {
       const response = await result.response;
       return response.text();
     } catch (error) {
-      if (error.status === 429 || error.message?.includes("429") || error.message?.includes("quota")) {
-        return "I'm sorry, I'm currently at my free tier usage limit. Please try again in a minute or check back later! (Error 429: Quota Exceeded)";
+      if (
+        error.status === 429 ||
+        error.status === 403 ||
+        error.message?.includes("429") ||
+        error.message?.includes("403") ||
+        error.message?.includes("quota") ||
+        error.message?.includes("API key")
+      ) {
+        return "I'm sorry, I'm currently unavailable or at my free tier usage limit. Please check the API configuration or try again in a minute! (Status: AI Service Temporarily Restricted)";
       }
       console.error("AI Chat Error:", error.message);
       throw error;
