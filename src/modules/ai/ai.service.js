@@ -10,6 +10,9 @@ const SYSTEM_INSTRUCTION = "You are the KAT (Kigali Apple Tech) AI Assistant for
 
 class AIService {
   constructor() {
+    this.cache = new Map();
+    this.CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+
     try {
       this.model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
       console.log(`AI Service: Initialized with gemini-2.0-flash. Key starts with: ${apiKey ? apiKey.substring(0, 10) : 'MISSING'}...`);
@@ -19,6 +22,14 @@ class AIService {
   }
 
   async generateJson(prompt, fallbackData) {
+    // 1. Check Cache
+    const cacheKey = prompt;
+    const cached = this.cache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
+      console.log("AI Service: Returning cached result to save quota.");
+      return cached.data;
+    }
+
     try {
       if (!apiKey || apiKey === "dummy_key") throw new Error("GEMINI_API_KEY is not configured.");
 
@@ -28,14 +39,23 @@ class AIService {
       const text = response.text();
 
       const cleanedText = text.replace(/```json|```/g, "").trim();
-      return JSON.parse(cleanedText);
+      const data = JSON.parse(cleanedText);
+
+      // 2. Store in Cache
+      this.cache.set(cacheKey, { timestamp: Date.now(), data });
+      return data;
+
     } catch (error) {
       const status = error.status || error.response?.status;
       const message = error.message || error.toString();
-      console.error(`[AI Service JSON Error] Status: ${status || 'N/A'}, Message: ${message}`);
 
-      // If we are getting a 400 or 403, it means the key is likely STILL the problem
-      // We throw so the UI knows it's an error rather than showing misleading fallback
+      // 3. Handle Rate Limits (429) Gracefully
+      if (status === 429 || message.includes("429") || message.includes("quota")) {
+        console.warn(`[AI Service Warning] Quota exceeded (429). Returning fallback data to keep system operational.`);
+        return fallbackData;
+      }
+
+      console.error(`[AI Service JSON Error] Status: ${status || 'N/A'}, Message: ${message}`);
       throw new Error(`AI Analysis Failed (Status ${status}): ${message}`);
     }
   }
@@ -108,8 +128,12 @@ class AIService {
     } catch (error) {
       const status = error.status || error.response?.status;
       const message = error.message || error.toString();
-      console.error(`[AI Chat Error] Status: ${status || 'N/A'}, Message: ${message}`);
 
+      if (status === 429 || message.includes("429") || message.includes("quota")) {
+        return "I'm currently receiving too many requests (Free Tier Quota Exceeded). Please try again in a few minutes.";
+      }
+
+      console.error(`[AI Chat Error] Status: ${status || 'N/A'}, Message: ${message}`);
       return `I'm sorry, I'm having trouble connecting to the AI service. (Status: ${status || 'Error'}). Error: ${message}`;
     }
   }
