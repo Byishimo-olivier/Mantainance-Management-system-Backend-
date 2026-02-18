@@ -16,20 +16,28 @@ const emailService = process.env.EMAIL_SERVICE || 'gmail';
 
 if (emailService === 'gmail') {
   // Gmail configuration
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465;
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587;
   const secure = process.env.SMTP_SECURE === 'true' || port === 465;
 
+  console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure})`);
+
   transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host,
+    port,
+    secure,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     },
-    port,
-    secure,
-    tls: { rejectUnauthorized: false },
+    tls: {
+      rejectUnauthorized: false,
+      minVersion: 'TLSv1.2'
+    },
     debug: true,
-    logger: true
+    logger: true,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000
   });
 } else if (emailService === 'outlook' || emailService === 'hotmail') {
   // Outlook/Hotmail configuration
@@ -89,9 +97,9 @@ setTimeout(() => {
 
 // Email templates
 const templates = {
-    issueAssigned: (data) => ({
-      subject: `New Issue Assigned: ${data.title}`,
-      html: `
+  issueAssigned: (data) => ({
+    subject: `New Issue Assigned: ${data.title}`,
+    html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2563eb;">New Maintenance Issue Assigned</h2>
           <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -106,7 +114,7 @@ const templates = {
           <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/technician-dashboard?tab=assigned-issues" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Assigned Issues</a>
         </div>
       `
-    }),
+  }),
   newRequest: (data) => ({
     subject: `New Maintenance Request: ${data.title}`,
     html: `
@@ -186,30 +194,30 @@ const templates = {
 };
 
 module.exports = {
-    // Send email to technician when issue is assigned
-    async sendIssueAssignedNotification(issueData, technicianData, assignerData) {
-      try {
-        const template = templates.issueAssigned({
-          ...issueData,
-          assignedBy: assignerData.name
-        });
-        console.log('[EMAIL DEBUG] Preparing to send ASSIGN notification to technician.');
-        console.log('[EMAIL DEBUG] technicianData:', technicianData);
-        console.log('[EMAIL DEBUG] Sending from:', process.env.EMAIL_USER);
-        console.log('[EMAIL DEBUG] Sending to:', technicianData.email);
-        console.log('[EMAIL DEBUG] Subject:', template.subject);
-        console.log('[EMAIL DEBUG] HTML:', template.html);
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: technicianData.email,
-          subject: template.subject,
-          html: template.html
-        });
-        console.log('Issue assigned notification sent to technician');
-      } catch (error) {
-        console.error('Error sending issue assigned notification:', error);
-      }
-    },
+  // Send email to technician when issue is assigned
+  async sendIssueAssignedNotification(issueData, technicianData, assignerData) {
+    try {
+      const template = templates.issueAssigned({
+        ...issueData,
+        assignedBy: assignerData.name
+      });
+      console.log('[EMAIL DEBUG] Preparing to send ASSIGN notification to technician.');
+      console.log('[EMAIL DEBUG] technicianData:', technicianData);
+      console.log('[EMAIL DEBUG] Sending from:', process.env.EMAIL_USER);
+      console.log('[EMAIL DEBUG] Sending to:', technicianData.email);
+      console.log('[EMAIL DEBUG] Subject:', template.subject);
+      console.log('[EMAIL DEBUG] HTML:', template.html);
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: technicianData.email,
+        subject: template.subject,
+        html: template.html
+      });
+      console.log('Issue assigned notification sent to technician');
+    } catch (error) {
+      console.error('Error sending issue assigned notification:', error);
+    }
+  },
   // Send email to admin/manager when new request is created
   async sendNewRequestNotification(requestData, clientData) {
     try {
