@@ -31,25 +31,12 @@ class AIService {
       return JSON.parse(cleanedText);
     } catch (error) {
       const status = error.status || error.response?.status;
-      const message = error.message || "";
+      const message = error.message || error.toString();
+      console.error(`[AI Service JSON Error] Status: ${status || 'N/A'}, Message: ${message}`);
 
-      if (
-        status === 429 ||
-        status === 403 ||
-        status === 400 ||
-        message.includes("429") ||
-        message.includes("403") ||
-        message.includes("400") ||
-        message.includes("quota") ||
-        message.includes("API key") ||
-        message.includes("invalid") ||
-        message.includes("expired")
-      ) {
-        console.warn(`AI Service: Request failed (${status || 'Error'}). Using high-quality mock fallback. Details: ${message}`);
-        return fallbackData;
-      }
-      console.error("AI Service Error:", message);
-      throw error;
+      // If we are getting a 400 or 403, it means the key is likely STILL the problem
+      // We throw so the UI knows it's an error rather than showing misleading fallback
+      throw new Error(`AI Analysis Failed (Status ${status}): ${message}`);
     }
   }
 
@@ -120,24 +107,10 @@ class AIService {
       return response.text();
     } catch (error) {
       const status = error.status || error.response?.status;
-      const message = error.message || "";
+      const message = error.message || error.toString();
+      console.error(`[AI Chat Error] Status: ${status || 'N/A'}, Message: ${message}`);
 
-      if (
-        status === 429 ||
-        status === 403 ||
-        status === 400 ||
-        message.includes("429") ||
-        message.includes("403") ||
-        message.includes("400") ||
-        message.includes("quota") ||
-        message.includes("API key") ||
-        message.includes("invalid") ||
-        message.includes("expired")
-      ) {
-        return "I'm sorry, I'm currently unavailable or at my free tier usage limit. Please check the API configuration or try again in a minute! (Status: AI Service Temporarily Restricted)";
-      }
-      console.error("AI Chat Error:", message);
-      throw error;
+      return `I'm sorry, I'm having trouble connecting to the AI service. (Status: ${status || 'Error'}). Error: ${message}`;
     }
   }
 }
