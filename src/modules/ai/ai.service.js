@@ -12,7 +12,7 @@ class AIService {
   constructor() {
     try {
       this.model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-      console.log("AI Service: Initialized with gemini-2.0-flash");
+      console.log(`AI Service: Initialized with gemini-2.0-flash. Key starts with: ${apiKey ? apiKey.substring(0, 10) : 'MISSING'}...`);
     } catch (e) {
       console.error("AI Service Init Error:", e);
     }
