@@ -17,8 +17,9 @@ const emailService = process.env.EMAIL_SERVICE || 'gmail';
 if (emailService === 'gmail') {
   // Gmail configuration
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587;
-  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+  // Use port 465 and secure: true as default for production/cloud environments
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465;
+  const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
 
   console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure})`);
 
@@ -36,8 +37,9 @@ if (emailService === 'gmail') {
     },
     debug: true,
     logger: true,
-    connectionTimeout: 10000,
-    greetingTimeout: 10000
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
   });
 } else if (emailService === 'outlook' || emailService === 'hotmail') {
   // Outlook/Hotmail configuration
