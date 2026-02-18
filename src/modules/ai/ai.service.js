@@ -30,18 +30,25 @@ class AIService {
       const cleanedText = text.replace(/```json|```/g, "").trim();
       return JSON.parse(cleanedText);
     } catch (error) {
+      const status = error.status || error.response?.status;
+      const message = error.message || "";
+
       if (
-        error.status === 429 ||
-        error.status === 403 ||
-        error.message?.includes("429") ||
-        error.message?.includes("403") ||
-        error.message?.includes("quota") ||
-        error.message?.includes("API key")
+        status === 429 ||
+        status === 403 ||
+        status === 400 ||
+        message.includes("429") ||
+        message.includes("403") ||
+        message.includes("400") ||
+        message.includes("quota") ||
+        message.includes("API key") ||
+        message.includes("invalid") ||
+        message.includes("expired")
       ) {
-        console.warn(`AI Service: Request failed (${error.status || 'Error'}). Using high-quality mock fallback.`);
+        console.warn(`AI Service: Request failed (${status || 'Error'}). Using high-quality mock fallback. Details: ${message}`);
         return fallbackData;
       }
-      console.error("AI Service Error:", error.message);
+      console.error("AI Service Error:", message);
       throw error;
     }
   }
@@ -112,17 +119,24 @@ class AIService {
       const response = await result.response;
       return response.text();
     } catch (error) {
+      const status = error.status || error.response?.status;
+      const message = error.message || "";
+
       if (
-        error.status === 429 ||
-        error.status === 403 ||
-        error.message?.includes("429") ||
-        error.message?.includes("403") ||
-        error.message?.includes("quota") ||
-        error.message?.includes("API key")
+        status === 429 ||
+        status === 403 ||
+        status === 400 ||
+        message.includes("429") ||
+        message.includes("403") ||
+        message.includes("400") ||
+        message.includes("quota") ||
+        message.includes("API key") ||
+        message.includes("invalid") ||
+        message.includes("expired")
       ) {
         return "I'm sorry, I'm currently unavailable or at my free tier usage limit. Please check the API configuration or try again in a minute! (Status: AI Service Temporarily Restricted)";
       }
-      console.error("AI Chat Error:", error.message);
+      console.error("AI Chat Error:", message);
       throw error;
     }
   }
