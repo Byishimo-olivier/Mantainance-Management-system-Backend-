@@ -134,7 +134,20 @@ exports.assignToTech = async (req, res) => {
   // Fetch technician info from users table
   const userService = require('../user/user.service');
   const tech = await userService.findUserById(techId);
-  if (!tech) return res.status(404).json({ error: 'Technician not found' });
+  let techSource = 'user';
+  let externalTech = null;
+  if (!tech) {
+    // Try to find an external technician (admin-created) in Prisma
+    try {
+      const { PrismaClient } = require('@prisma/client');
+      const prisma = new PrismaClient();
+      externalTech = await prisma.technician.findUnique({ where: { id: techId } });
+      if (externalTech) techSource = 'external';
+    } catch (e) {
+      console.error('Error querying Prisma for external technician:', e);
+    }
+  }
+  if (!tech && !externalTech) return res.status(404).json({ error: 'Technician not found' });
   // The user assigning the task (from auth)
   const assigner = req.user;
   const assignerInfo = {
@@ -146,7 +159,8 @@ exports.assignToTech = async (req, res) => {
     status: assigner.status,
   };
   const updateData = {
-    assignedTo: tech.id,
+    // If technician is a user, link assignedTo to their user id; otherwise use external technician id
+    assignedTo: tech ? (tech.id || tech._id) : (externalTech ? externalTech.id : null),
     assignees: [assignerInfo],
   };
   if (priority) updateData.priority = priority;
@@ -157,6 +171,8 @@ exports.assignToTech = async (req, res) => {
   console.log('[assignToTech] updated issue:', updated);
   // Send email notification to technician
   try {
+    // Prepare recipient data for email notification
+    const techRecipient = tech || externalTech || {};
     await emailService.sendIssueAssignedNotification(
       {
         title: updated.title,
@@ -164,7 +180,7 @@ exports.assignToTech = async (req, res) => {
         location: updated.location || updated.address,
         priority: updated.priority || 'Normal'
       },
-      tech,
+      techRecipient,
       assigner
     );
   } catch (emailError) {
@@ -173,13 +189,17 @@ exports.assignToTech = async (req, res) => {
 
   // In-app notification for technician
   try {
-    await notificationService.createNotification({
-      userId: tech.id || tech._id,
-      title: "New Issue Assigned",
-      message: `You have been assigned to: ${updated.title}`,
-      type: "info",
-      link: `/technician-dashboard?tab=assigned-issues&id=${updated.id}`
-    });
+    // Only create in-app notification if we have a linked user id
+    const notifyUserId = (tech && (tech.id || tech._id)) ? (tech.id || tech._id) : null;
+    if (notifyUserId) {
+      await notificationService.createNotification({
+        userId: notifyUserId,
+        title: "New Issue Assigned",
+        message: `You have been assigned to: ${updated.title}`,
+        type: "info",
+        link: `/technician-dashboard?tab=assigned-issues&id=${updated.id}`
+      });
+    }
   } catch (notifyErr) {
     console.error('Error creating in-app assignment notification:', notifyErr);
   }
@@ -488,8 +508,9 @@ exports.create = async (req, res) => {
     const validFields = [
       'rejected', 'rejectedAt', 'rejectionReason', 'id', 'title', 'description', 'location',
       'assetId', 'propertyId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
-      'anonId', 'submissionType', 'name', 'email', 'phone',
+      'anonId', 'submissionType', 'requestType', 'name', 'email', 'phone',
       'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
+      'inspectorId', 'requestorId',
       'approvedAt', 'createdAt', 'updatedAt'
     ];
     const filteredData = {};
@@ -541,6 +562,42 @@ exports.create = async (req, res) => {
       }
     } catch (e) {
       console.error('Error during preventive detection on create:', e);
+    }
+    // Normalize requestType / requestedType (inspection vs request)
+    try {
+      const incomingRequestType = (data.requestedType || data.requestType || data.submissionType || '').toString().toLowerCase();
+      if (incomingRequestType) {
+        if (incomingRequestType.includes('inspect') || incomingRequestType === 'inspection' || incomingRequestType === 'authenticated') {
+          filteredData.requestType = 'inspection';
+        } else if (incomingRequestType.includes('request') || incomingRequestType === 'requestor' || incomingRequestType === 'anonymous') {
+          filteredData.requestType = 'request';
+        } else {
+          filteredData.requestType = incomingRequestType;
+        }
+      } else {
+        // Default: authenticated submissions => inspection, anonymous => request
+        filteredData.requestType = filteredData.userId ? 'inspection' : 'request';
+      }
+
+      // Map to explicit inspector/requestor fields for clarity
+      if (filteredData.userId) {
+        filteredData.inspectorId = filteredData.userId;
+      } else {
+        // Use anonId or generate a lightweight requestor token
+        filteredData.requestorId = filteredData.anonId || ('anon_' + Date.now() + '_' + Math.random().toString(36).slice(2,8));
+      }
+
+      // Ensure tags array exists and mirror requestType into tags for backwards compatibility
+      if (!Array.isArray(filteredData.tags)) filteredData.tags = Array.isArray(data.tags) ? data.tags : [];
+      const tagsLower = (filteredData.tags || []).map(t => (typeof t === 'string' ? t.toLowerCase() : (t && t.label ? String(t.label).toLowerCase() : String(t).toLowerCase())));
+      if (filteredData.requestType === 'inspection' && !tagsLower.includes('inspection')) {
+        filteredData.tags.push('inspection');
+      }
+      if (filteredData.requestType === 'request' && !tagsLower.includes('requestor') && !tagsLower.includes('request')) {
+        filteredData.tags.push('requestor');
+      }
+    } catch (e) {
+      console.error('Error normalizing requestType:', e);
     }
     // Handle explicit internal technician assignment by client
     let assignedInternalTechConfig = null;

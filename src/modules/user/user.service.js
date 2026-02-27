@@ -3,31 +3,42 @@ const User = require('./user.model.js');
 const bcrypt = require('bcryptjs');
 
 const createUser = async (userData) => {
-  const hashedPassword = await bcrypt.hash(userData.password, 10);
-  
-  // Convert role to lowercase if provided, default to 'client'
+  if (!userData || !userData.password) throw new Error('Password is required');
+
+  const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 10;
+  const hashedPassword = await bcrypt.hash(userData.password, saltRounds);
+
+  // Normalize and validate role, default to 'client'
   let role = 'client';
   if (userData.role) {
     const roleMap = {
-      'ADMIN': 'admin',
-      'MANAGER': 'manager', 
-      'TECH': 'technician',
-      'TECHNICIAN': 'technician',
-      'CLIENT': 'client'
+      ADMIN: 'admin',
+      MANAGER: 'manager',
+      TECH: 'technician',
+      TECHNICIAN: 'technician',
+      CLIENT: 'client',
     };
-    role = roleMap[userData.role.toUpperCase()] || userData.role.toLowerCase() || 'client';
+    role = roleMap[String(userData.role).toUpperCase()] || String(userData.role).toLowerCase() || 'client';
   }
-  
-  const user = new User({ 
-    ...userData, 
+
+  const normalizedEmail = userData.email ? String(userData.email).toLowerCase().trim() : undefined;
+
+  const user = new User({
+    ...userData,
+    email: normalizedEmail,
     password: hashedPassword,
-    role: role
+    role,
   });
-  return await user.save();
+
+  const saved = await user.save();
+  const userObj = saved.toObject ? saved.toObject() : saved;
+  if (userObj && userObj.password) delete userObj.password;
+  return userObj;
 };
 
 const findUserByEmail = async (email) => {
-  return await User.findOne({ email });
+  if (!email) return null;
+  return await User.findOne({ email: String(email).toLowerCase().trim() });
 };
 
 const findUserById = async (id) => {

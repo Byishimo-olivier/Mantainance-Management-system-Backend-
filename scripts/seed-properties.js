@@ -11,10 +11,10 @@ async function main() {
       address: 'Kigali, KICUKIRO',
       beds: 4,
       baths: 2,
-      levels: 2,
       area: 1234,
       floors: 2,
       blocks: 1,
+      block: 'Block A',
       rooms: 10,
       photos: ['/uploads/auca-1.jpg', '/uploads/auca-2.jpg']
     },
@@ -24,10 +24,10 @@ async function main() {
       address: 'AUCA, KIGALI, RWANDA',
       beds: 4,
       baths: 2,
-      levels: 2,
       area: null,
       floors: 2,
       blocks: 1,
+      block: 'Block B',
       rooms: 8,
       photos: ['/uploads/aucabuilding-1.jpg']
     },
@@ -37,10 +37,10 @@ async function main() {
       address: 'UNILAK, Kigali, Rwanda',
       beds: 4,
       baths: 2,
-      levels: null,
       area: null,
       floors: 3,
       blocks: 2,
+      block: 'Block C',
       rooms: 30,
       photos: ['/uploads/unilak-1.jpg', '/uploads/unilak-2.jpg']
     }

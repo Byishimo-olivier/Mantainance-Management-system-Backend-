@@ -195,6 +195,40 @@ const templates = {
   })
 };
 
+// Send technician invite email
+templates.technicianInvite = (data) => ({
+  subject: `You're invited to join MMS as a Technician`,
+  html: `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #2563eb;">Technician Invitation</h2>
+      <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p>Hi ${data.name || 'there'},</p>
+        <p>You have been invited to join the MMS system as a technician.</p>
+        <p>Please follow the link below to complete your registration:</p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/technician-invite?token=${data.token}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Accept Invitation</a>
+        <p style="margin-top:12px; color: #6b7280;">This invitation will expire on ${data.expiresAt ? new Date(data.expiresAt).toLocaleString() : 'the invite expiry date'}.</p>
+      </div>
+      <p>If you did not expect this invite, please ignore this email.</p>
+    </div>
+  `
+});
+
+module.exports.sendTechnicianInvite = async (inviteData, technician) => {
+  try {
+    const template = templates.technicianInvite({ token: inviteData.token, name: technician.name || inviteData.name, expiresAt: inviteData.expiresAt });
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: inviteData.email,
+      subject: template.subject,
+      html: template.html
+    });
+    console.log('Technician invite sent to', inviteData.email);
+  } catch (err) {
+    console.error('Error sending technician invite email:', err);
+    throw err;
+  }
+};
+
 module.exports = {
   // Send email to technician when issue is assigned
   async sendIssueAssignedNotification(issueData, technicianData, assignerData) {

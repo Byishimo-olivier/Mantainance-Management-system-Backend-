@@ -9,6 +9,8 @@ router.get('/', ctrl.getAll);
 router.get('/for-assignment', authenticate, authorizeRoles('admin', 'manager'), ctrl.getForAssignment);
 router.get('/:id', ctrl.getById);
 router.post('/', authenticate, authorizeRoles('admin', 'manager'), ctrl.create);
+// Invite external technician via email (admin/manager)
+router.post('/invite', authenticate, authorizeRoles('admin', 'manager'), ctrl.invite);
 router.put('/:id', authenticate, authorizeRoles('admin', 'manager'), ctrl.update);
 router.delete('/:id', authenticate, authorizeRoles('admin', 'manager'), ctrl.delete);
 
