@@ -20,6 +20,7 @@ const emailRoutes = require('./modules/emailService/email.routes');
 const materialRequestRoutes = require('./modules/materialRequest/materialRequest.routes');
 const aiRoutes = require('./modules/ai/ai.routes');
 const notificationRoutes = require('./modules/notification/notification.routes');
+const subscriptionRoutes = require('./modules/subscription/subscription.routes');
 
 const app = express();
 
@@ -99,6 +100,7 @@ app.use('/api/email', emailRoutes);
 app.use('/api/material-requests', materialRequestRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 
 const PORT = process.env.PORT || 5000;
 

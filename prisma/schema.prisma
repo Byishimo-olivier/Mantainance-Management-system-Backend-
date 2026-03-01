@@ -247,13 +247,62 @@ model Procurement {
 }
 
 model Subscription {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  clientId  String
-  plan      String
-  amount    Float
-  status    String
-  startDate DateTime
-  endDate   DateTime
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  clientId         String   // User/Client ID
+  email            String
+  plan             String   // basic, professional, enterprise
+  billingCycle     String   @default("monthly") // weekly, monthly, yearly
+  amount           Float    // Amount for current billing cycle
+  status           String   @default("active") // active, cancelled, paused, pending
+  startDate        DateTime @default(now())
+  endDate          DateTime?
+  nextBillingDate  DateTime
+  cancelledAt      DateTime?
+  credentialHash   String? // Hash of clientId:secretId for security
+  features         String[] // Array of enabled features
+  paymentMethod    String? // card, bank_transfer, paypal, etc
+  paymentStatus    String @default("pending") // pending, paid, failed, refunded
+  autoRenew        Boolean @default(true) // Auto-renew on billing date
+  invoices         Invoice[] // Related invoices
+  payments         Payment[] // Related payments
+  metadata         Json? // Additional subscription data
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Payment {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  subscriptionId   String   @db.ObjectId
+  subscription     Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  amount           Float
+  currency         String @default("USD")
+  status           String // pending, completed, failed, refunded
+  paymentMethod    String // card, bank_transfer, paypal, etc
+  transactionId    String? @unique
+  description      String?
+  paidAt           DateTime?
+  failureReason    String?
+  metadata         Json? // Additional payment details
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Invoice {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  subscriptionId   String   @db.ObjectId
+  subscription     Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  invoiceNumber    String   @unique
+  amount           Float
+  billingCycle     String // weekly, monthly, yearly
+  period           String // "Jan 2026 - Feb 2026" format
+  status           String @default("unpaid") // unpaid, paid, overdue, cancelled
+  dueDate          DateTime
+  paidAt           DateTime?
+  notes            String?
+  pdf              String? // URL to PDF invoice
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Technician {
