@@ -307,6 +307,7 @@ async function initiatePayPackRequest(paymentDetails) {
       amount: paymentDetails.amount,
       paymentMethod: paymentDetails.paymentMethod,
       phoneNumber: paymentDetails.phoneNumber || 'card',
+      callbackUrl: paymentDetails.callbackUrl,
     });
 
     const payload = {
@@ -322,6 +323,7 @@ async function initiatePayPackRequest(paymentDetails) {
     // Remove undefined fields
     Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
 
+    console.log('PayPack payload:', payload);
     const response = await axios.post(`${PAYPACK_API_URL}/transactions`, payload, {
       headers: {
         Authorization: `Bearer ${PAYPACK_API_KEY}`,
@@ -338,7 +340,8 @@ async function initiatePayPackRequest(paymentDetails) {
       status: response.data.status || 'pending',
     };
   } catch (error) {
-    console.error('PayPack API Error:', error.response?.data || error.message);
+    console.error('PayPack API Error full response:', error.response?.data);
+    console.error('PayPack API Error message:', error.message);
     throw new Error(`PayPack API Error: ${error.response?.data?.message || error.message}`);
   }
 }
