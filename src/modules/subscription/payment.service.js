@@ -11,7 +11,7 @@ const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://paypack.rw/api/v
 const PAYPACK_API_KEY = process.env.PAYPACK_API_KEY;
 const PAYPACK_SECRET_KEY = process.env.PAYPACK_SECRET_KEY;
 const PAYPACK_CLIENT_ID = process.env.PAYPACK_CLIENT_ID;
-const PAYPACK_CALLBACK_URL = process.env.PAYPACK_CALLBACK_URL || 'http://localhost:5000/api/subscriptions/payments/callback';
+const PAYPACK_CALLBACK_URL = process.env.PAYPACK_CALLBACK_URL || 'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/callback';
 
 // log configuration to assist debugging (do not log secrets)
 console.log('[PayPack] API URL:', PAYPACK_API_URL);
