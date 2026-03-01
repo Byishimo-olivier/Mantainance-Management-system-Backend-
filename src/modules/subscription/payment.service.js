@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 // default endpoint uses the base paypack.rw domain; the previous
 // `api.paypack.rw` hostname did not resolve, causing ENOTFOUND errors.
 // override via PAYPACK_API_URL if a different host/version is required.
-const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://paypack.rw/api/v1';
+const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://payments.paypack.rw/api';
 const PAYPACK_API_KEY = process.env.PAYPACK_API_KEY;
 const PAYPACK_SECRET_KEY = process.env.PAYPACK_SECRET_KEY;
 const PAYPACK_CLIENT_ID = process.env.PAYPACK_CLIENT_ID;
