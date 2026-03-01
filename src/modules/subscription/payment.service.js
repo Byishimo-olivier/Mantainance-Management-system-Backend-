@@ -4,7 +4,10 @@ const crypto = require('crypto');
 const prisma = new PrismaClient();
 
 // PayPack Configuration
-const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://api.paypack.rw/api/v1';
+// default endpoint uses the base paypack.rw domain; the previous
+// `api.paypack.rw` hostname does not resolve, causing ENOTFOUND errors.
+// override via PAYPACK_API_URL if a different host is required.
+const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://paypack.rw/api/v1';
 const PAYPACK_API_KEY = process.env.PAYPACK_API_KEY;
 const PAYPACK_SECRET_KEY = process.env.PAYPACK_SECRET_KEY;
 const PAYPACK_CLIENT_ID = process.env.PAYPACK_CLIENT_ID;
