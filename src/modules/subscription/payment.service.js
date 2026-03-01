@@ -5,13 +5,20 @@ const prisma = new PrismaClient();
 
 // PayPack Configuration
 // default endpoint uses the base paypack.rw domain; the previous
-// `api.paypack.rw` hostname does not resolve, causing ENOTFOUND errors.
-// override via PAYPACK_API_URL if a different host is required.
+// `api.paypack.rw` hostname did not resolve, causing ENOTFOUND errors.
+// override via PAYPACK_API_URL if a different host/version is required.
 const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://paypack.rw/api/v1';
 const PAYPACK_API_KEY = process.env.PAYPACK_API_KEY;
 const PAYPACK_SECRET_KEY = process.env.PAYPACK_SECRET_KEY;
 const PAYPACK_CLIENT_ID = process.env.PAYPACK_CLIENT_ID;
 const PAYPACK_CALLBACK_URL = process.env.PAYPACK_CALLBACK_URL || 'http://localhost:5000/api/subscriptions/payments/callback';
+
+// log configuration to assist debugging (do not log secrets)
+console.log('[PayPack] API URL:', PAYPACK_API_URL);
+console.log('[PayPack] Callback URL:', PAYPACK_CALLBACK_URL);
+if (PAYPACK_CALLBACK_URL.startsWith('http://localhost')) {
+  console.warn('[PayPack] WARNING: callback URL is localhost; PayPack may reject this in production.');
+}
 
 // Pricing configuration for different plans and billing cycles
 const PRICING = {
@@ -76,6 +83,11 @@ exports.initiatePayPackPayment = async (paymentData) => {
     });
 
     // Call PayPack API to initiate payment
+    // ensure callback URL is valid for PayPack
+    if (!PAYPACK_CALLBACK_URL || PAYPACK_CALLBACK_URL.startsWith('http://localhost')) {
+      throw new Error('PayPack callback URL is not configured or is using localhost');
+    }
+
     const paypackResponse = await initiatePayPackRequest({
       amount,
       phoneNumber,
