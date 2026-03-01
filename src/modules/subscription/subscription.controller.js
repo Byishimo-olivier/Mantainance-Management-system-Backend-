@@ -100,9 +100,14 @@ exports.updateSubscription = async (req, res) => {
       return res.status(400).json({ error: 'Subscription ID is required' });
     }
 
-    // verify identity or role
+    // verify role: only client and admin can update subscriptions
     const requester = req.user || {};
-    const isPrivileged = ['admin', 'manager'].includes(requester.role);
+    const allowedRoles = ['client', 'admin'];
+    if (!allowedRoles.includes(requester.role)) {
+      return res.status(403).json({ error: 'Forbidden: only client and admin can edit subscriptions' });
+    }
+
+    const isAdmin = requester.role === 'admin';
 
     // fetch existing subscription for ownership check
     const existing = await service.getSubscriptionById(id);
@@ -110,10 +115,11 @@ exports.updateSubscription = async (req, res) => {
       return res.status(404).json({ error: 'Subscription not found' });
     }
 
-    if (!isPrivileged) {
+    // client users can only edit their own subscription
+    if (!isAdmin) {
       const requesterId = requester.userId || requester.id || requester._id;
       if (!requesterId || requesterId !== existing.userId) {
-        return res.status(403).json({ error: 'Forbidden: you cannot edit this subscription' });
+        return res.status(403).json({ error: 'Forbidden: you can only edit your own subscription' });
       }
     }
 
@@ -125,10 +131,10 @@ exports.updateSubscription = async (req, res) => {
     if (req.body.email) payload.email = req.body.email;
     if (req.body.paymentMethod) payload.paymentMethod = req.body.paymentMethod;
     if (req.body.phoneNumber) payload.phoneNumber = req.body.phoneNumber;
-    if (req.body.propertyId) payload.propertyId = req.body.propertyId; // allow changing associated property for owners
+    if (req.body.propertyId) payload.propertyId = req.body.propertyId;
 
-    // privileged users may modify status or metadata
-    if (isPrivileged) {
+    // admin users may modify status or metadata
+    if (isAdmin) {
       if (req.body.status) payload.status = req.body.status;
       if (req.body.metadata) payload.metadata = req.body.metadata;
     }
