@@ -131,7 +131,7 @@ exports.updateSubscription = async (req, res) => {
     if (req.body.email) payload.email = req.body.email;
     if (req.body.paymentMethod) payload.paymentMethod = req.body.paymentMethod;
     if (req.body.phoneNumber) payload.phoneNumber = req.body.phoneNumber;
-    if (req.body.propertyId) payload.propertyId = req.body.propertyId;
+    // Note: propertyId updates temporarily disabled due to schema sync issue on Render
 
     // admin users may modify status or metadata
     if (isAdmin) {
