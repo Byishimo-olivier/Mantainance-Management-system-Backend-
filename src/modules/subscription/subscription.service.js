@@ -135,6 +135,19 @@ exports.cancelSubscription = async (subscriptionId) => {
 // Update subscription
 exports.updateSubscription = async (subscriptionId, updateData) => {
   try {
+    // recalc amount (and nextBillingDate if cycle changed) when plan or billingCycle are modified
+    if (updateData.plan || updateData.billingCycle) {
+      const existing = await prisma.subscription.findUnique({ where: { id: subscriptionId } });
+      if (existing) {
+        const newPlan = updateData.plan || existing.plan;
+        const newCycle = updateData.billingCycle || existing.billingCycle;
+        updateData.amount = paymentService.calculateAmount(newPlan, newCycle);
+        if (updateData.billingCycle) {
+          updateData.nextBillingDate = calculateNextBillingDate(updateData.billingCycle);
+        }
+      }
+    }
+
     const subscription = await prisma.subscription.update({
       where: { id: subscriptionId },
       data: updateData,
