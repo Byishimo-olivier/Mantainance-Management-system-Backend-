@@ -6,18 +6,29 @@ const prisma = new PrismaClient();
 // PayPack Configuration
 // default endpoint uses the base paypack.rw domain; the previous
 // `api.paypack.rw` hostname did not resolve, causing ENOTFOUND errors.
-// override via PAYPACK_API_URL if a different host/version is required.
-const PAYPACK_API_URL = process.env.PAYPACK_API_URL || 'https://payments.paypack.rw/api';
+// We allow either PAYPACK_API_URL or (confusingly-named) PAYPACK_BASE_URL
+// so that deployment platforms like Render can use whichever name you set.
+// The value **must** include the scheme (https://) and not have a trailing
+// slash – otherwise axios will complain about an "Invalid URL".
+const PAYPACK_API_URL =
+  process.env.PAYPACK_API_URL ||
+  process.env.PAYPACK_BASE_URL ||
+  'https://payments.paypack.rw/api';
 const PAYPACK_API_KEY = process.env.PAYPACK_API_KEY;
 const PAYPACK_SECRET_KEY = process.env.PAYPACK_SECRET_KEY;
 const PAYPACK_CLIENT_ID = process.env.PAYPACK_CLIENT_ID;
-const PAYPACK_CALLBACK_URL = process.env.PAYPACK_CALLBACK_URL || 'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/callback';
+const PAYPACK_CALLBACK_URL =
+  process.env.PAYPACK_CALLBACK_URL ||
+  'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/callback';
 
 // log configuration to assist debugging (do not log secrets)
-console.log('[PayPack] API URL:', PAYPACK_API_URL);
+console.log('[PayPack] API URL used for requests:', PAYPACK_API_URL);
+console.log('[PayPack] (alias PAYPACK_BASE_URL) value:', process.env.PAYPACK_BASE_URL);
 console.log('[PayPack] Callback URL:', PAYPACK_CALLBACK_URL);
 if (PAYPACK_CALLBACK_URL.startsWith('http://localhost')) {
-  console.warn('[PayPack] WARNING: callback URL is localhost; PayPack may reject this in production.');
+  console.warn(
+    '[PayPack] WARNING: callback URL is localhost; PayPack may reject this in production.'
+  );
 }
 
 // Pricing configuration for different plans and billing cycles
