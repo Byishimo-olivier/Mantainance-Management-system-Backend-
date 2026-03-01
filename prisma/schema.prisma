@@ -19,6 +19,7 @@ model Property {
   assets              Asset[]
   internalTechnicians InternalTechnician[]
   issues              Issue[]
+  subscriptions       Subscription[]
   createdAt           DateTime             @default(now())
 }
 
@@ -249,6 +250,8 @@ model Procurement {
 model Subscription {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   clientId         String   // User/Client ID
+  propertyId       String?  @db.ObjectId // Property this subscription is for
+  property         Property? @relation(fields: [propertyId], references: [id])
   email            String
   plan             String   // basic, professional, enterprise
   billingCycle     String   @default("monthly") // weekly, monthly, yearly

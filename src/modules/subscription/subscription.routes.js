@@ -37,13 +37,17 @@ router.post('/:id/billing-cycle', ctrl.changeBillingCycle);
 router.get('/:id', ctrl.getSubscriptionById);
 
 // Update subscription
-router.put('/:id', authorizeRoles('admin', 'manager'), ctrl.updateSubscription);
+// allow owners or privileged roles to edit their own subscription
+router.put('/:id', ctrl.updateSubscription);
 
 // Upgrade subscription
 router.post('/:id/upgrade', authorizeRoles('admin', 'manager'), ctrl.upgradeSubscription);
 
 // Cancel subscription
 router.post('/:id/cancel', ctrl.cancelSubscription);
+
+// Get subscription property
+router.get('/:id/property', ctrl.getSubscriptionProperty);
 
 // Delete subscription (admin only)
 router.delete('/:id', authorizeRoles('admin'), ctrl.deleteSubscription);

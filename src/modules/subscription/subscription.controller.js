@@ -96,17 +96,44 @@ exports.getAllSubscriptions = async (req, res) => {
 exports.updateSubscription = async (req, res) => {
   try {
     const { id } = req.params;
-    const { plan, status, metadata } = req.body;
-
     if (!id) {
       return res.status(400).json({ error: 'Subscription ID is required' });
     }
 
-    const subscription = await service.updateSubscription(id, {
-      plan,
-      status,
-      metadata,
-    });
+    // verify identity or role
+    const requester = req.user || {};
+    const isPrivileged = ['admin', 'manager'].includes(requester.role);
+
+    // fetch existing subscription for ownership check
+    const existing = await service.getSubscriptionById(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+
+    if (!isPrivileged) {
+      const requesterId = requester.userId || requester.id || requester._id;
+      if (!requesterId || requesterId !== existing.userId) {
+        return res.status(403).json({ error: 'Forbidden: you cannot edit this subscription' });
+      }
+    }
+
+    // build allowed update payload
+    const payload = {};
+    // always allow these basic fields
+    if (req.body.plan) payload.plan = req.body.plan;
+    if (req.body.billingCycle) payload.billingCycle = req.body.billingCycle;
+    if (req.body.email) payload.email = req.body.email;
+    if (req.body.paymentMethod) payload.paymentMethod = req.body.paymentMethod;
+    if (req.body.phoneNumber) payload.phoneNumber = req.body.phoneNumber;
+    if (req.body.propertyId) payload.propertyId = req.body.propertyId; // allow changing associated property for owners
+
+    // privileged users may modify status or metadata
+    if (isPrivileged) {
+      if (req.body.status) payload.status = req.body.status;
+      if (req.body.metadata) payload.metadata = req.body.metadata;
+    }
+
+    const subscription = await service.updateSubscription(id, payload);
 
     res.json({
       message: 'Subscription updated successfully',
@@ -386,6 +413,29 @@ exports.deleteSubscription = async (req, res) => {
     res.json({
       message: 'Subscription deleted successfully',
       data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getSubscriptionProperty = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: 'Subscription ID is required' });
+    }
+
+    const property = await service.getSubscriptionProperty(id);
+
+    if (!property) {
+      return res.status(404).json({ error: 'No property associated with this subscription' });
+    }
+
+    res.json({
+      message: 'Property retrieved successfully',
+      data: normalizeExtendedJSON(property),
     });
   } catch (error) {
     res.status(400).json({ error: error.message });

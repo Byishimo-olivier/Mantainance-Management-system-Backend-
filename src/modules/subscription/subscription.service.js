@@ -28,6 +28,7 @@ exports.createSubscription = async (subscriptionData) => {
     const credentialHash = hashCredentials(subscriptionData.clientId, subscriptionData.secretId);
     const billingCycle = subscriptionData.billingCycle || 'monthly';
     const plan = subscriptionData.plan || 'basic';
+    const propertyId = subscriptionData.metadata?.propertyId;
 
     const amount = paymentService.calculateAmount(plan, billingCycle);
     const nextBillingDate = calculateNextBillingDate(billingCycle);
@@ -47,8 +48,10 @@ exports.createSubscription = async (subscriptionData) => {
         features: getFeaturesByPlan(plan),
         autoRenew: subscriptionData.autoRenew !== false,
         paymentMethod: subscriptionData.paymentMethod,
+        propertyId,
         metadata: subscriptionData.metadata || {},
       },
+      include: { property: true },
     });
 
     return subscription;
@@ -65,6 +68,7 @@ exports.getSubscriptionByClientId = async (clientId) => {
       include: {
         payments: { orderBy: { createdAt: 'desc' } },
         invoices: { orderBy: { createdAt: 'desc' } },
+        property: true,
       },
     });
     return subscription;
@@ -81,6 +85,7 @@ exports.getSubscriptionById = async (subscriptionId) => {
       include: {
         payments: { orderBy: { createdAt: 'desc' } },
         invoices: { orderBy: { createdAt: 'desc' } },
+        property: true,
       },
     });
     return subscription;
@@ -136,6 +141,7 @@ exports.updateSubscription = async (subscriptionId, updateData) => {
       include: {
         payments: { orderBy: { createdAt: 'desc' }, take: 5 },
         invoices: { orderBy: { createdAt: 'desc' }, take: 5 },
+        property: true,
       },
     });
     return subscription;
@@ -279,6 +285,24 @@ exports.verifySubscriptionActive = async (subscriptionId) => {
 // Get pricing
 exports.getPricing = () => {
   return paymentService.getPricing();
+};
+
+// Get property associated with a subscription
+exports.getSubscriptionProperty = async (subscriptionId) => {
+  try {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: { property: true },
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    return subscription.property;
+  } catch (error) {
+    throw new Error(`Failed to get subscription property: ${error.message}`);
+  }
 };
 
 function calculateNextBillingDate(billingCycle) {
