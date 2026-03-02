@@ -508,7 +508,7 @@ exports.create = async (req, res) => {
     const validFields = [
       'rejected', 'rejectedAt', 'rejectionReason', 'id', 'title', 'description', 'location',
       'assetId', 'propertyId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
-      'anonId', 'submissionType', 'requestType', 'name', 'email', 'phone',
+      'anonId', 'submissionType', 'name', 'email', 'phone',
       'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
       'inspectorId', 'requestorId',
       'approvedAt', 'createdAt', 'updatedAt'
@@ -568,15 +568,15 @@ exports.create = async (req, res) => {
       const incomingRequestType = (data.requestedType || data.requestType || data.submissionType || '').toString().toLowerCase();
       if (incomingRequestType) {
         if (incomingRequestType.includes('inspect') || incomingRequestType === 'inspection' || incomingRequestType === 'authenticated') {
-          filteredData.requestType = 'inspection';
+          filteredData.submissionType = 'inspection';
         } else if (incomingRequestType.includes('request') || incomingRequestType === 'requestor' || incomingRequestType === 'anonymous') {
-          filteredData.requestType = 'request';
+          filteredData.submissionType = 'request';
         } else {
-          filteredData.requestType = incomingRequestType;
+          filteredData.submissionType = incomingRequestType;
         }
       } else {
         // Default: authenticated submissions => inspection, anonymous => request
-        filteredData.requestType = filteredData.userId ? 'inspection' : 'request';
+        filteredData.submissionType = filteredData.userId ? 'inspection' : 'request';
       }
 
       // Map to explicit inspector/requestor fields for clarity
@@ -590,10 +590,10 @@ exports.create = async (req, res) => {
       // Ensure tags array exists and mirror requestType into tags for backwards compatibility
       if (!Array.isArray(filteredData.tags)) filteredData.tags = Array.isArray(data.tags) ? data.tags : [];
       const tagsLower = (filteredData.tags || []).map(t => (typeof t === 'string' ? t.toLowerCase() : (t && t.label ? String(t.label).toLowerCase() : String(t).toLowerCase())));
-      if (filteredData.requestType === 'inspection' && !tagsLower.includes('inspection')) {
+      if (filteredData.submissionType === 'inspection' && !tagsLower.includes('inspection')) {
         filteredData.tags.push('inspection');
       }
-      if (filteredData.requestType === 'request' && !tagsLower.includes('requestor') && !tagsLower.includes('request')) {
+      if (filteredData.submissionType === 'request' && !tagsLower.includes('requestor') && !tagsLower.includes('request')) {
         filteredData.tags.push('requestor');
       }
     } catch (e) {
