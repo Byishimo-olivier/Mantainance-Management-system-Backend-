@@ -23,6 +23,10 @@ const notificationRoutes = require('./modules/notification/notification.routes')
 const subscriptionRoutes = require('./modules/subscription/subscription.routes');
 const meterRoutes = require('./modules/meter/meter.routes');
 const deviceRoutes = require('./modules/device/device.routes');
+const peopleRoutes = require('./modules/people/people.routes');
+const teamRoutes = require('./modules/team/team.routes');
+const checklistRoutes = require('./modules/checklist/checklist.routes');
+const fileRoutes = require('./modules/file/file.routes');
 
 const app = express();
 
@@ -83,6 +87,33 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Debug: list registered routes when DEBUG_ROUTES=1 (safe to enable temporarily)
+if (process.env.DEBUG_ROUTES === '1') {
+  app.get('/api/_routes', (req, res) => {
+    try {
+      const routes = [];
+      app._router.stack.forEach((middleware) => {
+        if (middleware.route) {
+          // routes registered directly on the app
+          const methods = Object.keys(middleware.route.methods).map(m => m.toUpperCase());
+          routes.push({ path: middleware.route.path, methods });
+        } else if (middleware.name === 'router' && middleware.handle && middleware.handle.stack) {
+          // router middleware
+          middleware.handle.stack.forEach((handler) => {
+            if (handler.route) {
+              const methods = Object.keys(handler.route.methods).map(m => m.toUpperCase());
+              routes.push({ path: handler.route.path, methods });
+            }
+          });
+        }
+      });
+      res.json({ count: routes.length, routes });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+}
+
 app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
@@ -105,6 +136,10 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/meters', meterRoutes);
 app.use('/api/devices', deviceRoutes);
+app.use('/api/people', peopleRoutes);
+app.use('/api/teams', teamRoutes);
+app.use('/api/checklists', checklistRoutes);
+app.use('/api/files', fileRoutes);
 
 const PORT = process.env.PORT || 5000;
 
