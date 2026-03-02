@@ -11,6 +11,7 @@
     "build": "prisma generate",
     "postinstall": "prisma generate",
     "prisma": "prisma",
+    "install-parsers": "npm install xlsx pdf-parse mammoth tesseract.js csv-parse --save-optional",
     "seed:properties": "node scripts/seed-properties.js",
     "patch-data": "node scripts/patch-legacy-data.js",
     "repair-data": "node scripts/repair-data-mongoose.js"
@@ -28,6 +29,13 @@
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
     "prisma": "^5.22.0"
+  },
+  "optionalDependencies": {
+    "csv-parse": "^5.6.0",
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^1.1.4",
+    "tesseract.js": "^4.1.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"

@@ -35,16 +35,30 @@ exports.create = async (req, res) => {
         payload.members = payload.members.split(',').map(s => s.trim()).filter(Boolean);
       }
     }
-    // handle multipart files: req.files may contain 'image' and 'files'
-    if (req.files) {
-      if (req.files.image && req.files.image.length > 0) {
-        const f = req.files.image[0];
-        payload.image = f.path || (`uploads/` + f.filename);
-      }
-      if (req.files.files && req.files.files.length > 0) {
-        payload.files = req.files.files.map(f => f.path || (`uploads/` + f.filename));
-      }
-    }
+        // handle multipart files: req.files may contain 'image' and 'files'
+        if (req.files) {
+          if (req.files.image && req.files.image.length > 0) {
+            const f = req.files.image[0];
+            payload.image = f.path || (`uploads/` + f.filename);
+          }
+          if (req.files.files && req.files.files.length > 0) {
+            payload.files = req.files.files.map(f => f.path || (`uploads/` + f.filename));
+          }
+          // If members weren't provided manually, attempt to extract them from uploaded files
+          try {
+            const extractor = require('../../utils/extractMembersFromFiles');
+            if ((!payload.members || payload.members.length === 0) && payload.files && payload.files.length > 0) {
+              // extractor returns array of {name, email}
+              const extracted = await extractor.extractMembersFromFiles(payload.files);
+              if (extracted && extracted.length > 0) {
+                // set members to extracted list (only add if not provided manually)
+                payload.members = extracted;
+              }
+            }
+          } catch (e) {
+            console.warn('[team.create] member extraction failed or extractor not installed', e && e.message);
+          }
+        }
     const created = await service.create(payload);
     res.status(201).json(normalizeExtendedJSON(created));
   } catch (err) {
@@ -66,6 +80,18 @@ exports.update = async (req, res) => {
       }
       if (req.files.files && req.files.files.length > 0) {
         payload.files = req.files.files.map(f => f.path || (`uploads/` + f.filename));
+      }
+      // extraction on update: only run if client didn't supply explicit members
+      try {
+        const extractor = require('../../utils/extractMembersFromFiles');
+        if ((!payload.members || payload.members.length === 0) && payload.files && payload.files.length > 0) {
+          const extracted = await extractor.extractMembersFromFiles(payload.files);
+          if (extracted && extracted.length > 0) {
+            payload.members = extracted;
+          }
+        }
+      } catch (e) {
+        console.warn('[team.update] member extraction failed or extractor not installed', e && e.message);
       }
     }
     const updated = await service.update(req.params.id, payload);
