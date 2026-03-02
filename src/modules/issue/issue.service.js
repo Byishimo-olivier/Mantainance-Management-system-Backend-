@@ -230,10 +230,38 @@ module.exports = {
     }
   },
 
-  create: (data) => prisma.issue.create({ data }),
+  create: (data) => {
+    const d = { ...data };
+    if (d.assetId) {
+      d.asset = { connect: { id: d.assetId } };
+      delete d.assetId;
+    }
+    if (d.propertyId) {
+      d.property = { connect: { id: d.propertyId } };
+      delete d.propertyId;
+    }
+    return prisma.issue.create({ data: d });
+  },
   update: (id, data) => {
-    if ('id' in data) delete data.id;
-    return prisma.issue.update({ where: { id }, data });
+    const d = { ...data };
+    if ('id' in d) delete d.id;
+    if (Object.prototype.hasOwnProperty.call(d, 'assetId')) {
+      if (d.assetId === null) {
+        d.asset = { disconnect: true };
+      } else {
+        d.asset = { connect: { id: d.assetId } };
+      }
+      delete d.assetId;
+    }
+    if (Object.prototype.hasOwnProperty.call(d, 'propertyId')) {
+      if (d.propertyId === null) {
+        d.property = { disconnect: true };
+      } else {
+        d.property = { connect: { id: d.propertyId } };
+      }
+      delete d.propertyId;
+    }
+    return prisma.issue.update({ where: { id }, data: d });
   },
   delete: (id) => prisma.issue.delete({ where: { id } }),
 };

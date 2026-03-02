@@ -71,6 +71,16 @@ exports.getSubscriptionByClientId = async (clientId) => {
         property: true,
       },
     });
+
+    // always recalc amount on read in case pricing constants changed
+    if (subscription) {
+      try {
+        subscription.amount = paymentService.calculateAmount(subscription.plan, subscription.billingCycle);
+      } catch (e) {
+        console.warn('Could not recalc amount for subscription', subscription.id, e.message);
+      }
+    }
+
     return subscription;
   } catch (error) {
     throw new Error(`Failed to get subscription: ${error.message}`);
@@ -88,6 +98,15 @@ exports.getSubscriptionById = async (subscriptionId) => {
         property: true,
       },
     });
+
+    if (subscription) {
+      try {
+        subscription.amount = paymentService.calculateAmount(subscription.plan, subscription.billingCycle);
+      } catch (e) {
+        console.warn('Could not recalc amount for subscription', subscriptionId, e.message);
+      }
+    }
+
     return subscription;
   } catch (error) {
     throw new Error(`Failed to get subscription: ${error.message}`);
@@ -110,6 +129,16 @@ exports.getAllSubscriptions = async (filters = {}) => {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    // recalc amounts for all returned subscriptions
+    subscriptions.forEach(sub => {
+      try {
+        sub.amount = paymentService.calculateAmount(sub.plan, sub.billingCycle);
+      } catch (e) {
+        console.warn('Failed to recalc amount for subscription', sub.id, e.message);
+      }
+    });
+
     return subscriptions;
   } catch (error) {
     throw new Error(`Failed to get subscriptions: ${error.message}`);
