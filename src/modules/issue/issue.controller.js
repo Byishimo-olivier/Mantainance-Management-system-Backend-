@@ -727,8 +727,70 @@ exports.create = async (req, res) => {
             }
           }
 
-          // Also notify global admins/managers
-          await emailService.sendNewRequestNotification(requestPayload, anonClient);
+          // Notify only property owners (clients) and property staff for anonymous submissions.
+          try {
+            // If we have a propertyId or assetId, try to find the property and its owner
+            let ownerEmails = [];
+            let ownerUsers = [];
+            if (data.propertyId) {
+              const propertyModel = require('../property/property.model');
+              const property = await propertyModel.findById(data.propertyId);
+              if (property) {
+                if (property.userId) ownerUsers.push(property.userId);
+                if (property.clientId) ownerUsers.push(property.clientId);
+                if (Array.isArray(property.internalTechnicians)) {
+                  const staffEmails = property.internalTechnicians.map(t => t.email).filter(Boolean);
+                  if (staffEmails.length) await emailService.sendNewRequestToRecipients(requestPayload, anonClient, staffEmails);
+                }
+              }
+            } else if (data.assetId) {
+              try {
+                const assetModel = require('../asset/asset.model');
+                const propertyModel = require('../property/property.model');
+                const asset = await assetModel.findById(data.assetId);
+                if (asset && asset.propertyId) {
+                  const property = await propertyModel.findById(asset.propertyId);
+                  if (property) {
+                    if (property.userId) ownerUsers.push(property.userId);
+                    if (property.clientId) ownerUsers.push(property.clientId);
+                    if (Array.isArray(property.internalTechnicians)) {
+                      const staffEmails = property.internalTechnicians.map(t => t.email).filter(Boolean);
+                      if (staffEmails.length) await emailService.sendNewRequestToRecipients(requestPayload, anonClient, staffEmails);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('Error looking up asset/property for anonymous owner notification:', e);
+              }
+            }
+
+            // De-duplicate and notify owners via email and in-app
+            ownerUsers = [...new Set(ownerUsers.filter(Boolean))];
+            const userService = require('../user/user.service');
+            for (const uid of ownerUsers) {
+              try {
+                const owner = await userService.findUserById(uid);
+                if (owner) {
+                  // Email owner
+                  try { await emailService.sendNewRequestNotification(requestPayload, owner); } catch (e) { console.error('Error emailing owner on anon create:', e); }
+                  // In-app notification for owner
+                  try {
+                    await notificationService.createNotification({
+                      userId: owner.id || owner._id,
+                      title: "New Maintenance Request (Anonymous)",
+                      message: `An anonymous request "${created.title}" was submitted for your property.`,
+                      type: "info",
+                      link: `/client-dashboard?id=${created.propertyId || created.id}`
+                    });
+                  } catch (e) { console.error('Error creating in-app notification for owner on anon create:', e); }
+                }
+              } catch (e) {
+                console.error('Error notifying owner userId on anonymous create:', e);
+              }
+            }
+          } catch (notifyErr) {
+            console.error('Error notifying owners on anonymous issue create:', notifyErr);
+          }
         } catch (notifyErr) {
           console.error('Error notifying on anonymous issue create:', notifyErr);
         }

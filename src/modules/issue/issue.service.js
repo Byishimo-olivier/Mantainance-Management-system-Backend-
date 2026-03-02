@@ -126,7 +126,16 @@ module.exports = {
       const assets = await prisma.asset.findMany({ where: { propertyId: { in: propertyIds } }, select: { id: true } });
       const assetIds = assets.map(a => a.id);
       if (!assetIds.length) return [];
-      return await prisma.issue.findMany({ where: { assetId: { in: assetIds } } });
+      // Exclude anonymous (submissionType === 'request') issues that have NOT been resubmitted.
+      // Managers should only see authenticated submissions or anonymous ones that the client has resubmitted.
+      return await prisma.issue.findMany({
+        where: {
+          AND: [
+            { assetId: { in: assetIds } },
+            { OR: [ { submissionType: { not: 'request' } }, { resubmitted: true } ] }
+          ]
+        }
+      });
     } catch (err) {
       console.error('CRITICAL: Prisma conversion error in issue.service:getByTechnicianProperties. Falling back to raw MongoDB.');
       const db = mongoose.connection.db;
