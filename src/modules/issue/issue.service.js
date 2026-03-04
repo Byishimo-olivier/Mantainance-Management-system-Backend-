@@ -239,7 +239,7 @@ module.exports = {
     }
   },
 
-  create: (data) => {
+  create: async (data) => {
     const d = { ...data };
     if (d.assetId) {
       d.asset = { connect: { id: d.assetId } };
@@ -270,7 +270,26 @@ module.exports = {
     } catch (e) {
       d.time = new Date().toISOString();
     }
-    return prisma.issue.create({ data: d });
+    // Extract files (Prisma Issue model doesn't have `files` field)
+    const filesArray = Array.isArray(d.files) ? d.files : (d.files ? [d.files] : []);
+    if (Object.prototype.hasOwnProperty.call(d, 'files')) delete d.files;
+
+    const created = await prisma.issue.create({ data: d });
+
+    // If files were provided, persist them directly into Mongo (avoids Prisma schema change)
+    if (filesArray && filesArray.length) {
+      try {
+        const db = mongoose.connection.db;
+        const { ObjectId } = require('mongodb');
+        await db.collection('Issue').updateOne({ _id: new ObjectId(created.id) }, { $set: { files: filesArray } });
+        // attach to returned object for callers
+        created.files = filesArray;
+      } catch (e) {
+        console.error('Error persisting files to Mongo after Prisma create:', e);
+      }
+    }
+
+    return created;
   },
   update: (id, data) => {
     const d = { ...data };
