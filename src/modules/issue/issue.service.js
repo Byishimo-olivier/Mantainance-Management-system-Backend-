@@ -260,6 +260,16 @@ module.exports = {
     if (!Object.prototype.hasOwnProperty.call(d, 'assignees') || d.assignees === undefined || d.assignees === null) {
       d.assignees = [];
     }
+    // Ensure required `time` field exists (Prisma schema requires it)
+    try {
+      if (d.time === undefined || d.time === null || d.time === '') {
+        d.time = new Date().toISOString();
+      } else if (typeof d.time !== 'string') {
+        d.time = String(d.time);
+      }
+    } catch (e) {
+      d.time = new Date().toISOString();
+    }
     return prisma.issue.create({ data: d });
   },
   update: (id, data) => {
