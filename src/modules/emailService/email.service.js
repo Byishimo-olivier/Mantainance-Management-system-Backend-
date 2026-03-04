@@ -84,13 +84,25 @@ if (emailService === 'gmail') {
 
 // Verify transporter configuration (async, non-blocking)
 setTimeout(() => {
+  // Allow disabling verification in environments where outbound SMTP is blocked
+  const skipVerify = (process.env.SKIP_MAIL_VERIFY === '1' || process.env.SKIP_MAIL_VERIFY === 'true');
+  if (skipVerify) {
+    console.log('⚠️ SKIP_MAIL_VERIFY is set — skipping SMTP transporter verification');
+    return;
+  }
+
+  if (!transporter) {
+    console.error('❌ No transporter configured; skipping verify');
+    return;
+  }
+
   transporter.verify((error, success) => {
     if (error) {
       console.error('❌ Email transporter verification failed:', error.message);
-      console.error('This may be due to Gmail security settings. Please check:');
-      console.error('1. App Password is correct and not expired');
-      console.error('2. 2FA is enabled on Gmail account');
-      console.error('3. Gmail account allows less secure apps OR App Password is used');
+      console.error('This may be due to SMTP credentials or network restrictions. Please check:');
+      console.error(' - EMAIL_USER and EMAIL_PASS are set in the environment');
+      console.error(' - If using Gmail, enable 2FA and create an App Password for EMAIL_PASS');
+      console.error(' - Hosting provider may block outbound SMTP; consider SendGrid/Sendinblue as alternative');
     } else {
       console.log('✅ Email transporter is ready to send messages');
     }
