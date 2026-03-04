@@ -42,7 +42,20 @@ function extractEmailsAndNamesFromText(text) {
 async function extractTextFromFile(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.csv' || ext === '.txt') {
-    return fs.readFileSync(filePath, 'utf8');
+    const csvParse = await tryRequire('csv-parse/sync') || await tryRequire('csv-parse');
+    const text = fs.readFileSync(filePath, 'utf8');
+    if (!csvParse) return text;
+    try {
+      // csv-parse/sync exposes parse as a function
+      const parseFn = csvParse.parse || csvParse;
+      const records = parseFn(text, { relax_column_count: true, skip_empty_lines: true });
+      // If it's simple text with no separators, fallback
+      if (!Array.isArray(records) || records.length === 0) return text;
+      // Convert rows to lines, comma-join
+      return records.map(r => (Array.isArray(r) ? r.join(' ') : String(r))).join('\n');
+    } catch (e) {
+      return text;
+    }
   }
 
   if (ext === '.xlsx' || ext === '.xls') {

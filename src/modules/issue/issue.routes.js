@@ -27,7 +27,12 @@ router.get('/', optionalAuthenticate, ctrl.getByRole);
 router.get('/user/:userId', authenticate, authorizeRoles('client'), ctrl.getByUserId);
 router.get('/assigned/:techId', authenticate, authorizeRoles('technician', 'internal'), ctrl.getByAssignedTech);
 router.get('/:id', optionalAuthenticate, ctrl.getById);
-router.post('/', optionalAuthenticate, upload.single('photo'), ctrl.create);
+// Accept one 'photo' and multiple 'file' attachments from public form
+const issueUpload = upload.fields([
+	{ name: 'photo', maxCount: 1 },
+	{ name: 'file', maxCount: 5 }
+]);
+router.post('/', optionalAuthenticate, issueUpload, ctrl.create);
 router.put('/:id', authenticate, ctrl.update);
 router.delete('/:id', authenticate, ctrl.delete);
 

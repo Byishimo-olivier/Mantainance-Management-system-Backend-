@@ -484,8 +484,18 @@ exports.create = async (req, res) => {
       data.overdue = data.overdue === 'true';
     }
     // Attach image path if file uploaded
+    // handle single 'photo' or multiple 'file' attachments (from WorkOrder)
     if (req.file) {
       data.photo = `/uploads/${req.file.filename}`;
+    }
+    if (req.files) {
+      // multer fields: req.files.photo => [file], req.files.file => [file,...]
+      if (req.files.photo && req.files.photo.length) {
+        data.photo = `/uploads/${req.files.photo[0].filename}`;
+      }
+      if (req.files.file && req.files.file.length) {
+        data.files = (req.files.file || []).map(f => `/uploads/${f.filename}`);
+      }
     }
     // Attach userId from auth (guard when anonymous requests are allowed)
     if (req.user && req.user.userId) {
@@ -508,7 +518,7 @@ exports.create = async (req, res) => {
     const validFields = [
       'rejected', 'rejectedAt', 'rejectionReason', 'id', 'title', 'description', 'location',
       'assetId', 'propertyId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
-      'anonId', 'submissionType', 'name', 'email', 'phone',
+      'anonId', 'submissionType', 'name', 'email', 'phone', 'files',
       'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
       'inspectorId', 'requestorId',
       'approvedAt', 'createdAt', 'updatedAt'

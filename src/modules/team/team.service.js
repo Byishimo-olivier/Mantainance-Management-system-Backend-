@@ -11,6 +11,7 @@ module.exports = {
   findById: async (id) => {
     const db = mongoose.connection.db;
     const { ObjectId } = require('mongodb');
+    if (!ObjectId.isValid(id)) return null;
     const doc = await db.collection(collectionName).findOne({ _id: new ObjectId(id) });
     return doc ? { ...doc, id: doc._id.toString() } : null;
   },
@@ -24,6 +25,7 @@ module.exports = {
   update: async (id, data) => {
     const db = mongoose.connection.db;
     const { ObjectId } = require('mongodb');
+    if (!ObjectId.isValid(id)) return null;
     data.updatedAt = new Date();
     await db.collection(collectionName).updateOne({ _id: new ObjectId(id) }, { $set: data });
     const doc = await db.collection(collectionName).findOne({ _id: new ObjectId(id) });
@@ -32,6 +34,7 @@ module.exports = {
   delete: async (id) => {
     const db = mongoose.connection.db;
     const { ObjectId } = require('mongodb');
+    if (!ObjectId.isValid(id)) return { success: false, error: 'Invalid id' };
     await db.collection(collectionName).deleteOne({ _id: new ObjectId(id) });
     return { success: true };
   }

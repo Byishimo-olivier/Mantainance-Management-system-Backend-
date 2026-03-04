@@ -15,6 +15,36 @@ exports.getById = async (req, res) => {
   try {
     const item = await service.findById(req.params.id);
     if (!item) return res.status(404).json({ error: 'Not found' });
+    // Resolve member ids to People/User objects when possible
+    try {
+      if (item.members && Array.isArray(item.members) && item.members.length > 0) {
+        const peopleService = require('../people/people.service');
+        const userService = require('../user/user.service');
+        const resolved = await Promise.all(item.members.map(async (m) => {
+          if (!m && m !== 0) return m;
+          if (typeof m === 'object') return m;
+          const raw = String(m).trim();
+          // try parse JSON blob
+          if ((raw.startsWith('{') || raw.startsWith('['))) {
+            try { return JSON.parse(raw); } catch (e) { /* ignore */ }
+          }
+          // try people collection
+          try {
+            const p = await peopleService.findById(raw).catch(() => null);
+            if (p) return { id: p.id || p._id || String(p._id), name: p.name || p.fullName || p.email, email: p.email };
+          } catch (e) { }
+          // try users collection
+          try {
+            const u = await userService.findUserById(raw).catch(() => null);
+            if (u) return { id: u.id || u._id || String(u._id), name: u.name || u.username || u.email, email: u.email };
+          } catch (e) { }
+          return raw;
+        }));
+        item.members = resolved;
+      }
+    } catch (e) {
+      console.warn('[team.getById] failed to resolve members', e && e.message);
+    }
     res.json(normalizeExtendedJSON(item));
   } catch (err) {
     console.error('[team.getById]', err);
@@ -95,6 +125,7 @@ exports.update = async (req, res) => {
       }
     }
     const updated = await service.update(req.params.id, payload);
+    if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[team.update]', err);
@@ -105,6 +136,7 @@ exports.update = async (req, res) => {
 exports.delete = async (req, res) => {
   try {
     const result = await service.delete(req.params.id);
+    if (!result || result.success === false) return res.status(404).json({ error: result && result.error ? result.error : 'Not found' });
     res.json(result);
   } catch (err) {
     console.error('[team.delete]', err);
