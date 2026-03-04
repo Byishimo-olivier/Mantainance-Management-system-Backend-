@@ -249,6 +249,17 @@ module.exports = {
       d.property = { connect: { id: d.propertyId } };
       delete d.propertyId;
     }
+    // Ensure assignees JSON is provided (Prisma requires the field)
+    try {
+      if (typeof d.assignees === 'string') {
+        d.assignees = JSON.parse(d.assignees);
+      }
+    } catch (e) {
+      d.assignees = [];
+    }
+    if (!Object.prototype.hasOwnProperty.call(d, 'assignees') || d.assignees === undefined || d.assignees === null) {
+      d.assignees = [];
+    }
     return prisma.issue.create({ data: d });
   },
   update: (id, data) => {
