@@ -576,18 +576,47 @@ exports.create = async (req, res) => {
     // Normalize requestType / requestedType (inspection vs request)
     try {
       const incomingRequestType = (data.requestedType || data.requestType || data.submissionType || '').toString().toLowerCase();
-      if (incomingRequestType) {
-        if (incomingRequestType.includes('inspect') || incomingRequestType === 'inspection' || incomingRequestType === 'authenticated') {
-          filteredData.submissionType = 'inspection';
-        } else if (incomingRequestType.includes('request') || incomingRequestType === 'requestor' || incomingRequestType === 'anonymous') {
-          filteredData.submissionType = 'request';
-        } else {
-          filteredData.submissionType = incomingRequestType;
+
+      // Prefer authenticated client users: if the requester is authenticated and has role 'client'
+      // and their user record exists, treat as an 'inspection'. If the user is not found in Users
+      // table, fall back to 'request' (anonymous-like behavior).
+      let resolvedSubmissionType = null;
+      try {
+        const userService = require('../user/user.service');
+        if (req.user && req.user.userId) {
+          const requester = await userService.findUserById(req.user.userId);
+          if (requester && req.user.role === 'client') {
+            resolvedSubmissionType = 'inspection';
+            // ensure we link to the verified user id
+            filteredData.userId = req.user.userId;
+          } else {
+            // If token present but user not found, remove userId to treat as anonymous
+            if (!requester) {
+              delete filteredData.userId;
+            }
+          }
         }
-      } else {
-        // Default: authenticated submissions => inspection, anonymous => request
-        filteredData.submissionType = filteredData.userId ? 'inspection' : 'request';
+      } catch (innerErr) {
+        // ignore userService failures and fallback to incoming/default logic
+        console.error('Warning: userService lookup failed while normalizing submissionType', innerErr && innerErr.message);
       }
+
+      if (!resolvedSubmissionType) {
+        if (incomingRequestType) {
+          if (incomingRequestType.includes('inspect') || incomingRequestType === 'inspection' || incomingRequestType === 'authenticated') {
+            resolvedSubmissionType = 'inspection';
+          } else if (incomingRequestType.includes('request') || incomingRequestType === 'requestor' || incomingRequestType === 'anonymous') {
+            resolvedSubmissionType = 'request';
+          } else {
+            resolvedSubmissionType = incomingRequestType;
+          }
+        } else {
+          // Default: authenticated submissions => inspection, anonymous => request
+          resolvedSubmissionType = filteredData.userId ? 'inspection' : 'request';
+        }
+      }
+
+      filteredData.submissionType = resolvedSubmissionType;
 
       // Map to explicit inspector/requestor fields for clarity
       if (filteredData.userId) {
