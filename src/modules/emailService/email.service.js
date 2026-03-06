@@ -186,22 +186,68 @@ const templates = {
     `
   }),
 
+  issueInProgress: (data) => ({
+    subject: `Maintenance Work Started: ${data.title}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2563eb;">Work in Progress</h2>
+        <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3>${data.title}</h3>
+          <p><strong>Description:</strong> ${data.description}</p>
+          <p><strong>Location:</strong> ${data.location}</p>
+          <p><strong>Status:</strong> <span style="color: #2563eb; font-weight: bold;">IN PROGRESS</span></p>
+          ${data.beforeImage ? `<p><strong>Before Photo:</strong> <br/><img src="${process.env.BACKEND_URL || 'http://localhost:5000'}${data.beforeImage}" style="max-width: 100%; border-radius: 4px; margin-top: 10px;"/></p>` : ''}
+          <p><strong>Estimated Fix Time:</strong> ${data.fixTime} minutes</p>
+          <p><strong>Deadline:</strong> ${new Date(data.fixDeadline).toLocaleString()}</p>
+        </div>
+        <p>The technician has started working on this issue.</p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Status</a>
+      </div>
+    `
+  }),
   issueCompleted: (data) => ({
     subject: `Maintenance Issue Completed: ${data.title}`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #059669;">Maintenance Issue Completed</h2>
+        <h2 style="color: #059669;">Issue Resolved</h2>
         <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <h3>${data.title}</h3>
-          <p><strong>Description:</strong> ${data.description}</p>
           <p><strong>Location:</strong> ${data.location}</p>
-          <p><strong>Technician:</strong> ${data.technicianName}</p>
-          <p><strong>Completed on:</strong> ${new Date().toLocaleString()}</p>
-          ${data.feedback ? `<p><strong>Technician Feedback:</strong> ${data.feedback}</p>` : ''}
-          ${data.afterImage ? `<p><strong>After Photo:</strong> <a href="${process.env.BACKEND_URL || 'http://localhost:5000'}${data.afterImage}">View Photo</a></p>` : ''}
+          <div style="display: flex; gap: 10px; margin: 20px 0;">
+            ${data.beforeImage ? `
+              <div style="flex: 1;">
+                <p style="font-size: 12px; font-weight: bold; margin-bottom: 5px;">BEFORE</p>
+                <img src="${process.env.BACKEND_URL || 'http://localhost:5000'}${data.beforeImage}" style="width: 100%; border-radius: 4px; border: 1px solid #e1e1e1;"/>
+              </div>
+            ` : ''}
+            ${data.afterImage ? `
+              <div style="flex: 1;">
+                <p style="font-size: 12px; font-weight: bold; margin-bottom: 5px;">AFTER</p>
+                <img src="${process.env.BACKEND_URL || 'http://localhost:5000'}${data.afterImage}" style="width: 100%; border-radius: 4px; border: 1px solid #e1e1e1;"/>
+              </div>
+            ` : ''}
+          </div>
+          <p><strong>Technician Feedback:</strong> ${data.feedback || 'No additional comments provided.'}</p>
+          <p><strong>Completed by:</strong> ${data.technicianName}</p>
         </div>
-        <p>The maintenance issue has been successfully resolved.</p>
-        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue" style="background: #059669; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Details</a>
+        <p>This maintenance request has been successfully closed.</p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue" style="background: #059669; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Work</a>
+      </div>
+    `
+  }),
+  technicianWelcome: (data) => ({
+    subject: `Welcome to MMS: Your Technician Account is Ready`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2563eb;">Welcome to the Maintenance Management System</h2>
+        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <p>Hi ${data.name || 'there'},</p>
+          <p>An account has been created for you as a technician in our system.</p>
+          <p>You can now log in and manage your assigned maintenance tasks.</p>
+          <p><strong>Your Email:</strong> ${data.email}</p>
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/login" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 15px;">Login to Dashboard</a>
+        </div>
+        <p>If you don't know your password, please contact the administrator or use the "Forgot Password" option on the login page.</p>
       </div>
     `
   })
@@ -225,23 +271,75 @@ templates.technicianInvite = (data) => ({
   `
 });
 
-module.exports.sendTechnicianInvite = async (inviteData, technician) => {
-  try {
-    const template = templates.technicianInvite({ token: inviteData.token, name: technician.name || inviteData.name, expiresAt: inviteData.expiresAt });
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: inviteData.email,
-      subject: template.subject,
-      html: template.html
-    });
-    console.log('Technician invite sent to', inviteData.email);
-  } catch (err) {
-    console.error('Error sending technician invite email:', err);
-    throw err;
-  }
-};
+// Email service methods will be exported below via module.exports = { ... }
 
 module.exports = {
+  // Send invitation to technician
+  async sendTechnicianInvite(inviteData, technician) {
+    try {
+      const template = templates.technicianInvite({ token: inviteData.token, name: technician.name || inviteData.name, expiresAt: inviteData.expiresAt });
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: inviteData.email,
+        subject: template.subject,
+        html: template.html
+      });
+      console.log('Technician invite sent to', inviteData.email);
+    } catch (err) {
+      console.error('Error sending technician invite email:', err);
+      throw err;
+    }
+  },
+
+  // Send welcome email to technician
+  async sendTechnicianWelcome(data) {
+    try {
+      const template = templates.technicianWelcome(data);
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: data.email,
+        subject: template.subject,
+        html: template.html
+      });
+      console.log('Technician welcome email sent to', data.email);
+    } catch (err) {
+      console.error('Error sending technician welcome email:', err);
+      throw err;
+    }
+  },
+
+  // Send progress notification
+  async sendIssueInProgressNotification(issueData, technicianData, ownerData) {
+    try {
+      const template = templates.issueInProgress(issueData);
+
+      // Notify Owner
+      if (ownerData && ownerData.email) {
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: ownerData.email,
+          subject: template.subject,
+          html: template.html
+        });
+      }
+
+      // Notify Admins
+      const managerEmails = await this.getAdminManagerEmails();
+      if (managerEmails.length > 0) {
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: managerEmails.join(','),
+          subject: template.subject,
+          html: template.html
+        });
+      }
+
+      console.log('Work started notification sent for', issueData.title);
+    } catch (err) {
+      console.error('Error sending progress notification email:', err);
+    }
+  },
+
   // Send email to technician when issue is assigned
   async sendIssueAssignedNotification(issueData, technicianData, assignerData) {
     try {
@@ -366,13 +464,17 @@ module.exports = {
         ...issueData,
         technicianName: technicianData.name,
         feedback: issueData.feedback || null,
-        afterImage: issueData.afterImage || null
+        beforeImage: issueData.beforeImage || null, // Added for side-by-side
+        afterImage: issueData.afterImage || null // Added for side-by-side
       });
 
       // Get manager emails
       const managerEmails = await this.getAdminManagerEmails();
 
-      const recipients = [...managerEmails, clientData.email];
+      const recipients = [...managerEmails];
+      if (clientData && clientData.email) {
+        recipients.push(clientData.email);
+      }
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,

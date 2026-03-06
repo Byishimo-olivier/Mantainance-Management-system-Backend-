@@ -20,6 +20,7 @@ exports.getById = async (req, res) => {
       if (item.members && Array.isArray(item.members) && item.members.length > 0) {
         const peopleService = require('../people/people.service');
         const userService = require('../user/user.service');
+        const techService = require('../technician/technician.service');
         const resolved = await Promise.all(item.members.map(async (m) => {
           if (!m && m !== 0) return m;
           if (typeof m === 'object') return m;
@@ -37,6 +38,11 @@ exports.getById = async (req, res) => {
           try {
             const u = await userService.findUserById(raw).catch(() => null);
             if (u) return { id: u.id || u._id || String(u._id), name: u.name || u.username || u.email, email: u.email };
+          } catch (e) { }
+          // try external technicians collection
+          try {
+            const t = await techService.getById(raw).catch(() => null);
+            if (t) return { id: t.id || t._id || String(t._id), name: t.name || t.email, email: t.email };
           } catch (e) { }
           return raw;
         }));
@@ -65,31 +71,73 @@ exports.create = async (req, res) => {
         payload.members = payload.members.split(',').map(s => s.trim()).filter(Boolean);
       }
     }
-        // handle multipart files: req.files may contain 'image' and 'files'
-        if (req.files) {
-          if (req.files.image && req.files.image.length > 0) {
-            const f = req.files.image[0];
-            payload.image = f.path || (`uploads/` + f.filename);
-          }
-          if (req.files.files && req.files.files.length > 0) {
-            payload.files = req.files.files.map(f => f.path || (`uploads/` + f.filename));
-          }
-          // If members weren't provided manually, attempt to extract them from uploaded files
-          try {
-            const extractor = require('../../utils/extractMembersFromFiles');
-            if ((!payload.members || payload.members.length === 0) && payload.files && payload.files.length > 0) {
-              // extractor returns array of {name, email}
-              const extracted = await extractor.extractMembersFromFiles(payload.files);
-              if (extracted && extracted.length > 0) {
-                // set members to extracted list (only add if not provided manually)
-                payload.members = extracted;
-              }
-            }
-          } catch (e) {
-            console.warn('[team.create] member extraction failed or extractor not installed', e && e.message);
+    // handle multipart files: req.files may contain 'image' and 'files'
+    if (req.files) {
+      if (req.files.image && req.files.image.length > 0) {
+        const f = req.files.image[0];
+        payload.image = f.path || (`uploads/` + f.filename);
+      }
+      if (req.files.files && req.files.files.length > 0) {
+        payload.files = req.files.files.map(f => f.path || (`uploads/` + f.filename));
+      }
+      // If members weren't provided manually, attempt to extract them from uploaded files
+      try {
+        const extractor = require('../../utils/extractMembersFromFiles');
+        if ((!payload.members || payload.members.length === 0) && payload.files && payload.files.length > 0) {
+          // extractor returns array of {name, email}
+          const extracted = await extractor.extractMembersFromFiles(payload.files);
+          if (extracted && extracted.length > 0) {
+            // set members to extracted list (only add if not provided manually)
+            payload.members = extracted;
           }
         }
+      } catch (e) {
+        console.warn('[team.create] member extraction failed or extractor not installed', e && e.message);
+      }
+    }
     const created = await service.create(payload);
+
+    // Notify team members
+    try {
+      if (payload.members && Array.isArray(payload.members)) {
+        const emailService = require('../emailService/email.service');
+        const techService = require('../technician/technician.service');
+        const userService = require('../user/user.service');
+
+        for (const memberId of payload.members) {
+          let email = null;
+          let name = null;
+
+          // Try resolving member info
+          // (assuming memberId might be an ID string or an object with email)
+          if (typeof memberId === 'object') {
+            email = memberId.email;
+            name = memberId.name;
+          } else {
+            const rawId = String(memberId).trim();
+            // try external tech
+            const t = await techService.getById(rawId).catch(() => null);
+            if (t) { email = t.email; name = t.name; }
+            else {
+              // try internal user
+              const u = await userService.findUserById(rawId).catch(() => null);
+              if (u) { email = u.email; name = u.name; }
+            }
+          }
+
+          if (email) {
+            await emailService.sendTechnicianWelcome({
+              email,
+              name: name || 'Team Member',
+              teamName: created.name
+            }).catch(e => console.error('Failed to notify team member:', email, e.message));
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error('Error during team member notification:', notifyErr);
+    }
+
     res.status(201).json(normalizeExtendedJSON(created));
   } catch (err) {
     console.error('[team.create]', err);

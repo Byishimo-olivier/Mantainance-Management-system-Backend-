@@ -18,7 +18,7 @@ exports.invite = async (req, res) => {
     // Create invite token record in Prisma
     const { PrismaClient } = require('@prisma/client');
     const prisma = new PrismaClient();
-    const token = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2,10);
+    const token = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
     const expiresAt = expiresInHours ? new Date(Date.now() + Number(expiresInHours) * 3600 * 1000) : null;
     const invite = await prisma.technicianInvite.create({ data: { technicianId: tech.id, email, token, expiresAt } });
 
@@ -36,23 +36,26 @@ exports.invite = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-// Returns users with role TECH from User table
+// Returns external technicians (from Prisma Technician model)
 exports.getAll = async (req, res) => {
-  const technicians = await service.getAll();
-  // Ensure we return a plain object and ID is a string
-  const plainTechnicians = technicians.map(t => {
-    const obj = t.toObject ? t.toObject() : t;
-    const id = obj._id ? obj._id.toString() : obj.id;
-    // Mark source: external (Prisma) vs user-backed (if service returns user docs)
-    const source = obj.email && obj.specialization !== undefined ? 'external' : 'user';
-    return {
-      ...obj,
-      _id: id,
-      id: id,
-      source
-    };
-  });
-  res.json(normalizeExtendedJSON(plainTechnicians));
+  try {
+    const technicians = await service.getAll();
+    const mapped = technicians.map(t => {
+      const obj = t.toObject ? t.toObject() : t;
+      const id = obj._id ? obj._id.toString() : obj.id;
+      return {
+        ...obj,
+        _id: id,
+        id: id,
+        source: 'external',
+        type: 'EXTERNAL'
+      };
+    });
+    res.json(normalizeExtendedJSON(mapped));
+  } catch (err) {
+    console.error('[technician.getAll] error:', err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.getById = async (req, res) => {
@@ -62,9 +65,34 @@ exports.getById = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const data = req.body;
-  const created = await service.create(data);
-  res.status(201).json(normalizeExtendedJSON(created));
+  try {
+    const data = req.body;
+    const created = await service.create(data);
+
+    // Send invitation or welcome email
+    try {
+      const emailService = require('../emailService/email.service');
+      if (data.password) {
+        // Simple welcome email if password was set by manager
+        await emailService.sendTechnicianWelcome({
+          email: created.email,
+          name: created.name,
+          role: 'Technician'
+        });
+      } else {
+        // Invite link if no password set (they need to set one)
+        // In this case, we might need a token, but the user requested password field in UI
+        // so password will likely be present.
+      }
+    } catch (emailErr) {
+      console.error('Error sending technician creation email:', emailErr);
+    }
+
+    res.status(201).json(normalizeExtendedJSON(created));
+  } catch (err) {
+    console.error('[technician.create] error:', err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.update = async (req, res) => {
@@ -77,7 +105,7 @@ exports.delete = async (req, res) => {
   res.status(204).end();
 };
 
-// Manager/admin: get minimal tech list for assignment
+// Manager/admin: get minimal tech list for assignment (external only)
 exports.getForAssignment = async (req, res) => {
   try {
     const all = await service.getAll();
@@ -89,7 +117,8 @@ exports.getForAssignment = async (req, res) => {
         name: t.name,
         phone: t.phone,
         email: t.email,
-        specialty: t.specialty
+        specialty: t.specialization,
+        type: 'EXTERNAL'
       };
     });
     res.json(normalizeExtendedJSON(mapped));

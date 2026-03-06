@@ -70,6 +70,7 @@ model InternalTechnician {
   completed            Int                   @default(0)
   status               String                @default("Active")
   maintenanceSchedules MaintenanceSchedule[]
+  type                 String                @default("INTERNAL")
   createdAt            DateTime              @default(now())
 }
 
@@ -317,6 +318,8 @@ model Technician {
   rating         Float    @default(0)
   completed      Int      @default(0)
   status         String   @default("Active")
+  type           String   @default("EXTERNAL")
+  password       String?
 }
 
 model Issue {
@@ -350,6 +353,7 @@ model Issue {
   afterImage      String?
   fixTime         String?
   fixDeadline     DateTime?
+  priority        String?   @default("MEDIUM")
   status          String?
   approved        Boolean   @default(false)
   approvedAt      DateTime?

@@ -4,7 +4,7 @@ const { normalizeExtendedJSON } = require('../../utils/normalize');
 module.exports = {
   async create(req, res) {
     try {
-      const data = { ...req.body };
+      const data = { ...req.body, type: 'INTERNAL' };
       // If a password is provided, create a linked User account for the technician
       if (data.password) {
         try {

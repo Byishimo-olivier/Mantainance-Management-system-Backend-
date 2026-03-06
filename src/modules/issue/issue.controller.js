@@ -38,10 +38,10 @@ exports.uploadBeforeEvidence = [
     if (fixTime && !isNaN(Number(fixTime))) {
       fixDeadline = new Date(now.getTime() + Number(fixTime) * 60000);
     }
-    // Only set to IN PROGRESS if currently PENDING
+    // Only set to IN PROGRESS if currently PENDING or ASSIGNED
     const issue = await service.getById(id);
     let newStatus = 'IN PROGRESS';
-    if (issue && issue.status && issue.status !== 'PENDING') {
+    if (issue && issue.status && !['PENDING', 'ASSIGNED'].includes(issue.status.toUpperCase())) {
       newStatus = issue.status; // Don't overwrite if already in progress or later
     }
     const updateData = {
@@ -53,6 +53,38 @@ exports.uploadBeforeEvidence = [
       overdue: false,
     };
     const updated = await service.update(id, updateData);
+
+    // Send In-Progress notifications
+    try {
+      const userService = require('../user/user.service');
+      const client = await userService.findUserById(updated.userId);
+      const technician = req.user ? await userService.findUserById(req.user.userId) : null;
+
+      // In-app for client
+      if (updated.userId) {
+        await notificationService.createNotification({
+          userId: updated.userId,
+          title: "Work Started",
+          message: `Technician has started working on "${updated.title}"`,
+          type: "info",
+          link: `/client-dashboard?id=${updated.id}`
+        });
+      }
+
+      // In-app for admins
+      await notificationService.notifyAdmins({
+        title: "Work Started",
+        message: `Work has started on issue "${updated.title}"`,
+        type: "info",
+        link: `/manager-dashboard?tab=work-order&id=${updated.id}`
+      });
+
+      // Email notifications
+      await emailService.sendIssueInProgressNotification(updated, technician || { name: 'Technician' }, client || { email: null });
+    } catch (err) {
+      console.error('Error sending in-progress notifications:', err);
+    }
+
     res.json(normalizeExtendedJSON(updated));
   }
 ];
@@ -65,13 +97,13 @@ exports.uploadAfterEvidence = [
     const afterImage = req.file ? `/uploads/${req.file.filename}` : null;
     // Fetch issue to check deadline
     const issue = await service.getById(id);
-    let status = 'COMPLETE';
+    let status = 'COMPLETED';
     let overdue = false;
     if (issue && issue.fixDeadline) {
       const now = new Date();
       const deadline = new Date(issue.fixDeadline);
       if (now > deadline) {
-        status = 'OVERDUE';
+        status = 'COMPLETED'; // or OVERDUE, but let's just make it completed
         overdue = true;
       }
     }
@@ -82,45 +114,51 @@ exports.uploadAfterEvidence = [
     };
     const updated = await service.update(id, updateData);
 
-    // Send completion email notification
+    // Send Completion notifications
     try {
       const userService = require('../user/user.service');
-
       const client = await userService.findUserById(updated.userId);
-      const technician = await userService.findUserById(req.user.userId);
+      const technician = req.user ? await userService.findUserById(req.user.userId) : null;
 
-      if (client && technician) {
-        await emailService.sendIssueCompletedNotification({
-          title: updated.title,
-          description: updated.description,
-          location: updated.location || updated.address,
-          feedback: req.body.feedback || null,
-          afterImage: afterImage
-        }, technician, client);
+      let techName = technician ? technician.name : 'Technician';
+      if (!technician && updated.assignedTo) {
+        // Attempt to extract string name if it's not a user
+        if (typeof updated.assignedTo === 'string' && isNaN(Number(updated.assignedTo))) {
+          techName = updated.assignedTo;
+        } else if (updated.assignedTo.name) {
+          techName = updated.assignedTo.name;
+        }
       }
-    } catch (emailError) {
-      console.error('Error sending completion notification:', emailError);
-    }
 
-    // In-app notification for client
-    try {
-      await notificationService.createNotification({
-        userId: updated.userId,
-        title: "Issue Completed",
-        message: `Your issue "${updated.title}" has been completed.`,
-        type: "success",
-        link: `/client-dashboard?id=${updated.id}`
-      });
+      // Email notification
+      await emailService.sendIssueCompletedNotification({
+        ...updated,
+        feedback: req.body.feedback || null,
+        beforeImage: updated.beforeImage,
+        afterImage: afterImage,
+        technicianName: techName
+      }, technician || { name: techName }, client || { email: null });
 
-      // Notify admins too
+      // In-app notification for client
+      if (updated.userId) {
+        await notificationService.createNotification({
+          userId: updated.userId,
+          title: "Issue Completed",
+          message: `Your issue "${updated.title}" has been completed.`,
+          type: "success",
+          link: `/client-dashboard?id=${updated.id}`
+        });
+      }
+
+      // In-app notification for admins
       await notificationService.notifyAdmins({
         title: "Issue Completed",
-        message: `Issue "${updated.title}" has been marked as complete by the technician.`,
+        message: `Issue "${updated.title}" has been completed by ${techName}.`,
         type: "success",
-        link: `/manager-dashboard?tab=manage-issue&id=${updated.id}`
+        link: `/manager-dashboard?tab=work-order&id=${updated.id}`
       });
-    } catch (notifyErr) {
-      console.error('Error creating in-app completion notification:', notifyErr);
+    } catch (err) {
+      console.error('Error sending completion notifications:', err);
     }
 
     res.json(normalizeExtendedJSON(updated));
@@ -623,7 +661,7 @@ exports.create = async (req, res) => {
         filteredData.inspectorId = filteredData.userId;
       } else {
         // Use anonId or generate a lightweight requestor token
-        filteredData.requestorId = filteredData.anonId || ('anon_' + Date.now() + '_' + Math.random().toString(36).slice(2,8));
+        filteredData.requestorId = filteredData.anonId || ('anon_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
       }
 
       // Ensure tags array exists and mirror requestType into tags for backwards compatibility
