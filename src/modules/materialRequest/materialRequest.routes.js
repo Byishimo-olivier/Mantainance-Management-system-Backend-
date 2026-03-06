@@ -6,7 +6,10 @@ const auth = require('../../middleware/auth');
 router.get('/', auth.optionalAuthenticate, controller.getAll);
 router.get('/tech/:techId', auth.optionalAuthenticate, controller.getByTechnician);
 router.post('/', auth.authenticate, controller.create);
+router.post('/:id/forward', auth.authenticate, controller.forwardToClient);
+router.post('/:id/respond', auth.authenticate, controller.clientRespond);
 router.put('/:id', auth.authenticate, controller.update);
 router.delete('/:id', auth.authenticate, controller.remove);
 
 module.exports = router;
+

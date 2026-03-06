@@ -182,6 +182,8 @@ model User {
   assets               Asset[]
   internalTechnicians  InternalTechnician[]
   maintenanceSchedules MaintenanceSchedule[]
+
+  @@map("users")
 }
 
 enum Role {
@@ -227,10 +229,18 @@ model Material {
 }
 
 model MaterialRequest {
-  id           String @id @default(auto()) @map("_id") @db.ObjectId
-  technicianId String
-  requestId    String
-  status       String
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  technicianId       String
+  requestId          String
+  status             String
+  description        String?
+  urgency            String?
+  technicianName     String?
+  issueId            String?
+  forwardedToClient  Boolean  @default(false)
+  clientId           String?
+  clientResponse     String?
+  createdAt          DateTime? @default(now())
 }
 
 model MaterialRequestItem {
