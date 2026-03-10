@@ -169,6 +169,9 @@ exports.assignToTech = async (req, res) => {
   const { id } = req.params; // issue id
   const { techId, priority, dueDate, status } = req.body; // technician user id
   if (!techId) return res.status(400).json({ error: 'techId is required' });
+  if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
+    return res.status(403).json({ error: 'Clients can only assign to internal technicians' });
+  }
   // Fetch technician info from users table
   const userService = require('../user/user.service');
   const tech = await userService.findUserById(techId);
@@ -255,14 +258,30 @@ exports.assignToInternal = async (req, res) => {
     // Validate the issue and the assigner
     const issue = await service.getById(id);
     if (!issue) return res.status(404).json({ error: 'Issue not found' });
-    // Only allow clients to assign their own issues
-    if (req.user && req.user.role === 'client') {
+    // Only allow clients/requestors to assign their own issues
+    if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
       const issueUserId = normalizeId(issue.userId);
       const requesterId = normalizeId(req.user.userId);
       console.log('[assignToInternal] ownership check:', { issueUserIdRaw: issue.userId, requesterRaw: req.user.userId, issueUserId, requesterId });
       // If the issue has an owner, only that owner can assign. If issue has no owner (null/''), allow client to request assignment.
       if (issueUserId && issueUserId !== requesterId) {
         return res.status(403).json({ error: 'Clients can only assign their own issues' });
+      }
+    }
+    // Ensure client/requestor assigns only to their own internal techs
+    if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
+      const propertyModel = require('../property/property.model');
+      const props = await propertyModel.findAll({
+        OR: [
+          { userId: req.user.userId },
+          { clientId: req.user.userId },
+          { requestorId: req.user.userId }
+        ]
+      });
+      const propertyIds = props.map(p => p.id || p._id).filter(Boolean).map(String);
+      const techPropertyId = tech.propertyId || tech.property?.id || tech.property?._id;
+      if (!techPropertyId || !propertyIds.includes(String(techPropertyId))) {
+        return res.status(403).json({ error: 'You can only assign technicians for your own locations' });
       }
     }
     // The user assigning the task (from auth)
@@ -454,7 +473,7 @@ exports.getByRole = async (req, res) => {
     [...assigned, ...propLinked].forEach(i => { if (i && i.id) map.set(i.id, i); });
     issues = Array.from(map.values());
     issues = await attachClientNames(issues);
-  } else if (user.role === 'client') {
+  } else if (user.role === 'client' || user.role === 'requestor') {
     // For clients: show ONLY issues from their properties
     // - Authenticated issues submitted by this user for their properties
     // - Anonymous issues submitted for their properties
@@ -467,7 +486,8 @@ exports.getByRole = async (req, res) => {
     const clientProperties = await propertyModel.findAll({
       OR: [
         { userId: user.userId },
-        { clientId: user.userId }
+        { clientId: user.userId },
+        { requestorId: user.userId }
       ]
     });
     const propertyIds = clientProperties.map(p => p.id);

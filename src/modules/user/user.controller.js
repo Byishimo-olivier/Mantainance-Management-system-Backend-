@@ -1,4 +1,4 @@
-import { createUser, findUserByEmail, getAllUsers } from './user.service.js';
+import { createUser, findUserByEmail, getAllUsers, getUsersByRoles } from './user.service.js';
 
 export const registerUser = async (req, res) => {
   try {
@@ -13,6 +13,15 @@ export const listUsers = async (req, res) => {
   try {
     const users = await getAllUsers();
     res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const listClientsAndRequestors = async (req, res) => {
+  try {
+    const users = await getUsersByRoles(['client', 'requestor']);
+    res.json(users || []);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

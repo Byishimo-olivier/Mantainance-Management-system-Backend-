@@ -76,7 +76,15 @@ module.exports = {
         console.error('CRITICAL: Prisma conversion error detected for Asset. Falling back to raw MongoDB query.');
         const col = getRawCollection('Asset');
         if (!col) throw err;
-        const assets = await col.find(filter).toArray();
+        const translated = {};
+        for (const key in filter) {
+          if (filter[key] && typeof filter[key] === 'object' && filter[key].in) {
+            translated[key] = { $in: filter[key].in };
+          } else {
+            translated[key] = filter[key];
+          }
+        }
+        const assets = await col.find(translated).toArray();
         return assets.map(mapRecord);
       }
       throw err;

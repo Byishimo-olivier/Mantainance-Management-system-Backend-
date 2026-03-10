@@ -39,7 +39,23 @@ module.exports = {
   },
   async getAll(req, res) {
     try {
-      const techs = await model.findAll();
+      const user = req.user;
+      let techs;
+      if (user && (user.role === 'client' || user.role === 'requestor')) {
+        const propertyModel = require('../property/property.model');
+        const props = await propertyModel.findAll({
+          OR: [
+            { userId: user.userId },
+            { clientId: user.userId },
+            { requestorId: user.userId }
+          ]
+        });
+        const propertyIds = props.map(p => p.id || p._id).filter(Boolean);
+        if (propertyIds.length === 0) return res.json([]);
+        techs = await model.findAll({ propertyId: { in: propertyIds } });
+      } else {
+        techs = await model.findAll();
+      }
       res.json(normalizeExtendedJSON(techs));
     } catch (err) {
       res.status(500).json({ error: err.message });

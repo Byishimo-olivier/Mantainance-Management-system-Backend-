@@ -27,6 +27,9 @@ const peopleRoutes = require('./modules/people/people.routes');
 const teamRoutes = require('./modules/team/team.routes');
 const checklistRoutes = require('./modules/checklist/checklist.routes');
 const fileRoutes = require('./modules/file/file.routes');
+const partRoutes = require('./modules/part/part.routes');
+const vendorRoutes = require('./modules/vendor/vendor.routes');
+const clientRoutes = require('./modules/client/client.routes');
 
 const app = express();
 
@@ -140,6 +143,9 @@ app.use('/api/people', peopleRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/checklists', checklistRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/parts', partRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/clients', clientRoutes);
 
 const PORT = process.env.PORT || 5000;
 

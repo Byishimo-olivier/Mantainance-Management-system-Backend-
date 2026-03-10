@@ -33,6 +33,22 @@ module.exports = {
       const filter = {};
       if (q.propertyId) filter.propertyId = q.propertyId;
       else if (q.property) filter.propertyId = q.property;
+      const user = req.user;
+      if (user && (user.role === 'client' || user.role === 'requestor')) {
+        const propertyModel = require('../property/property.model');
+        const props = await propertyModel.findAll({
+          OR: [
+            { userId: user.userId },
+            { clientId: user.userId },
+            { requestorId: user.userId }
+          ]
+        });
+        const propertyIds = props.map(p => p.id || p._id).filter(Boolean);
+        if (propertyIds.length === 0) {
+          return res.json([]);
+        }
+        filter.propertyId = { in: propertyIds };
+      }
       const assets = await assetModel.findAll(filter);
       res.json(normalizeExtendedJSON(assets));
     } catch (err) {

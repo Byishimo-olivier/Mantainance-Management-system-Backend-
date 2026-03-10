@@ -17,6 +17,8 @@ const createUser = async (userData) => {
       TECH: 'technician',
       TECHNICIAN: 'technician',
       CLIENT: 'client',
+      REQUESTOR: 'requestor',
+      STAFF: 'staff'
     };
     role = roleMap[String(userData.role).toUpperCase()] || String(userData.role).toLowerCase() || 'client';
   }
@@ -49,9 +51,17 @@ const getAllUsers = async () => {
   return await User.find();
 };
 
+const getUsersByRoles = async (roles = []) => {
+  if (!Array.isArray(roles) || roles.length === 0) {
+    return [];
+  }
+  return await User.find({ role: { $in: roles } }).select('-password');
+};
+
 module.exports = {
   createUser,
   findUserByEmail,
   findUserById,
   getAllUsers,
+  getUsersByRoles,
 };

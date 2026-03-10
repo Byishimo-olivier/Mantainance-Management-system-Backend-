@@ -53,6 +53,29 @@ const translateFilterToMongo = (filter) => {
 };
 
 module.exports = {
+  // Prisma schema fields we can safely send to prisma.property.update
+  _prismaFields: new Set([
+    'name',
+    'type',
+    'address',
+    'city',
+    'country',
+    'contactName',
+    'phone',
+    'email',
+    'status',
+    'clientId',
+    'beds',
+    'baths',
+    'area',
+    'floors',
+    'blocks',
+    'block',
+    'rooms',
+    'photos',
+    'createdAt',
+    'userId'
+  ]),
   create: async (data) => {
     try {
       return await prisma.property.create({ data });
@@ -69,6 +92,12 @@ module.exports = {
     }
   },
   findAll: async (filter = {}) => {
+    const col = getRawCollection('Property');
+    if (col) {
+      const mongoFilter = translateFilterToMongo(filter);
+      const props = await col.find(mongoFilter).toArray();
+      return props.map(mapRecord);
+    }
     try {
       return await prisma.property.findMany({ where: filter, include: { assets: true, internalTechnicians: true } });
     } catch (err) {
@@ -87,6 +116,12 @@ module.exports = {
     }
   },
   findById: async (id) => {
+    const col = getRawCollection('Property');
+    if (col) {
+      const { ObjectId } = require('mongodb');
+      const prop = await col.findOne({ _id: new ObjectId(id) });
+      return mapRecord(prop);
+    }
     try {
       return await prisma.property.findUnique({ where: { id }, include: { assets: true, internalTechnicians: true } });
     } catch (err) {
@@ -102,18 +137,26 @@ module.exports = {
     }
   },
   update: async (id, data) => {
-    try {
-      return await prisma.property.update({ where: { id }, data });
-    } catch (err) {
-      if (err.message.includes('userId') || err.message.includes('converting')) {
-        console.error('SURVIVAL MODE: Prisma update failed for Property. Returning raw data.');
-        const col = getRawCollection('Property');
-        if (col) {
-          const { ObjectId } = require('mongodb');
-          const updated = await col.findOne({ _id: new ObjectId(id) });
-          if (updated) return mapRecord(updated);
+    const col = getRawCollection('Property');
+    if (col) {
+      const { ObjectId } = require('mongodb');
+      await col.updateOne({ _id: new ObjectId(id) }, { $set: data });
+      const updated = await col.findOne({ _id: new ObjectId(id) });
+      if (updated) return mapRecord(updated);
+    }
+    const prismaData = {};
+    if (data && typeof data === 'object') {
+      for (const key of Object.keys(data)) {
+        if (module.exports._prismaFields.has(key)) {
+          prismaData[key] = data[key];
         }
       }
+    }
+    try {
+      return await prisma.property.update({ where: { id }, data: prismaData });
+    } catch (err) {
+      console.error('SURVIVAL MODE: Prisma update failed for Property. Falling back to raw update.', err.message);
+      if (col) return mapRecord(await col.findOne({ _id: new (require('mongodb').ObjectId)(id) }));
       throw err;
     }
   },

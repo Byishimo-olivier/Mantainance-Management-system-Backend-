@@ -64,6 +64,10 @@ module.exports = {
   async getAll(req, res) {
     try {
       let schedules = await model.findAll();
+      const user = req.user;
+      if (user && (user.role === 'client' || user.role === 'requestor')) {
+        schedules = schedules.filter((s) => String(s.userId || '') === String(user.userId));
+      }
       // Persist overdue status for any schedule whose nextDate is past and not completed
       try {
         const now = new Date();

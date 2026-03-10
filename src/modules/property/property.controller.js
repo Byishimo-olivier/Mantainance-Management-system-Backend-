@@ -37,7 +37,13 @@ module.exports = {
       if (!user || user.role === 'admin' || user.role === 'manager') {
         properties = await propertyModel.findAll();
       } else {
-        properties = await propertyModel.findAll({ userId: user.userId });
+        properties = await propertyModel.findAll({
+          OR: [
+            { userId: user.userId },
+            { clientId: user.userId },
+            { requestorId: user.userId }
+          ]
+        });
       }
       res.json(normalizeExtendedJSON(properties));
     } catch (err) {

@@ -7,6 +7,12 @@ model Property {
   name                String
   type                String
   address             String
+  city                String?
+  country             String?
+  contactName         String?
+  phone               String?
+  email               String?
+  status              String?              @default("Active")
   clientId            String?              @db.ObjectId
   beds                Int?
   baths               Int?

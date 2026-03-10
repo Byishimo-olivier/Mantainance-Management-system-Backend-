@@ -55,7 +55,15 @@ module.exports = {
         console.error('CRITICAL: Prisma conversion error detected for InternalTechnician. Falling back to raw MongoDB query.');
         const col = getRawCollection();
         if (!col) throw err;
-        const techs = await col.find(filter).toArray();
+        const translated = {};
+        for (const key in filter) {
+          if (filter[key] && typeof filter[key] === 'object' && filter[key].in) {
+            translated[key] = { $in: filter[key].in };
+          } else {
+            translated[key] = filter[key];
+          }
+        }
+        const techs = await col.find(translated).toArray();
         return techs.map(mapRecord);
       }
       throw err;

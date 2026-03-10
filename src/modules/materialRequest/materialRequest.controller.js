@@ -12,6 +12,11 @@ async function getAll(req, res) {
       const items = await service.getByClient(req.query.clientId);
       return sendJson(res, items.map(enrichRequest));
     }
+    const user = req.user;
+    if (user && (user.role === 'client' || user.role === 'requestor')) {
+      const items = await service.getByClient(user.userId);
+      return sendJson(res, items.map(enrichRequest));
+    }
     const items = await service.getAll();
     return sendJson(res, items.map(enrichRequest));
   } catch (err) {
