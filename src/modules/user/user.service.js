@@ -18,7 +18,9 @@ const createUser = async (userData) => {
       TECHNICIAN: 'technician',
       CLIENT: 'client',
       REQUESTOR: 'requestor',
-      STAFF: 'staff'
+      STAFF: 'staff',
+      'LIMITED MANAGER': 'limited manager',
+      'LIMITED TECHNICIAN': 'limited technician'
     };
     role = roleMap[String(userData.role).toUpperCase()] || String(userData.role).toLowerCase() || 'client';
   }

@@ -370,12 +370,21 @@ model Issue {
   fixTime         String?
   fixDeadline     DateTime?
   priority        String?   @default("MEDIUM")
+  frequency       String?
   status          String?
   approved        Boolean   @default(false)
   approvedAt      DateTime?
   resubmitted     Boolean   @default(false)
   resubmittedAt   DateTime?
   resubmittedBy   String?
+  category        String?
+  assetName       String?
+  team            String?
+  additionalResponsibleWorkers Json?
+  checklist       Json?
+  estimatedTime   Float?
+  signature       String?
+  chat            Json?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }

@@ -25,6 +25,61 @@ function normalizeId(val) {
   return null;
 }
 
+const appendSystemChatMessage = (chat, text, meta = {}) => {
+  const next = Array.isArray(chat) ? [...chat] : [];
+  const sender = meta.sender || 'System';
+  const role = meta.role || 'system';
+  if (next.some(msg => msg && typeof msg === 'object' &&
+    String(msg.text || '').toLowerCase() === String(text).toLowerCase() &&
+    String(msg.sender || '').toLowerCase() === String(sender).toLowerCase()
+  )) {
+    return next;
+  }
+  next.push({
+    sender,
+    text,
+    timestamp: new Date().toISOString(),
+    role
+  });
+  return next;
+};
+
+const resolveActorName = async (user, fallback = 'System') => {
+  if (!user) return fallback;
+  const direct = user.name || user.username || user.email;
+  if (direct) return direct;
+  const userId = user.userId || user.id || user._id;
+  if (!userId) return user.role || fallback;
+  try {
+    const userService = require('../user/user.service');
+    const dbUser = await userService.findUserById(userId);
+    return dbUser?.name || dbUser?.username || dbUser?.email || user.role || fallback;
+  } catch (e) {
+    return user.role || fallback;
+  }
+};
+
+function normalizeDateInput(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? undefined : value;
+  }
+  if (typeof value === 'object' && value.$date) {
+    value = value.$date;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const iso = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+      ? `${trimmed}T00:00:00.000Z`
+      : trimmed;
+    const parsed = new Date(iso);
+    return isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+  return undefined;
+}
+
 // Technician submits BEFORE evidence (address, before image, fix time)
 exports.uploadBeforeEvidence = [
   upload.single('beforeImage'),
@@ -437,6 +492,42 @@ async function attachClientNames(issues) {
   return issues.map(issue => ({ ...issue, clientName: userMap[issue.userId] || 'Unknown' }));
 }
 
+const DEFAULT_PREVENTIVE_FREQUENCY = 'MONTHLY';
+const isPreventiveIssue = (issue = {}) => {
+  const title = String(issue.title || '').toLowerCase();
+  const category = String(issue.category || '').toLowerCase();
+  const issueType = String(issue.issueType || issue.type || '').toLowerCase();
+  const tags = Array.isArray(issue.tags) ? issue.tags : [];
+  const tagsLower = tags.map(t => {
+    if (!t) return '';
+    if (typeof t === 'string') return t.toLowerCase();
+    if (typeof t === 'object' && t.label) return String(t.label).toLowerCase();
+    return String(t).toLowerCase();
+  });
+  return tagsLower.includes('preventive') || issueType === 'preventive' || category === 'preventive' || title.includes('preventive');
+};
+
+const backfillPreventiveFrequency = async (issues = []) => {
+  const candidates = issues.filter(issue => isPreventiveIssue(issue) && !issue.frequency);
+  if (candidates.length === 0) return issues;
+  await Promise.all(
+    candidates.map(async (issue) => {
+      const id = issue.id || issue._id;
+      if (!id) return;
+      try {
+        await service.update(id, { frequency: DEFAULT_PREVENTIVE_FREQUENCY });
+      } catch (err) {
+        console.error('[backfillPreventiveFrequency] Failed to update issue', id, err);
+      }
+    })
+  );
+  return issues.map(issue => (
+    isPreventiveIssue(issue) && !issue.frequency
+      ? { ...issue, frequency: DEFAULT_PREVENTIVE_FREQUENCY }
+      : issue
+  ));
+};
+
 exports.getByRole = async (req, res) => {
   const user = req.user;
   const propertyId = req.query && (req.query.propertyId || req.query.propertyID || req.query.propertyid);
@@ -446,6 +537,7 @@ exports.getByRole = async (req, res) => {
     try {
       let issues = await service.getByPropertyId(propertyId);
       issues = await attachClientNames(issues);
+      issues = await backfillPreventiveFrequency(issues);
       return res.json(normalizeExtendedJSON(issues));
     } catch (e) {
       console.error('Error in getByRole with propertyId:', e);
@@ -504,16 +596,19 @@ exports.getByRole = async (req, res) => {
     issues = await attachClientNames(issues);
   }
 
+  issues = await backfillPreventiveFrequency(issues);
   res.json(normalizeExtendedJSON(issues));
 };
 
 exports.getByUserId = async (req, res) => {
-  const issues = await service.getByUserId(req.params.userId);
+  let issues = await service.getByUserId(req.params.userId);
+  issues = await backfillPreventiveFrequency(issues);
   res.json(normalizeExtendedJSON(issues));
 };
 
 exports.getByAssignedTech = async (req, res) => {
-  const issues = await service.getByAssignedTech(req.params.techId);
+  let issues = await service.getByAssignedTech(req.params.techId);
+  issues = await backfillPreventiveFrequency(issues);
   res.json(normalizeExtendedJSON(issues));
 };
 
@@ -522,8 +617,10 @@ exports.getById = async (req, res) => {
   if (!req.params.id || req.params.id === 'undefined' || !/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
     return res.status(400).json({ error: 'Invalid issue ID' });
   }
-  const issue = await service.getById(req.params.id);
+  let issue = await service.getById(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Not found' });
+  const backfilled = await backfillPreventiveFrequency([issue]);
+  issue = backfilled && backfilled.length ? backfilled[0] : issue;
   res.json(normalizeExtendedJSON(issue));
 };
 
@@ -537,6 +634,23 @@ exports.create = async (req, res) => {
     // Parse JSON fields sent as strings (tags, assignees)
     if (typeof data.tags === 'string') data.tags = JSON.parse(data.tags);
     if (typeof data.assignees === 'string') data.assignees = JSON.parse(data.assignees);
+    if (typeof data.checklist === 'string') data.checklist = JSON.parse(data.checklist);
+    if (typeof data.chat === 'string') data.chat = JSON.parse(data.chat);
+    if (typeof data.additionalResponsibleWorkers === 'string') data.additionalResponsibleWorkers = JSON.parse(data.additionalResponsibleWorkers);
+    if (data.estimatedTime) data.estimatedTime = parseFloat(data.estimatedTime);
+    if ('fixDeadline' in data) {
+      const normalizedFixDeadline = normalizeDateInput(data.fixDeadline);
+      if (normalizedFixDeadline === undefined) {
+        delete data.fixDeadline;
+      } else {
+        data.fixDeadline = normalizedFixDeadline;
+      }
+    }
+    if (!Array.isArray(data.chat) || data.chat.length === 0) {
+      const senderName = data.name || data.email || await resolveActorName(req.user, 'Requester');
+      const senderRole = req.user?.role || 'requestor';
+      data.chat = appendSystemChatMessage([], 'Request submitted.', { sender: senderName, role: senderRole });
+    }
     // Ensure overdue is boolean
     if (typeof data.overdue === 'string') {
       data.overdue = data.overdue === 'true';
@@ -579,7 +693,8 @@ exports.create = async (req, res) => {
       'anonId', 'submissionType', 'name', 'email', 'phone', 'files',
       'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
       'inspectorId', 'requestorId',
-      'approvedAt', 'createdAt', 'updatedAt'
+      'approvedAt', 'createdAt', 'updatedAt',
+      'category', 'assetName', 'team', 'additionalResponsibleWorkers', 'checklist', 'estimatedTime', 'signature', 'priority', 'frequency', 'chat'
     ];
     const filteredData = {};
     for (const field of validFields) {
@@ -627,6 +742,9 @@ exports.create = async (req, res) => {
         }
         data.issueType = data.issueType || 'preventive';
         data.category = data.category || 'preventive';
+        if (!filteredData.frequency) {
+          filteredData.frequency = data.frequency || DEFAULT_PREVENTIVE_FREQUENCY;
+        }
       }
     } catch (e) {
       console.error('Error during preventive detection on create:', e);
@@ -926,6 +1044,39 @@ exports.update = async (req, res) => {
   if (typeof incoming.tags === 'string') {
     try { incoming.tags = JSON.parse(incoming.tags); } catch (e) { /* keep as-is */ }
   }
+  if (typeof incoming.checklist === 'string') {
+    try { incoming.checklist = JSON.parse(incoming.checklist); } catch (e) { /* keep as-is */ }
+  }
+  if (typeof incoming.chat === 'string') {
+    try { incoming.chat = JSON.parse(incoming.chat); } catch (e) { /* keep as-is */ }
+  }
+  if (typeof incoming.additionalResponsibleWorkers === 'string') {
+    try { incoming.additionalResponsibleWorkers = JSON.parse(incoming.additionalResponsibleWorkers); } catch (e) { /* keep as-is */ }
+  }
+  if (incoming.estimatedTime) incoming.estimatedTime = parseFloat(incoming.estimatedTime);
+  if ('fixDeadline' in incoming) {
+    const normalizedFixDeadline = normalizeDateInput(incoming.fixDeadline);
+    if (normalizedFixDeadline === undefined) {
+      delete incoming.fixDeadline;
+    } else {
+      incoming.fixDeadline = normalizedFixDeadline;
+    }
+  }
+
+  const statusFromIncoming = typeof incoming.status === 'string' ? incoming.status.toUpperCase() : null;
+  if (oldIssue && statusFromIncoming && oldIssue.status !== statusFromIncoming) {
+    if (statusFromIncoming === 'APPROVED') {
+      const senderName = await resolveActorName(req.user, 'Manager');
+      const senderRole = req.user?.role || 'manager';
+      const baseChat = Array.isArray(incoming.chat) ? incoming.chat : (Array.isArray(oldIssue.chat) ? oldIssue.chat : []);
+      incoming.chat = appendSystemChatMessage(baseChat, 'Request approved.', { sender: senderName, role: senderRole });
+    } else if (statusFromIncoming === 'DECLINED' || statusFromIncoming === 'REJECTED') {
+      const senderName = await resolveActorName(req.user, 'Manager');
+      const senderRole = req.user?.role || 'manager';
+      const baseChat = Array.isArray(incoming.chat) ? incoming.chat : (Array.isArray(oldIssue.chat) ? oldIssue.chat : []);
+      incoming.chat = appendSystemChatMessage(baseChat, 'Request declined.', { sender: senderName, role: senderRole });
+    }
+  }
   try {
     // Build merged view to apply heuristic: prefer incoming fields when present
     const merged = { ...(oldIssue || {}), ...(incoming || {}) };
@@ -1032,7 +1183,12 @@ exports.delete = async (req, res) => {
 exports.approveIssue = async (req, res) => {
   try {
     const id = req.params.id;
-    const updated = await service.update(id, { approved: true, approvedAt: new Date(), status: 'APPROVED' });
+    const existing = await service.getById(id);
+    const baseChat = Array.isArray(existing?.chat) ? existing.chat : [];
+    const senderName = await resolveActorName(req.user, 'Manager');
+    const senderRole = req.user?.role || 'manager';
+    const chat = appendSystemChatMessage(baseChat, 'Request approved.', { sender: senderName, role: senderRole });
+    const updated = await service.update(id, { approved: true, approvedAt: new Date(), status: 'APPROVED', chat });
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[issue.controller.js:approveIssue]', err);
@@ -1045,7 +1201,12 @@ exports.declineIssue = async (req, res) => {
   try {
     const id = req.params.id;
     const reason = req.body.reason || 'Declined by manager';
-    const updated = await service.update(id, { rejected: true, rejectionReason: reason, rejectedAt: new Date(), status: 'DECLINED' });
+    const existing = await service.getById(id);
+    const baseChat = Array.isArray(existing?.chat) ? existing.chat : [];
+    const senderName = await resolveActorName(req.user, 'Manager');
+    const senderRole = req.user?.role || 'manager';
+    const chat = appendSystemChatMessage(baseChat, 'Request declined.', { sender: senderName, role: senderRole });
+    const updated = await service.update(id, { rejected: true, rejectionReason: reason, rejectedAt: new Date(), status: 'DECLINED', chat });
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[issue.controller.js:declineIssue]', err);

@@ -52,30 +52,74 @@ const translateFilterToMongo = (filter) => {
   return translated;
 };
 
+const PRISMA_FIELDS = [
+  'name',
+  'type',
+  'address',
+  'city',
+  'country',
+  'contactName',
+  'phone',
+  'email',
+  'status',
+  'clientId',
+  'beds',
+  'baths',
+  'area',
+  'floors',
+  'blocks',
+  'block',
+  'rooms',
+  'photos',
+  'createdAt',
+  'userId'
+];
+
+const PRISMA_FILTER_FIELDS = new Set([...PRISMA_FIELDS, 'id']);
+
+const sanitizePrismaFilter = (filter) => {
+  if (!filter || typeof filter !== 'object') {
+    return { filter, hasUnsupported: false, hasKeys: false };
+  }
+  if (Array.isArray(filter)) {
+    const cleaned = [];
+    let hasUnsupported = false;
+    for (const item of filter) {
+      const res = sanitizePrismaFilter(item);
+      hasUnsupported = hasUnsupported || res.hasUnsupported;
+      if (res.filter && typeof res.filter === 'object' && Object.keys(res.filter).length > 0) {
+        cleaned.push(res.filter);
+      }
+    }
+    return { filter: cleaned, hasUnsupported, hasKeys: cleaned.length > 0 };
+  }
+
+  const cleaned = {};
+  let hasUnsupported = false;
+  let hasKeys = false;
+  for (const [key, val] of Object.entries(filter)) {
+    if (key === 'OR' || key === 'AND') {
+      const res = sanitizePrismaFilter(val);
+      hasUnsupported = hasUnsupported || res.hasUnsupported;
+      if (Array.isArray(res.filter) && res.filter.length > 0) {
+        cleaned[key] = res.filter;
+        hasKeys = true;
+      }
+      continue;
+    }
+    if (!PRISMA_FILTER_FIELDS.has(key)) {
+      hasUnsupported = true;
+      continue;
+    }
+    cleaned[key] = val;
+    hasKeys = true;
+  }
+  return { filter: cleaned, hasUnsupported, hasKeys };
+};
+
 module.exports = {
   // Prisma schema fields we can safely send to prisma.property.update
-  _prismaFields: new Set([
-    'name',
-    'type',
-    'address',
-    'city',
-    'country',
-    'contactName',
-    'phone',
-    'email',
-    'status',
-    'clientId',
-    'beds',
-    'baths',
-    'area',
-    'floors',
-    'blocks',
-    'block',
-    'rooms',
-    'photos',
-    'createdAt',
-    'userId'
-  ]),
+  _prismaFields: new Set(PRISMA_FIELDS),
   create: async (data) => {
     try {
       return await prisma.property.create({ data });
@@ -98,10 +142,14 @@ module.exports = {
       const props = await col.find(mongoFilter).toArray();
       return props.map(mapRecord);
     }
+    const { filter: prismaFilter, hasUnsupported, hasKeys } = sanitizePrismaFilter(filter);
+    if (hasUnsupported && !hasKeys) {
+      return [];
+    }
     try {
-      return await prisma.property.findMany({ where: filter, include: { assets: true, internalTechnicians: true } });
+      return await prisma.property.findMany({ where: prismaFilter, include: { assets: true, internalTechnicians: true } });
     } catch (err) {
-      if (err.message.includes('userId') || err.message.includes('converting')) {
+      if (err.message.includes('userId') || err.message.includes('converting') || err.message.includes('Unknown argument') || err.message.includes('requestorId')) {
         console.error('CRITICAL: Prisma conversion error detected for Property. Falling back to raw MongoDB query.');
         const col = getRawCollection('Property');
         if (!col) throw err;
