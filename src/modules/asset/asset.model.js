@@ -18,9 +18,60 @@ const mapRecord = (record) => {
   return mapped;
 };
 
+const normalizeAssetWhere = (where) => {
+  if (!where || typeof where !== 'object') return where;
+  if (Array.isArray(where)) return where.map(normalizeAssetWhere);
+
+  const out = { ...where };
+  if (out.OR) out.OR = normalizeAssetWhere(out.OR);
+  if (out.AND) out.AND = normalizeAssetWhere(out.AND);
+
+  // Support legacy filters using scalar relation keys (propertyId/userId)
+  if (Object.prototype.hasOwnProperty.call(out, 'propertyId') && !Object.prototype.hasOwnProperty.call(out, 'property')) {
+    const propertyId = out.propertyId;
+    delete out.propertyId;
+    if (propertyId && typeof propertyId === 'object' && Array.isArray(propertyId.in)) {
+      out.property = { is: { id: { in: propertyId.in } } };
+    } else if (propertyId !== undefined && propertyId !== null && propertyId !== '') {
+      out.property = { is: { id: propertyId } };
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(out, 'userId') && !Object.prototype.hasOwnProperty.call(out, 'user')) {
+    const userId = out.userId;
+    delete out.userId;
+    if (userId && typeof userId === 'object' && Array.isArray(userId.in)) {
+      out.user = { is: { id: { in: userId.in } } };
+    } else if (userId !== undefined && userId !== null && userId !== '') {
+      out.user = { is: { id: userId } };
+    }
+  }
+
+  return out;
+};
+
 module.exports = {
   create: async (data) => {
     const payload = { ...data };
+
+    // Prisma checked inputs don't accept relation scalar FKs (propertyId/userId).
+    // Convert them into relation connects for compatibility across client versions.
+    const rel = {};
+    if (Object.prototype.hasOwnProperty.call(payload, 'propertyId')) {
+      const propertyId = payload.propertyId;
+      delete payload.propertyId;
+      if (propertyId && !payload.property) {
+        rel.property = { connect: { id: String(propertyId) } };
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'userId')) {
+      const userId = payload.userId;
+      delete payload.userId;
+      if (userId && !payload.user) {
+        rel.user = { connect: { id: String(userId) } };
+      }
+    }
+
     // Merge building/block into the location JSON field if provided
     let location = payload.location ? { ...payload.location } : {};
     let hadLocation = !!payload.location;
@@ -29,6 +80,20 @@ module.exports = {
         location.building = payload.building;
       }
       delete payload.building;
+      hadLocation = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'floor')) {
+      if (payload.floor !== undefined && payload.floor !== null && payload.floor !== '') {
+        location.floor = payload.floor;
+      }
+      delete payload.floor;
+      hadLocation = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'room')) {
+      if (payload.room !== undefined && payload.room !== null && payload.room !== '') {
+        location.room = payload.room;
+      }
+      delete payload.room;
       hadLocation = true;
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'blocks')) {
@@ -45,11 +110,13 @@ module.exports = {
       hadLocation = true;
     }
 
-    const dataToCreate = { ...payload, quantity: payload.quantity ?? 1 };
+    const dataToCreate = { ...payload, ...rel, quantity: payload.quantity ?? 1 };
     // defensive cleanup: remove any top-level fields that don't exist on the Prisma model
     delete dataToCreate.block;
     delete dataToCreate.blocks;
     delete dataToCreate.building;
+    delete dataToCreate.floor;
+    delete dataToCreate.room;
     if (hadLocation) dataToCreate.location = location;
 
     try {
@@ -70,7 +137,8 @@ module.exports = {
   },
   findAll: async (filter = {}) => {
     try {
-      return await prisma.asset.findMany({ where: filter, include: { property: true, spareParts: true } });
+      const where = normalizeAssetWhere(filter);
+      return await prisma.asset.findMany({ where, include: { property: true, spareParts: true } });
     } catch (err) {
       if (err.message.includes('userId') || err.message.includes('converting')) {
         console.error('CRITICAL: Prisma conversion error detected for Asset. Falling back to raw MongoDB query.');
@@ -126,6 +194,20 @@ module.exports = {
         location.building = payload.building;
       }
       delete payload.building;
+      hadLocation = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'floor')) {
+      if (payload.floor !== undefined && payload.floor !== null && payload.floor !== '') {
+        location.floor = payload.floor;
+      }
+      delete payload.floor;
+      hadLocation = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'room')) {
+      if (payload.room !== undefined && payload.room !== null && payload.room !== '') {
+        location.room = payload.room;
+      }
+      delete payload.room;
       hadLocation = true;
     }
     // Handle incoming blocks: allow merging with existing blocks unless _replaceBlocks === true
@@ -195,6 +277,8 @@ module.exports = {
     delete dataToUpdate.block;
     delete dataToUpdate.blocks;
     delete dataToUpdate.building;
+    delete dataToUpdate.floor;
+    delete dataToUpdate.room;
     if (hadLocation) dataToUpdate.location = location;
 
     try {
@@ -217,7 +301,7 @@ module.exports = {
     }
   },
   delete: (id) => prisma.asset.delete({ where: { id } }),
-  count: (filter = {}) => prisma.asset.count({ where: filter }),
+  count: (filter = {}) => prisma.asset.count({ where: normalizeAssetWhere(filter) }),
 
   // Movement log helpers
   addMovement: async (assetId, { from, to, movedBy, notes }) => {

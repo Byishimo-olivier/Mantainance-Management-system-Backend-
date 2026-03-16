@@ -9,15 +9,20 @@ module.exports = {
       if (data.password) {
         try {
           const userService = require('../user/user.service');
+          const companyName = req.user?.companyName || data.companyName;
+          if (!companyName) {
+            return res.status(400).json({ error: 'Company name is required to create a linked user account' });
+          }
           const userPayload = {
             name: data.name || 'Technician',
             email: data.email || undefined,
             phone: data.phone || undefined,
             password: data.password,
-            role: 'TECH'
+            role: 'TECH',
+            companyName
           };
           // createUser will hash password and save to Mongo users collection
-          await userService.createUser(userPayload);
+          await userService.createUser(userPayload, { allowExistingCompany: true });
         } catch (uerr) {
           // If user creation fails (duplicate email/phone), return a clear error
           return res.status(400).json({ error: `Failed to create linked user: ${uerr.message}` });

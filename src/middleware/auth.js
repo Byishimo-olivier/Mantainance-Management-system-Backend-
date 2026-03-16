@@ -10,7 +10,8 @@ const authenticate = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = {
       userId: decoded.userId,
-      role: decoded.role
+      role: decoded.role,
+      companyName: decoded.companyName
     };
     next();
   } catch (err) {
@@ -31,7 +32,8 @@ const optionalAuthenticate = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = {
       userId: decoded.userId,
-      role: decoded.role
+      role: decoded.role,
+      companyName: decoded.companyName
     };
     next();
   } catch (err) {

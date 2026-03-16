@@ -26,6 +26,20 @@ router.post('/:id/resubmit', authenticate, authorizeRoles('client', 'manager', '
 router.get('/', optionalAuthenticate, ctrl.getByRole);
 router.get('/user/:userId', authenticate, authorizeRoles('client'), ctrl.getByUserId);
 router.get('/assigned/:techId', authenticate, authorizeRoles('technician', 'internal'), ctrl.getByAssignedTech);
+router.get('/:id/links', authenticate, ctrl.getLinks);
+router.post('/:id/links', authenticate, ctrl.addLink);
+router.get('/:id/files', authenticate, ctrl.getFiles);
+router.post('/:id/files', authenticate, upload.array('files', 10), ctrl.addFiles);
+router.get('/:id/activity', authenticate, ctrl.getActivity);
+router.post('/:id/activity', authenticate, ctrl.addActivity);
+router.get('/:id/costs', authenticate, ctrl.getCosts);
+router.post('/:id/costs', authenticate, ctrl.addCost);
+router.get('/:id/parts', authenticate, ctrl.getParts);
+router.post('/:id/parts', authenticate, ctrl.addPart);
+router.get('/:id/labor', authenticate, ctrl.getLabor);
+router.post('/:id/labor', authenticate, ctrl.addLabor);
+router.get('/:id/provider-portal', authenticate, ctrl.getProviderPortal);
+router.put('/:id/provider-portal', authenticate, ctrl.updateProviderPortal);
 router.get('/:id', optionalAuthenticate, ctrl.getById);
 // Accept one 'photo' and multiple 'file' attachments from public form
 const issueUpload = upload.fields([

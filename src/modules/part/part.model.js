@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const PartSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    status: { type: String, default: 'AVAILABLE' },
+    status: { type: String, default: 'STOCK_IN' },
     available: { type: Number, default: 0 },
     allocated: { type: Number, default: 0 },
     onHand: { type: Number, default: 0 },

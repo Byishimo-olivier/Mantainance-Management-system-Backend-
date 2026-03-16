@@ -5,7 +5,7 @@ const User = require('../user/user.model.js');
 const prisma = new PrismaClient();
 
 const login = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, companyName: requestedCompany } = req.body;
 
   // 1. Check User collection (Clients, Managers, Admins)
   let user = await User.findOne({ email });
@@ -29,8 +29,14 @@ const login = async (req, res) => {
 
   const userId = isTechnician ? user.id : user._id;
   const role = isTechnician ? 'technician' : user.role;
+  const companyName = user.companyName || techData?.companyName || null;
 
-  const token = jwt.sign({ userId, role }, process.env.JWT_SECRET, { expiresIn: '24h' });
+  // Optional company gate: if client passes companyName, ensure it matches stored record
+  if (requestedCompany && companyName && requestedCompany.trim().toLowerCase() !== companyName.trim().toLowerCase()) {
+    return res.status(401).json({ error: 'Invalid company' });
+  }
+
+  const token = jwt.sign({ userId, role, companyName }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
   res.json({
     token,
@@ -39,7 +45,8 @@ const login = async (req, res) => {
       id: String(userId),
       name: user.name,
       email: user.email,
-      role: role
+      role: role,
+      companyName
     }
   });
 };

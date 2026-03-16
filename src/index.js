@@ -30,6 +30,7 @@ const fileRoutes = require('./modules/file/file.routes');
 const partRoutes = require('./modules/part/part.routes');
 const vendorRoutes = require('./modules/vendor/vendor.routes');
 const clientRoutes = require('./modules/client/client.routes');
+const purchaseOrderRoutes = require('./modules/purchaseOrder/purchaseOrder.routes');
 
 const app = express();
 
@@ -146,6 +147,7 @@ app.use('/api/files', fileRoutes);
 app.use('/api/parts', partRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/clients', clientRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
 
 const PORT = process.env.PORT || 5000;
 

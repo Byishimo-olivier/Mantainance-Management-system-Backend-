@@ -535,7 +535,7 @@ exports.getByRole = async (req, res) => {
   // If a propertyId query param is provided, return issues for that property (allowing guest access)
   if (propertyId) {
     try {
-      let issues = await service.getByPropertyId(propertyId);
+      let issues = await service.getByPropertyId(propertyId, req.user?.companyName);
       issues = await attachClientNames(issues);
       issues = await backfillPreventiveFrequency(issues);
       return res.json(normalizeExtendedJSON(issues));
@@ -549,50 +549,42 @@ exports.getByRole = async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
   let issues = [];
+  const companyName = req.user?.companyName || null;
   if (user.role === 'admin') {
-    issues = await service.getAll();
+    issues = await service.getAll(companyName);
     issues = await attachClientNames(issues);
   } else if (user.role === 'manager') {
     issues = await service.getByManagerId ? await service.getByManagerId(user.userId) : [];
     issues = await attachClientNames(issues);
   } else if (user.role === 'technician' || user.role === 'internal') {
     // Issues explicitly assigned to this technician
-    const assigned = await service.getByAssignedTech(user.userId);
+    const assigned = await service.getByAssignedTech(user.userId, companyName);
     // Issues linked to properties where this technician is listed (by email/phone)
-    const propLinked = await service.getByTechnicianProperties(user.userId);
+    const propLinked = await service.getByTechnicianProperties(user.userId, companyName);
     // Merge and deduplicate
     const map = new Map();
     [...assigned, ...propLinked].forEach(i => { if (i && i.id) map.set(i.id, i); });
     issues = Array.from(map.values());
     issues = await attachClientNames(issues);
   } else if (user.role === 'client' || user.role === 'requestor') {
-    // For clients: show ONLY issues from their properties
-    // - Authenticated issues submitted by this user for their properties
-    // - Anonymous issues submitted for their properties
-
-
-
-    // Fetch properties owned by this client (userId is the owner)
-    // Also include properties where clientId matches, just in case
-    const propertyModel = require('../property/property.model');
-    const clientProperties = await propertyModel.findAll({
-      OR: [
-        { userId: user.userId },
-        { clientId: user.userId },
-        { requestorId: user.userId }
-      ]
-    });
-    const propertyIds = clientProperties.map(p => p.id);
-
-
-    if (propertyIds.length > 0) {
-      issues = await service.getByPropertyIds(propertyIds);
+    if (companyName) {
+      issues = await service.getAll(companyName);
     } else {
-      issues = [];
+      const propertyModel = require('../property/property.model');
+      const clientProperties = await propertyModel.findAll({
+        OR: [
+          { userId: user.userId },
+          { clientId: user.userId },
+          { requestorId: user.userId }
+        ]
+      });
+      const propertyIds = clientProperties.map(p => p.id);
+      if (propertyIds.length > 0) {
+        issues = await service.getByPropertyIds(propertyIds, null);
+      } else {
+        issues = [];
+      }
     }
-
-
-
     issues = await attachClientNames(issues);
   }
 
@@ -669,10 +661,22 @@ exports.create = async (req, res) => {
         data.files = (req.files.file || []).map(f => `/uploads/${f.filename}`);
       }
     }
-    // Attach userId from auth (guard when anonymous requests are allowed)
+    // Attach user/company from auth (guard when anonymous requests are allowed)
     if (req.user && req.user.userId) {
       data.userId = req.user.userId;
-      console.log('[CREATE ISSUE] Set userId from auth:', data.userId);
+      data.companyName = req.user.companyName || data.companyName;
+      console.log('[CREATE ISSUE] Set userId from auth:', data.userId, 'company:', data.companyName);
+      try {
+        const userService = require('../user/user.service');
+        const me = await userService.findUserById(req.user.userId);
+        if (me) {
+          if (!data.name) data.name = me.name;
+          if (!data.email) data.email = me.email;
+          if (!data.phone) data.phone = me.phone;
+        }
+      } catch (e) {
+        console.warn('Could not enrich issue with user profile', e?.message);
+      }
     }
     // Support linking to an asset by id
     if (data.assetId && typeof data.assetId !== 'string') {
@@ -692,7 +696,7 @@ exports.create = async (req, res) => {
       'assetId', 'propertyId', 'tags', 'assignees', 'overdue', 'time', 'photo', 'userId', 'assignedTo',
       'anonId', 'submissionType', 'name', 'email', 'phone', 'files',
       'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
-      'inspectorId', 'requestorId',
+      'inspectorId', 'requestorId', 'companyName',
       'approvedAt', 'createdAt', 'updatedAt',
       'category', 'assetName', 'team', 'additionalResponsibleWorkers', 'checklist', 'estimatedTime', 'signature', 'priority', 'frequency', 'chat'
     ];
@@ -1172,6 +1176,233 @@ exports.update = async (req, res) => {
   }
 
   res.json(normalizeExtendedJSON(updated));
+};
+
+exports.getLinks = async (req, res) => {
+  try {
+    const links = await service.getLinks(req.params.id);
+    res.json(links);
+  } catch (err) {
+    console.error('[issue.controller.js:getLinks]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addLink = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    const title = body.title ? String(body.title) : '';
+    const url = body.url ? String(body.url) : '';
+    const type = body.type ? String(body.type) : (url ? 'url' : 'workorder');
+    const relationship = body.relationship ? String(body.relationship) : undefined;
+    const workOrderId = body.workOrderId ? String(body.workOrderId) : undefined;
+    if (!title && !url && !workOrderId) {
+      return res.status(400).json({ error: 'Link data is required' });
+    }
+    const createdBy = await resolveActorName(req.user, 'User');
+    const entry = await service.addLink(id, {
+      title: title || (workOrderId ? 'Linked Work Order' : 'Link'),
+      url,
+      type,
+      relationship,
+      workOrderId,
+      createdBy
+    });
+    res.status(201).json(entry);
+  } catch (err) {
+    console.error('[issue.controller.js:addLink]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getFiles = async (req, res) => {
+  try {
+    const files = await service.getFiles(req.params.id);
+    res.json(files);
+  } catch (err) {
+    console.error('[issue.controller.js:getFiles]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addFiles = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const uploaded = Array.isArray(req.files) ? req.files : [];
+    if (!uploaded.length) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+    const createdBy = await resolveActorName(req.user, 'User');
+    const entries = uploaded.map((file) => ({
+      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: file.originalname,
+      url: `/uploads/${file.filename}`,
+      size: file.size,
+      type: file.mimetype || 'file',
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: createdBy,
+      source: 'remote'
+    }));
+    const saved = await service.addFiles(id, entries);
+    res.status(201).json(saved);
+  } catch (err) {
+    console.error('[issue.controller.js:addFiles]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getActivity = async (req, res) => {
+  try {
+    const items = await service.getActivity(req.params.id);
+    res.json(items);
+  } catch (err) {
+    console.error('[issue.controller.js:getActivity]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addActivity = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    const actorName = await resolveActorName(req.user, 'User');
+    const payload = {
+      action: body.action || body.title || 'Update',
+      detail: body.detail || body.description || '',
+      user: body.user || actorName,
+      role: body.role || (req.user?.role || 'user'),
+      timestamp: body.timestamp || new Date().toISOString(),
+      source: body.source || 'remote'
+    };
+    const saved = await service.addActivity(id, payload);
+    res.status(201).json(saved);
+  } catch (err) {
+    console.error('[issue.controller.js:addActivity]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getCosts = async (req, res) => {
+  try {
+    const items = await service.getCosts(req.params.id);
+    res.json(items);
+  } catch (err) {
+    console.error('[issue.controller.js:getCosts]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addCost = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    if (!body.description || !body.category || body.cost === undefined || body.assignedTo === undefined || !body.date) {
+      return res.status(400).json({ error: 'Missing cost fields' });
+    }
+    const payload = {
+      description: String(body.description),
+      category: String(body.category),
+      cost: Number(body.cost) || 0,
+      assignedTo: String(body.assignedTo),
+      date: body.date,
+      createdBy: body.createdBy || (await resolveActorName(req.user, 'User'))
+    };
+    const saved = await service.addCost(id, payload);
+    res.status(201).json(saved);
+  } catch (err) {
+    console.error('[issue.controller.js:addCost]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getParts = async (req, res) => {
+  try {
+    const items = await service.getParts(req.params.id);
+    res.json(items);
+  } catch (err) {
+    console.error('[issue.controller.js:getParts]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addPart = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    if (!body.name || body.cost === undefined || body.quantity === undefined) {
+      return res.status(400).json({ error: 'Missing part fields' });
+    }
+    const payload = {
+      name: String(body.name),
+      status: body.status ? String(body.status) : 'In stock',
+      cost: Number(body.cost) || 0,
+      quantity: Number(body.quantity) || 1,
+      location: body.location ? String(body.location) : '',
+      source: body.source || 'remote'
+    };
+    const saved = await service.addPart(id, payload);
+    res.status(201).json(saved);
+  } catch (err) {
+    console.error('[issue.controller.js:addPart]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getLabor = async (req, res) => {
+  try {
+    const items = await service.getLabor(req.params.id);
+    res.json(items);
+  } catch (err) {
+    console.error('[issue.controller.js:getLabor]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addLabor = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    if (!body.technician || (!body.hours && !body.minutes && !body.seconds)) {
+      return res.status(400).json({ error: 'Missing labor fields' });
+    }
+    const payload = {
+      technician: String(body.technician),
+      rate: Number(body.rate) || 0,
+      hours: Number(body.hours) || 0,
+      minutes: Number(body.minutes) || 0,
+      seconds: Number(body.seconds) || 0,
+      cost: Number(body.cost) || 0,
+      startedAt: body.startedAt || body.date || new Date().toISOString(),
+      category: body.category ? String(body.category) : 'Maintenance',
+      createdBy: body.createdBy || (await resolveActorName(req.user, 'User'))
+    };
+    const saved = await service.addLabor(id, payload);
+    res.status(201).json(saved);
+  } catch (err) {
+    console.error('[issue.controller.js:addLabor]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getProviderPortal = async (req, res) => {
+  try {
+    const data = await service.getProviderPortal(req.params.id);
+    res.json(data);
+  } catch (err) {
+    console.error('[issue.controller.js:getProviderPortal]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.updateProviderPortal = async (req, res) => {
+  try {
+    const payload = await service.updateProviderPortal(req.params.id, req.body || {});
+    res.json(payload);
+  } catch (err) {
+    console.error('[issue.controller.js:updateProviderPortal]', err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.delete = async (req, res) => {

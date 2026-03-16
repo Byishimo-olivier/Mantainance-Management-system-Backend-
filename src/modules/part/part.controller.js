@@ -16,7 +16,7 @@ module.exports = {
       if (!data.name) return res.status(400).json({ error: 'name is required' });
       const created = await Part.create({
         name: data.name,
-        status: data.status || 'AVAILABLE',
+        status: data.status || 'STOCK_IN',
         available: Number(data.available || 0),
         allocated: Number(data.allocated || 0),
         onHand: Number(data.onHand || 0),
@@ -40,7 +40,7 @@ module.exports = {
         .filter(i => i && i.name)
         .map(i => ({
           name: i.name,
-          status: i.status || 'AVAILABLE',
+          status: i.status || 'STOCK_IN',
           available: Number(i.available || 0),
           allocated: Number(i.allocated || 0),
           onHand: Number(i.onHand || 0),

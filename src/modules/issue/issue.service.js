@@ -2,6 +2,11 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const mongoose = require('mongoose');
 
+const applyCompanyFilter = (filter = {}, companyName) => {
+  if (!companyName) return filter;
+  return { ...filter, companyName };
+};
+
 // Helper to translate Prisma filters to raw MongoDB filters (handles OR -> $or and ObjectId conversion)
 const translateFilterToMongo = (filter) => {
   if (!filter || typeof filter !== 'object') return filter;
@@ -34,15 +39,15 @@ const translateFilterToMongo = (filter) => {
 };
 
 module.exports = {
-  getAll: async () => {
+  getAll: async (companyName = null) => {
     try {
-      return await prisma.issue.findMany();
+      return await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
     } catch (err) {
       if (err.message.includes('userId') || err.message.includes('converting')) {
         console.error('CRITICAL: Prisma conversion error in issue.service:getAll. Falling back to raw MongoDB.');
         const db = mongoose.connection.db;
         if (!db) throw err;
-        const issues = await db.collection('Issue').find({}).toArray();
+        const issues = await db.collection('Issue').find(applyCompanyFilter({}, companyName)).toArray();
         return issues.map(i => ({ ...i, id: i._id.toString() }));
       }
       throw err;
@@ -65,15 +70,15 @@ module.exports = {
     }
   },
 
-  getByUserId: async (userId) => {
+  getByUserId: async (userId, companyName = null) => {
     try {
-      return await prisma.issue.findMany({ where: { userId } });
+      return await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
     } catch (err) {
       if (err.message.includes('userId') || err.message.includes('converting')) {
         console.error('CRITICAL: Prisma conversion error in issue.service:getByUserId. Falling back to raw MongoDB.');
         const db = mongoose.connection.db;
         if (!db) throw err;
-        const mongoFilter = translateFilterToMongo({ userId });
+        const mongoFilter = translateFilterToMongo(applyCompanyFilter({ userId }, companyName));
         const issues = await db.collection('Issue').find(mongoFilter).toArray();
         return issues.map(i => ({ ...i, id: i._id.toString() }));
       }
@@ -81,14 +86,14 @@ module.exports = {
     }
   },
 
-  getByAssignedTech: async (techId) => {
+  getByAssignedTech: async (techId, companyName = null) => {
     try {
       // Primary Prisma query (protected)
       const issues = await prisma.issue.findMany({
-        where: { OR: [{ assignedTo: techId }] }
+        where: applyCompanyFilter({ OR: [{ assignedTo: techId }] }, companyName)
       });
       // Filter for assignees.id match in JS (Prisma limitation with JSON arrays)
-      const allIssues = await prisma.issue.findMany();
+      const allIssues = await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
       const withAssignee = allIssues.filter(issue => Array.isArray(issue.assignees) && issue.assignees.some(a => a && a.id === techId));
       const merged = [...issues, ...withAssignee.filter(i => !issues.some(j => j.id === i.id))];
       return merged;
@@ -96,17 +101,17 @@ module.exports = {
       console.error('CRITICAL: Prisma conversion error in issue.service:getByAssignedTech. Falling back to raw MongoDB.');
       const db = mongoose.connection.db;
       if (!db) throw err;
-      const issues = await db.collection('Issue').find({
+      const issues = await db.collection('Issue').find(applyCompanyFilter({
         $or: [
           { assignedTo: techId },
           { "assignees.id": techId }
         ]
-      }).toArray();
+      }, companyName)).toArray();
       return issues.map(i => ({ ...i, id: i._id.toString() }));
     }
   },
 
-  getByTechnicianProperties: async (techUserId) => {
+  getByTechnicianProperties: async (techUserId, companyName = null) => {
     try {
       const userService = require('../user/user.service');
       const user = await userService.findUserById(techUserId);
@@ -129,12 +134,12 @@ module.exports = {
       // Exclude anonymous (submissionType === 'request') issues that have NOT been resubmitted.
       // Managers should only see authenticated submissions or anonymous ones that the client has resubmitted.
       return await prisma.issue.findMany({
-        where: {
+        where: applyCompanyFilter({
           AND: [
             { assetId: { in: assetIds } },
             { OR: [ { submissionType: { not: 'request' } }, { resubmitted: true } ] }
           ]
-        }
+        }, companyName)
       });
     } catch (err) {
       console.error('CRITICAL: Prisma conversion error in issue.service:getByTechnicianProperties. Falling back to raw MongoDB.');
@@ -145,17 +150,17 @@ module.exports = {
     }
   },
 
-  getByPropertyId: async (propertyId) => {
+  getByPropertyId: async (propertyId, companyName = null) => {
     try {
       const assets = await prisma.asset.findMany({ where: { propertyId }, select: { id: true } });
       const assetIds = assets.map(a => a.id).filter(Boolean);
       return await prisma.issue.findMany({
-        where: {
+        where: applyCompanyFilter({
           OR: [
             { propertyId },
             ...(assetIds.length ? [{ assetId: { in: assetIds } }] : []),
           ]
-        }
+        }, companyName)
       });
     } catch (err) {
       console.error('CRITICAL: Prisma conversion error in issue.service:getByPropertyId. Falling back to raw MongoDB.');
@@ -170,12 +175,12 @@ module.exports = {
             ...(assetIds.length ? [{ assetId: { in: assetIds } }] : [])
           ]
         });
-        const issues = await db.collection('Issue').find(mongoFilter).toArray();
+        const issues = await db.collection('Issue').find(applyCompanyFilter(mongoFilter, companyName)).toArray();
         return issues.map(i => ({ ...i, id: i._id.toString() }));
       }
   },
 
-  getByPropertyIds: async (propertyIds) => {
+  getByPropertyIds: async (propertyIds, companyName = null) => {
     try {
       if (!propertyIds || propertyIds.length === 0) return [];
       const assets = await prisma.asset.findMany({
@@ -184,12 +189,12 @@ module.exports = {
       });
       const assetIds = assets.map(a => a.id).filter(Boolean);
       return await prisma.issue.findMany({
-        where: {
+        where: applyCompanyFilter({
           OR: [
             { propertyId: { in: propertyIds } },
             ...(assetIds.length ? [{ assetId: { in: assetIds } }] : []),
           ]
-        },
+        }, companyName),
         orderBy: { createdAt: 'desc' }
       });
     } catch (err) {
@@ -205,7 +210,7 @@ module.exports = {
             ...(assetIds.length ? [{ assetId: { in: assetIds } }] : []),
           ]
         });
-        const issues = await db.collection('Issue').find(mongoFilter).sort({ createdAt: -1 }).toArray();
+        const issues = await db.collection('Issue').find(applyCompanyFilter(mongoFilter, companyName)).sort({ createdAt: -1 }).toArray();
         return issues.map(i => ({ ...i, id: i._id.toString() }));
       }
   },
@@ -311,6 +316,171 @@ module.exports = {
       delete d.propertyId;
     }
     return prisma.issue.update({ where: { id }, data: d });
+  },
+  getLinks: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { links: 1 } });
+    return Array.isArray(issue?.links) ? issue.links : [];
+  },
+  addLink: async (id, link) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const entry = {
+      id: link?.id || `link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...link,
+      createdAt: link?.createdAt || new Date().toISOString()
+    };
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $push: { links: entry }, $set: { updatedAt: new Date() } }
+    );
+    return entry;
+  },
+  getFiles: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { files: 1 } });
+    return Array.isArray(issue?.files) ? issue.files : [];
+  },
+  addFiles: async (id, files) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const entries = Array.isArray(files) ? files : [];
+    if (!entries.length) return [];
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $push: { files: { $each: entries } }, $set: { updatedAt: new Date() } }
+    );
+    return entries;
+  },
+  getActivity: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { activity: 1 } });
+    return Array.isArray(issue?.activity) ? issue.activity : [];
+  },
+  addActivity: async (id, entry) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const payload = {
+      id: entry?.id || `activity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...entry,
+      timestamp: entry?.timestamp || new Date().toISOString()
+    };
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $push: { activity: payload }, $set: { updatedAt: new Date() } }
+    );
+    return payload;
+  },
+  getCosts: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { costs: 1 } });
+    return Array.isArray(issue?.costs) ? issue.costs : [];
+  },
+  addCost: async (id, entry) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const payload = {
+      id: entry?.id || `cost-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...entry,
+      createdAt: entry?.createdAt || new Date().toISOString()
+    };
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $push: { costs: payload }, $set: { updatedAt: new Date() } }
+    );
+    return payload;
+  },
+  getParts: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { parts: 1 } });
+    return Array.isArray(issue?.parts) ? issue.parts : [];
+  },
+  addPart: async (id, entry) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const payload = {
+      id: entry?.id || `part-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...entry,
+      createdAt: entry?.createdAt || new Date().toISOString()
+    };
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $push: { parts: payload }, $set: { updatedAt: new Date() } }
+    );
+    return payload;
+  },
+  getLabor: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { labor: 1 } });
+    return Array.isArray(issue?.labor) ? issue.labor : [];
+  },
+  addLabor: async (id, entry) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const payload = {
+      id: entry?.id || `labor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...entry,
+      createdAt: entry?.createdAt || new Date().toISOString()
+    };
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $push: { labor: payload }, $set: { updatedAt: new Date() } }
+    );
+    return payload;
+  },
+  getProviderPortal: async (id) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { providerPortalEnabled: 1, providerPortalUrl: 1 } });
+    return {
+      providerPortalEnabled: Boolean(issue?.providerPortalEnabled),
+      providerPortalUrl: issue?.providerPortalUrl || ''
+    };
+  },
+  updateProviderPortal: async (id, payload) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const update = {
+      providerPortalEnabled: Boolean(payload?.providerPortalEnabled),
+      providerPortalUrl: payload?.providerPortalUrl || '',
+      updatedAt: new Date()
+    };
+    await db.collection('Issue').updateOne({ _id: objectId }, { $set: update });
+    return update;
   },
   delete: (id) => prisma.issue.delete({ where: { id } }),
 };

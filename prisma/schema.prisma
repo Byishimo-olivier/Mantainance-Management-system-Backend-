@@ -18,10 +18,26 @@ model Property {
   baths               Int?
   area                Int?
   floors              Int?
-  blocks              Int?
+  blocks              Json?
   block               String?
   rooms               Int?
   photos              String[]
+  roomNames           Json?
+  namedBlocks         Json?
+  blocksModifiable    Boolean?            @default(false)
+  includeMapCoordinates Boolean?          @default(false)
+  // New Fields
+  latitude            Float?
+  longitude           Float?
+  parentPropertyId    String?              @db.ObjectId
+  parentProperty      Property?            @relation("PropertyToSubProperties", fields: [parentPropertyId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subProperties       Property[]           @relation("PropertyToSubProperties")
+  assignedWorkers     String[]             // List of worker IDs or names
+  assignedTeam        String?
+  vendors             Json?                // List of vendors
+  customers           Json?                // List of customers
+  customData          Json?                // [{ name: string, value: string, unit: string }]
+  
   assets              Asset[]
   internalTechnicians InternalTechnician[]
   issues              Issue[]
@@ -343,6 +359,7 @@ model Issue {
   rejectedAt      DateTime?
   rejectionReason String?
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyName     String?
   title           String
   description     String
   location        String
