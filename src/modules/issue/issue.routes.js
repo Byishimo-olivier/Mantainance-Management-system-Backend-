@@ -15,9 +15,10 @@ router.post('/:id/evidence/after', authenticate, authorizeRoles('technician'), c
 router.post('/:id/assign', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.assignToTech);
 // Assign to internal property technician (allow property clients to request assignment)
 router.post('/:id/assign-internal', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.assignToInternal);
-// Manager/admin approve or decline an issue
-router.post('/:id/approve', authenticate, authorizeRoles('admin', 'manager'), ctrl.approveIssue);
-router.post('/:id/decline', authenticate, authorizeRoles('admin', 'manager'), ctrl.declineIssue);
+// Manager/admin/client can approve or decline a request.
+// Controller enforces ownership for client/requestor roles.
+router.post('/:id/approve', authenticate, authorizeRoles('admin', 'manager', 'client', 'requestor'), ctrl.approveIssue);
+router.post('/:id/decline', authenticate, authorizeRoles('admin', 'manager', 'client', 'requestor'), ctrl.declineIssue);
 // Resubmit an issue to flag it for admin re-assignment (client/manager/admin)
 router.post('/:id/resubmit', authenticate, authorizeRoles('client', 'manager', 'admin'), ctrl.resubmitIssue);
 

@@ -11,6 +11,7 @@
     "build": "prisma generate",
     "postinstall": "prisma generate",
     "prisma": "prisma",
+    "send:monthly-reports": "node scripts/send-monthly-reports.js",
     "install-parsers": "npm install xlsx pdf-parse mammoth tesseract.js csv-parse --save-optional",
     "seed:properties": "node scripts/seed-properties.js",
     "patch-data": "node scripts/patch-legacy-data.js",
@@ -18,7 +19,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "^6.5.0",
     "axios": "^1.6.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -27,8 +28,7 @@
     "jsonwebtoken": "^9.0.0",
     "mongoose": "^9.1.3",
     "multer": "^2.0.2",
-    "nodemailer": "^7.0.12",
-    "prisma": "^5.22.0"
+    "nodemailer": "^7.0.12"
   },
   "optionalDependencies": {
     "csv-parse": "^5.6.0",
@@ -38,6 +38,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "nodemon": "^3.0.0"
+    "nodemon": "^3.0.0",
+    "prisma": "^6.5.0"
   }
 }

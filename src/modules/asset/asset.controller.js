@@ -1,6 +1,28 @@
 const assetModel = require('./asset.model');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
+const getCompanyPropertyIds = async (companyName) => {
+  if (!companyName) return [];
+  try {
+    const userService = require('../user/user.service');
+    const propertyModel = require('../property/property.model');
+    const users = await userService.getAllUsers({ companyName });
+    const companyUserIds = users.map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
+    if (!companyUserIds.length) return [];
+    const props = await propertyModel.findAll({
+      OR: [
+        { userId: { in: companyUserIds } },
+        { clientId: { in: companyUserIds } },
+        { requestorId: { in: companyUserIds } }
+      ]
+    });
+    return props.map((p) => p.id || p._id).filter(Boolean);
+  } catch (err) {
+    console.error('[asset.controller] Failed to resolve company properties:', err);
+    return [];
+  }
+};
+
 module.exports = {
   async count(req, res) {
     try {
@@ -18,6 +40,9 @@ module.exports = {
       if (req.user && req.user.userId) {
         data.userId = String(req.user.userId);
       }
+      if (!data.companyName && req.user?.companyName) {
+        data.companyName = req.user.companyName;
+      }
 
       const asset = await assetModel.create(data);
       res.status(201).json(normalizeExtendedJSON(asset));
@@ -34,20 +59,31 @@ module.exports = {
       if (q.propertyId) filter.propertyId = q.propertyId;
       else if (q.property) filter.propertyId = q.property;
       const user = req.user;
-      if (user && (user.role === 'client' || user.role === 'requestor')) {
-        const propertyModel = require('../property/property.model');
-        const props = await propertyModel.findAll({
-          OR: [
-            { userId: user.userId },
-            { clientId: user.userId },
-            { requestorId: user.userId }
-          ]
-        });
-        const propertyIds = props.map(p => p.id || p._id).filter(Boolean);
-        if (propertyIds.length === 0) {
-          return res.json([]);
+      if (user && user.role !== 'superadmin') {
+        let scopedPropertyIds = [];
+
+        if (user.companyName) {
+          scopedPropertyIds = await getCompanyPropertyIds(user.companyName);
         }
-        filter.propertyId = { in: propertyIds };
+
+        if (!scopedPropertyIds.length && (user.role === 'admin' || user.role === 'manager' || user.role === 'client' || user.role === 'requestor')) {
+          const propertyModel = require('../property/property.model');
+          const props = await propertyModel.findAll({
+            OR: [
+              { userId: user.userId },
+              { clientId: user.userId },
+              { requestorId: user.userId }
+            ]
+          });
+          scopedPropertyIds = props.map((p) => p.id || p._id).filter(Boolean);
+        }
+
+        if (user.companyName || user.role === 'admin' || user.role === 'client' || user.role === 'requestor' || user.role === 'manager' || user.role === 'technician' || user.role === 'staff') {
+          if (scopedPropertyIds.length === 0) {
+            return res.json([]);
+          }
+          filter.propertyId = { in: scopedPropertyIds };
+        }
       }
       const assets = await assetModel.findAll(filter);
       res.json(normalizeExtendedJSON(assets));

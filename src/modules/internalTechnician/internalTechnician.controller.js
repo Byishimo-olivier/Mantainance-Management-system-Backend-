@@ -1,6 +1,28 @@
 const model = require('./internalTechnician.model');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
+const getCompanyPropertyIds = async (companyName) => {
+  if (!companyName) return [];
+  try {
+    const userService = require('../user/user.service');
+    const propertyModel = require('../property/property.model');
+    const users = await userService.getAllUsers({ companyName });
+    const companyUserIds = users.map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
+    if (!companyUserIds.length) return [];
+    const props = await propertyModel.findAll({
+      OR: [
+        { userId: { in: companyUserIds } },
+        { clientId: { in: companyUserIds } },
+        { requestorId: { in: companyUserIds } }
+      ]
+    });
+    return props.map((p) => p.id || p._id).filter(Boolean);
+  } catch (err) {
+    console.error('[internalTechnician.controller] Failed to resolve company properties:', err);
+    return [];
+  }
+};
+
 module.exports = {
   async create(req, res) {
     try {
@@ -33,6 +55,9 @@ module.exports = {
       if (req.user && req.user.userId) {
         data.userId = String(req.user.userId);
       }
+      if (!data.companyName && req.user?.companyName) {
+        data.companyName = req.user.companyName;
+      }
       console.log('[InternalTech Create] req.user:', req.user);
       console.log('[InternalTech Create] data:', data);
 
@@ -46,18 +71,28 @@ module.exports = {
     try {
       const user = req.user;
       let techs;
-      if (user && (user.role === 'client' || user.role === 'requestor')) {
-        const propertyModel = require('../property/property.model');
-        const props = await propertyModel.findAll({
-          OR: [
-            { userId: user.userId },
-            { clientId: user.userId },
-            { requestorId: user.userId }
-          ]
-        });
-        const propertyIds = props.map(p => p.id || p._id).filter(Boolean);
-        if (propertyIds.length === 0) return res.json([]);
-        techs = await model.findAll({ propertyId: { in: propertyIds } });
+      if (user && (user.role === 'admin' || user.role === 'manager' || user.role === 'client' || user.role === 'requestor')) {
+        const propertyIds = user.companyName
+          ? await getCompanyPropertyIds(user.companyName)
+          : [];
+        const resolvedPropertyIds = propertyIds.length ? propertyIds : (() => {
+          return [];
+        })();
+        if (!resolvedPropertyIds.length) {
+          const propertyModel = require('../property/property.model');
+          const props = await propertyModel.findAll({
+            OR: [
+              { userId: user.userId },
+              { clientId: user.userId },
+              { requestorId: user.userId }
+            ]
+          });
+          const ownPropertyIds = props.map(p => p.id || p._id).filter(Boolean);
+          if (ownPropertyIds.length === 0) return res.json([]);
+          techs = await model.findAll({ propertyId: { in: ownPropertyIds } });
+        } else {
+          techs = await model.findAll({ propertyId: { in: resolvedPropertyIds } });
+        }
       } else {
         techs = await model.findAll();
       }

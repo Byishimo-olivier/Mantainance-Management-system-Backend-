@@ -2,9 +2,14 @@
 const User = require('./user.model.js');
 const bcrypt = require('bcryptjs');
 
+const slugifyCompanyName = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '');
+
 const createUser = async (userData, options = {}) => {
   if (!userData || !userData.password) throw new Error('Password is required');
-  if (!userData.companyName) throw new Error('Company name is required');
   const allowExistingCompany = options.allowExistingCompany === true;
 
   const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 10;
@@ -22,6 +27,7 @@ const createUser = async (userData, options = {}) => {
       CLIENT: 'client',
       REQUESTOR: 'requestor',
       STAFF: 'staff',
+      SUPERADMIN: 'superadmin',
       // Legacy role variants: map to base role + accessLevel
       'LIMITED MANAGER': 'manager',
       'LIMITED TECHNICIAN': 'technician'
@@ -32,12 +38,39 @@ const createUser = async (userData, options = {}) => {
   }
 
   const normalizedEmail = userData.email ? String(userData.email).toLowerCase().trim() : undefined;
-  const normalizedCompany = String(userData.companyName || '').trim();
+  const normalizedCompany = String(userData.companyName || (role === 'superadmin' ? 'SYSTEM' : '')).trim();
+  if (!normalizedCompany) throw new Error('Company name is required');
+  const companyType = String(userData.companyType || 'main').trim().toLowerCase() === 'branch' ? 'branch' : 'main';
+  const branchName = String(userData.branchName || '').trim();
+  const branchDetails = String(userData.branchDetails || '').trim();
+  const branchLocation = String(userData.branchLocation || '').trim();
+  const branchLatitude = userData.branchLatitude === '' || userData.branchLatitude === undefined || userData.branchLatitude === null
+    ? undefined
+    : Number(userData.branchLatitude);
+  const branchLongitude = userData.branchLongitude === '' || userData.branchLongitude === undefined || userData.branchLongitude === null
+    ? undefined
+    : Number(userData.branchLongitude);
+  const branchEvidenceOne = String(userData.branchEvidenceOne || '').trim();
+  const branchEvidenceTwo = String(userData.branchEvidenceTwo || '').trim();
+  const branchImages = Array.isArray(userData.branchImages)
+    ? userData.branchImages.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  if (companyType === 'branch') {
+    if (!branchName) throw new Error('Branch name is required');
+    if (!branchDetails) throw new Error('Branch details are required');
+    if (!branchEvidenceOne || !branchEvidenceTwo) {
+      throw new Error('Two branch evidence fields are required');
+    }
+  }
 
   // Block duplicate company names (public registration). Invites can create multiple users per company.
   if (!allowExistingCompany) {
     const existingCompany = await User.findOne({ companyName: normalizedCompany });
-    if (existingCompany) {
+    if (companyType === 'branch' && !existingCompany) {
+      throw new Error('Main company not found. Create the main company first before adding a branch.');
+    }
+    if (companyType !== 'branch' && existingCompany) {
       throw new Error('Company name already exists. Please choose another.');
     }
   }
@@ -46,6 +79,15 @@ const createUser = async (userData, options = {}) => {
     ...userData,
     email: normalizedEmail,
     companyName: normalizedCompany,
+    companyType,
+    branchName: companyType === 'branch' ? branchName : '',
+    branchDetails: companyType === 'branch' ? branchDetails : '',
+    branchLocation: companyType === 'branch' ? branchLocation : '',
+    branchLatitude: companyType === 'branch' && !Number.isNaN(branchLatitude) ? branchLatitude : undefined,
+    branchLongitude: companyType === 'branch' && !Number.isNaN(branchLongitude) ? branchLongitude : undefined,
+    branchEvidenceOne: companyType === 'branch' ? branchEvidenceOne : '',
+    branchEvidenceTwo: companyType === 'branch' ? branchEvidenceTwo : '',
+    branchImages: companyType === 'branch' ? branchImages : [],
     password: hashedPassword,
     role,
     accessLevel
@@ -77,10 +119,31 @@ const getUsersByRoles = async (roles = [], filter = {}) => {
   return await User.find({ role: { $in: roles }, ...filter }).select('-password');
 };
 
+const findCompanyBySlug = async (companySlug) => {
+  const normalizedSlug = slugifyCompanyName(companySlug);
+  if (!normalizedSlug) return null;
+
+  const users = await User.find({ companyName: { $exists: true, $ne: null } }).select('-password');
+  const matchingUser = users.find((user) => slugifyCompanyName(user.companyName) === normalizedSlug);
+
+  if (!matchingUser) return null;
+
+  const companyName = String(matchingUser.companyName || '').trim();
+  const companyUsers = users.filter((user) => String(user.companyName || '').trim() === companyName);
+
+  return {
+    companyName,
+    companySlug: normalizedSlug,
+    users: companyUsers,
+  };
+};
+
 module.exports = {
   createUser,
   findUserByEmail,
   findUserById,
   getAllUsers,
   getUsersByRoles,
+  slugifyCompanyName,
+  findCompanyBySlug,
 };

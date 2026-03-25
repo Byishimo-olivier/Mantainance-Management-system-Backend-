@@ -1,5 +1,6 @@
 const service = require('./subscription.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
+const systemSettingsService = require('../systemSettings/systemSettings.service');
 
 exports.createSubscription = async (req, res) => {
   try {
@@ -102,12 +103,12 @@ exports.updateSubscription = async (req, res) => {
 
     // verify role: only client and admin can update subscriptions
     const requester = req.user || {};
-    const allowedRoles = ['client', 'admin'];
+    const allowedRoles = ['client', 'admin', 'superadmin'];
     if (!allowedRoles.includes(requester.role)) {
       return res.status(403).json({ error: 'Forbidden: only client and admin can edit subscriptions' });
     }
 
-    const isAdmin = requester.role === 'admin';
+    const isAdmin = requester.role === 'admin' || requester.role === 'superadmin';
 
     // fetch existing subscription for ownership check
     const existing = await service.getSubscriptionById(id);
@@ -261,10 +262,14 @@ exports.changeBillingCycle = async (req, res) => {
 exports.getPricing = async (req, res) => {
   try {
     const pricing = service.getPricing();
+    const settings = await systemSettingsService.getSettings();
 
     res.json({
       message: 'Pricing retrieved successfully',
-      data: pricing,
+      data: {
+        pricing,
+        currency: settings?.platform?.subscriptionCurrency || 'USD',
+      },
     });
   } catch (error) {
     res.status(400).json({ error: error.message });

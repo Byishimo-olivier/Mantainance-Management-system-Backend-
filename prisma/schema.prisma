@@ -150,6 +150,23 @@ model MaintenanceSchedule {
   date         String
   time         String
   assets       String?
+  // PM + WO metadata
+  workOrderTitle       String?
+  workOrderDescription String?
+  priority             String?            @default("Medium")
+  category             String?
+  durationHours        Float?
+  requiresSignature    Boolean?           @default(false)
+  attachments          Json?
+  tasks                Json?              // [{ title, status }]
+  assetsRows           Json?              // [{ assetId, locationId, startDate, endDate, timezone, assignee }]
+  assetsCount          Int?               @default(0)
+  locationsCount       Int?               @default(0)
+  timezone             String?
+  scheduleType         String?            // calendar | meter | combined
+  calendarRule         Json?              // { every: 1, unit: 'day', time: '22:00', leadDays: 0 }
+  meterRule            Json?              // { operator: '>=', threshold: 100, unit: 'hours', dueAfter: { value:1, unit:'day' } }
+  combinedRule         Json?
   // Routine scheduling fields
   routine      Boolean             @default(false)
   frequency    String?

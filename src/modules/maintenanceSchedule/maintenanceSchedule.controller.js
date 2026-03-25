@@ -1,5 +1,17 @@
 const model = require('./maintenanceSchedule.model');
 
+const getCompanyUserIds = async (companyName) => {
+  if (!companyName) return [];
+  try {
+    const userService = require('../user/user.service');
+    const users = await userService.getAllUsers({ companyName });
+    return users.map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
+  } catch (err) {
+    console.error('[maintenanceSchedule.controller] Failed to resolve company users:', err);
+    return [];
+  }
+};
+
 function normalizeExtendedJSON(value) {
   if (value === null || value === undefined) return value;
   if (Array.isArray(value)) return value.map(normalizeExtendedJSON);
@@ -30,6 +42,54 @@ module.exports = {
     try {
       const data = { ...req.body };
       console.log('[Schedule Create] Initial data:', JSON.stringify(data, null, 2));
+      const parseMaybeJson = (value, fallback) => {
+        if (value === undefined || value === null || value === '') return fallback;
+        if (typeof value !== 'string') return value;
+        try {
+          return JSON.parse(value);
+        } catch (e) {
+          return fallback;
+        }
+      };
+
+      data.tasks = parseMaybeJson(data.tasks, data.tasks || []);
+      data.checklist = parseMaybeJson(data.checklist, data.checklist || []);
+      data.assetsRows = parseMaybeJson(data.assetsRows, data.assetsRows || []);
+      data.calendarRule = parseMaybeJson(data.calendarRule, data.calendarRule || null);
+      data.meterRule = parseMaybeJson(data.meterRule, data.meterRule || null);
+      data.combinedRule = parseMaybeJson(data.combinedRule, data.combinedRule || null);
+      data.attachments = parseMaybeJson(data.attachments, data.attachments || null);
+
+      const uploadedPhotos = Array.isArray(req.files?.photos)
+        ? req.files.photos.map((file) => ({
+            kind: 'photo',
+            field: 'photos',
+            originalName: file.originalname,
+            filename: file.filename,
+            mimeType: file.mimetype,
+            size: file.size,
+            url: `/uploads/${file.filename}`,
+          }))
+        : [];
+
+      const uploadedFiles = Array.isArray(req.files?.files)
+        ? req.files.files.map((file) => ({
+            kind: 'file',
+            field: 'files',
+            originalName: file.originalname,
+            filename: file.filename,
+            mimeType: file.mimetype,
+            size: file.size,
+            url: `/uploads/${file.filename}`,
+          }))
+        : [];
+
+      if (uploadedPhotos.length || uploadedFiles.length) {
+        data.attachments = {
+          photos: uploadedPhotos,
+          files: uploadedFiles,
+        };
+      }
       // Accept all new fields from the form
       // If date/time fields are present, combine into nextDate (preserve local time)
       if (data.date) {
@@ -44,17 +104,84 @@ module.exports = {
         }
       }
 
+      // If nextDate was passed as string or object, normalize to Date
+      if (data.nextDate && !(data.nextDate instanceof Date)) {
+        try {
+          data.nextDate = new Date(data.nextDate);
+        } catch (e) {
+          console.warn('[Schedule Create] nextDate normalization failed, fallback to now');
+          data.nextDate = new Date();
+        }
+      }
+
       if (isNaN(data.nextDate?.getTime())) {
         console.warn('[Schedule Create] Invalid nextDate generated, defaulting to now');
         data.nextDate = new Date();
       }
 
+      // Fill required-but-missing legacy fields so Prisma doesn't reject
+      if (!data.email) data.email = 'pm@placeholder.local';
+      if (!data.employees) data.employees = 'N/A';
+      if (!data.date) data.date = new Date(data.nextDate).toISOString().slice(0, 10);
+      if (!data.time) data.time = '09:00';
+      if (!data.description) data.description = data.workOrderDescription || 'Preventive maintenance schedule';
+      if (!data.name) data.name = data.workOrderTitle || 'Preventive Maintenance';
+
+      // Derive counts for assets/locations if provided
+      if (Array.isArray(data.assetsRows)) {
+        data.assetsCount = data.assetsRows.filter(r => r?.assetId || r?.asset).length;
+        data.locationsCount = data.assetsRows.filter(r => r?.locationId || r?.location).length;
+      }
+
+      // Default status
+      if (!data.status) data.status = 'Pending';
+
       if (req.user && req.user.userId) {
         data.userId = String(req.user.userId);
+      }
+      if (!data.company && req.user?.companyName) {
+        data.company = req.user.companyName;
+      }
+      if (!data.companyName && req.user?.companyName) {
+        data.companyName = req.user.companyName;
       }
       console.log('[Schedule Create] Creating with userId:', data.userId);
       // If date/time fields are present they remain on the object as strings for clients if needed
       const schedule = await model.create(data);
+
+      // Optionally create initial work order / issue
+      if (data.createFirstWorkOrder) {
+        try {
+          const mongoose = require('mongoose');
+          const db = mongoose.connection.db;
+          if (db) {
+            const issueData = {
+              title: data.workOrderTitle || data.name || 'Preventive Maintenance',
+              description: data.workOrderDescription || data.description || 'Preventive maintenance generated work order',
+              location: data.location || 'Preventive Maintenance',
+              propertyId: data.assetsRows?.[0]?.propertyId || null,
+              assetId: data.assetsRows?.[0]?.assetId || null,
+              tags: [],
+              assignees: [],
+              time: 'Scheduled',
+              userId: data.userId || null,
+              status: 'PENDING',
+              priority: (data.priority || 'MEDIUM').toUpperCase(),
+              category: data.category || 'General',
+              scheduleId: schedule.id || schedule._id,
+              createdAt: new Date(),
+              companyName: data.companyName || data.company || null,
+            };
+            const result = await db.collection('Issue').insertOne(issueData);
+            console.log('[Schedule Create] Work order created with id', result.insertedId.toString());
+          } else {
+            console.warn('[Schedule Create] Cannot create work order: no DB connection');
+          }
+        } catch (woErr) {
+          console.error('[Schedule Create] Failed to create initial work order', woErr);
+        }
+      }
+
       res.status(201).json(normalizeExtendedJSON(schedule));
     } catch (err) {
       console.error('[maintenanceSchedule.controller.js:create] ERROR:', err);
@@ -65,8 +192,18 @@ module.exports = {
     try {
       let schedules = await model.findAll();
       const user = req.user;
-      if (user && (user.role === 'client' || user.role === 'requestor')) {
-        schedules = schedules.filter((s) => String(s.userId || '') === String(user.userId));
+      if (user && (user.role === 'admin' || user.role === 'manager' || user.role === 'client' || user.role === 'requestor')) {
+        if (user.companyName) {
+          const companyUserIds = await getCompanyUserIds(user.companyName);
+          const companyName = String(user.companyName).toLowerCase();
+          schedules = schedules.filter((s) => {
+            const scheduleUserId = String(s.userId || '');
+            const scheduleCompany = String(s.company || s.companyName || '').toLowerCase();
+            return companyUserIds.includes(scheduleUserId) || (scheduleCompany && scheduleCompany === companyName);
+          });
+        } else {
+          schedules = schedules.filter((s) => String(s.userId || '') === String(user.userId));
+        }
       }
       // Persist overdue status for any schedule whose nextDate is past and not completed
       try {

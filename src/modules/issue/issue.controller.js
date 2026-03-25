@@ -44,6 +44,15 @@ const appendSystemChatMessage = (chat, text, meta = {}) => {
   return next;
 };
 
+const getStatusLifecycleMessage = (status) => {
+  const normalized = String(status || '').toUpperCase().replace(/_/g, ' ').trim();
+  if (normalized === 'APPROVED') return 'Request approved.';
+  if (normalized === 'DECLINED' || normalized === 'REJECTED') return 'Request declined.';
+  if (normalized === 'IN PROGRESS') return 'Work started.';
+  if (normalized === 'COMPLETED' || normalized === 'COMPLETE' || normalized === 'FINISHED') return 'Work completed.';
+  return null;
+};
+
 const resolveActorName = async (user, fallback = 'System') => {
   if (!user) return fallback;
   const direct = user.name || user.username || user.email;
@@ -56,6 +65,138 @@ const resolveActorName = async (user, fallback = 'System') => {
     return dbUser?.name || dbUser?.username || dbUser?.email || user.role || fallback;
   } catch (e) {
     return user.role || fallback;
+  }
+};
+
+const buildChatMessageSignature = (msg = {}) => {
+  return [
+    String(msg?.sender || '').trim().toLowerCase(),
+    String(msg?.text || msg?.message || '').trim().toLowerCase(),
+    String(msg?.timestamp || msg?.createdAt || '').trim()
+  ].join('|');
+};
+
+const extractNewChatMessages = (oldChat = [], newChat = []) => {
+  const seen = new Set((Array.isArray(oldChat) ? oldChat : []).map(buildChatMessageSignature));
+  return (Array.isArray(newChat) ? newChat : []).filter((msg) => !seen.has(buildChatMessageSignature(msg)));
+};
+
+const buildDashboardLinkForRole = (role, issueId) => {
+  const normalizedRole = String(role || '').toLowerCase();
+  if (normalizedRole === 'technician' || normalizedRole === 'internal') return '/technician-dashboard';
+  if (normalizedRole === 'manager' || normalizedRole === 'admin') return `/manager-dashboard?tab=issues&id=${issueId}`;
+  return `/client-dashboard?id=${issueId}`;
+};
+
+const extractMentionTokens = (text) => {
+  const raw = String(text || '');
+  if (!raw) return [];
+  const tokens = raw.match(/@([a-zA-Z0-9._-]+)/g) || [];
+  return Array.from(new Set(tokens.map((token) => token.slice(1).trim().toLowerCase()).filter(Boolean)));
+};
+
+const maybeMatchesMention = (user, tokens = [], text = '') => {
+  if (!user || tokens.length === 0) return false;
+  const lowerText = String(text || '').toLowerCase();
+  const emailLocalPart = String(user.email || '').toLowerCase().split('@')[0];
+  const compactName = String(user.name || '').toLowerCase().replace(/\s+/g, '');
+  const exactCandidates = [
+    user.email,
+    user.name,
+    emailLocalPart,
+    compactName
+  ].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+
+  const splitNameCandidates = String(user.name || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return tokens.some((token) => {
+    if (exactCandidates.includes(token)) return true;
+    if (splitNameCandidates.includes(token)) return true;
+    return exactCandidates.some((candidate) => lowerText.includes(`@${candidate}`));
+  });
+};
+
+const getCompanyScopedIssues = async (companyName) => {
+  if (!companyName) return [];
+  const normalizedCompany = String(companyName).trim().toLowerCase();
+  const userService = require('../user/user.service');
+  const propertyModel = require('../property/property.model');
+  const companyUsers = await userService.getAllUsers({ companyName: String(companyName).trim() });
+  const companyUserIds = companyUsers.map((u) => normalizeId(u?.id || u?._id || u?.userId)).filter(Boolean);
+  const companyProperties = companyUserIds.length
+    ? await propertyModel.findAll({
+        OR: [
+          { userId: { in: companyUserIds } },
+          { clientId: { in: companyUserIds } },
+          { requestorId: { in: companyUserIds } }
+        ]
+      })
+    : [];
+  const companyPropertyIds = new Set(companyProperties.map((p) => normalizeId(p?.id || p?._id)).filter(Boolean));
+  const issues = await service.getAll(null);
+  return issues.filter((issue) => {
+    const issueCompany = String(issue?.companyName || '').trim().toLowerCase();
+    const issuePropertyId = normalizeId(issue?.propertyId || issue?.property?.id || issue?.property?._id);
+    const relatedUserIds = [
+      issue?.userId,
+      issue?.clientId,
+      issue?.requestorId,
+      issue?.inspectorId,
+      issue?.reportedBy,
+      issue?.requestedBy
+    ].map(normalizeId).filter(Boolean);
+    return (
+      (issueCompany && issueCompany === normalizedCompany) ||
+      (issuePropertyId && companyPropertyIds.has(issuePropertyId)) ||
+      relatedUserIds.some((id) => companyUserIds.includes(id))
+    );
+  });
+};
+
+const notifyMentionedUsers = async ({ oldChat, newChat, actorUser, issue }) => {
+  try {
+    const newMessages = extractNewChatMessages(oldChat, newChat);
+    if (!newMessages.length) return;
+
+    const userService = require('../user/user.service');
+    const actorUserId = actorUser?.userId || actorUser?.id || actorUser?._id || null;
+    const companyName = issue?.companyName || actorUser?.companyName || null;
+    const candidateUsers = companyName
+      ? await userService.getAllUsers({ companyName: String(companyName).trim(), status: 'active' })
+      : await userService.getAllUsers({ status: 'active' });
+
+    for (const msg of newMessages) {
+      const text = String(msg?.text || msg?.message || '').trim();
+      if (!text) continue;
+      const tokens = extractMentionTokens(text);
+      if (!tokens.length) continue;
+
+      const mentionedUsers = candidateUsers.filter((candidate) => {
+        const candidateId = candidate?._id || candidate?.id;
+        if (!candidateId) return false;
+        if (actorUserId && String(candidateId) === String(actorUserId)) return false;
+        return maybeMatchesMention(candidate, tokens, text);
+      });
+
+      const uniqueUsers = mentionedUsers.filter((candidate, index, arr) =>
+        index === arr.findIndex((other) => String(other?._id || other?.id) === String(candidate?._id || candidate?.id))
+      );
+
+      for (const candidate of uniqueUsers) {
+        await notificationService.createNotification({
+          userId: String(candidate._id || candidate.id),
+          title: 'You were mentioned',
+          message: `${msg?.sender || 'Someone'} mentioned you in "${issue?.title || 'a work order'}".`,
+          type: 'mention',
+          link: buildDashboardLinkForRole(candidate.role, issue?.id || issue?._id)
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Error creating mention notifications:', err);
   }
 };
 
@@ -78,6 +219,23 @@ function normalizeDateInput(value) {
     return isNaN(parsed.getTime()) ? undefined : parsed;
   }
   return undefined;
+}
+
+function buildAssigneePayload(entry = {}, fallbackRole = '') {
+  if (!entry) return null;
+  const id = entry.id || entry._id || entry.userId || null;
+  const name = entry.name || entry.fullName || entry.username || entry.email || null;
+  const email = entry.email || '';
+  const phone = entry.phone || null;
+  const role = entry.role || fallbackRole || '';
+  if (!id && !name && !email) return null;
+  return {
+    id,
+    name: name || email || String(id || ''),
+    email,
+    phone,
+    role
+  };
 }
 
 // Technician submits BEFORE evidence (address, before image, fix time)
@@ -107,6 +265,15 @@ exports.uploadBeforeEvidence = [
       status: newStatus,
       overdue: false,
     };
+    const senderName = await resolveActorName(req.user, 'Technician');
+    const senderRole = req.user?.role || 'technician';
+    const lifecycleMessage = getStatusLifecycleMessage(newStatus);
+    if (lifecycleMessage) {
+      updateData.chat = appendSystemChatMessage(Array.isArray(issue?.chat) ? issue.chat : [], lifecycleMessage, {
+        sender: senderName,
+        role: senderRole
+      });
+    }
     const updated = await service.update(id, updateData);
 
     // Send In-Progress notifications
@@ -167,6 +334,15 @@ exports.uploadAfterEvidence = [
       status,
       overdue,
     };
+    const senderName = await resolveActorName(req.user, 'Technician');
+    const senderRole = req.user?.role || 'technician';
+    const lifecycleMessage = getStatusLifecycleMessage(status);
+    if (lifecycleMessage) {
+      updateData.chat = appendSystemChatMessage(Array.isArray(issue?.chat) ? issue.chat : [], lifecycleMessage, {
+        sender: senderName,
+        role: senderRole
+      });
+    }
     const updated = await service.update(id, updateData);
 
     // Send Completion notifications
@@ -224,9 +400,6 @@ exports.assignToTech = async (req, res) => {
   const { id } = req.params; // issue id
   const { techId, priority, dueDate, status } = req.body; // technician user id
   if (!techId) return res.status(400).json({ error: 'techId is required' });
-  if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
-    return res.status(403).json({ error: 'Clients can only assign to internal technicians' });
-  }
   // Fetch technician info from users table
   const userService = require('../user/user.service');
   const tech = await userService.findUserById(techId);
@@ -244,6 +417,24 @@ exports.assignToTech = async (req, res) => {
     }
   }
   if (!tech && !externalTech) return res.status(404).json({ error: 'Technician not found' });
+  if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
+    const issue = await service.getById(id);
+    if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+    const issueUserId = normalizeId(issue.userId);
+    const requesterId = normalizeId(req.user.userId);
+    if (issueUserId && issueUserId !== requesterId) {
+      return res.status(403).json({ error: 'Clients can only assign their own issues' });
+    }
+
+    if (!tech) {
+      return res.status(403).json({ error: 'Clients can only assign company users' });
+    }
+
+    if (!req.user.companyName || String(tech.companyName || '').trim() !== String(req.user.companyName || '').trim()) {
+      return res.status(403).json({ error: 'You can only assign people from your own company' });
+    }
+  }
   // The user assigning the task (from auth)
   const assigner = req.user;
   const assignerInfo = {
@@ -254,10 +445,14 @@ exports.assignToTech = async (req, res) => {
     role: assigner.role,
     status: assigner.status,
   };
+  const resolvedAssignee = buildAssigneePayload(
+    tech || externalTech,
+    techSource === 'external' ? 'technician' : (tech?.role || 'technician')
+  );
   const updateData = {
     // If technician is a user, link assignedTo to their user id; otherwise use external technician id
     assignedTo: tech ? (tech.id || tech._id) : (externalTech ? externalTech.id : null),
-    assignees: [assignerInfo],
+    assignees: resolvedAssignee ? [resolvedAssignee] : [],
   };
   if (priority) updateData.priority = priority;
   if (dueDate) updateData.fixDeadline = new Date(dueDate);
@@ -304,7 +499,7 @@ exports.assignToTech = async (req, res) => {
 // Assign an issue to an internal technician (property staff)
 exports.assignToInternal = async (req, res) => {
   const { id } = req.params; // issue id
-  const { internalTechId } = req.body;
+  const { internalTechId, dueDate } = req.body;
   if (!internalTechId) return res.status(400).json({ error: 'internalTechId is required' });
   try {
     const internalTechModel = require('../internalTechnician/internalTechnician.model');
@@ -365,27 +560,20 @@ exports.assignToInternal = async (req, res) => {
     }
 
     // Build assignees array: include the assigner and record the internal tech info
-    const internalAssignee = {
-      id: tech.id || tech._id || tech.id || null,
-      name: tech.name,
-      email: tech.email || '',
-      phone: tech.phone || null,
-      role: 'internal'
-    };
+    const internalAssignee = buildAssigneePayload(tech, 'internal');
 
     const updatePayload = {
-      assignees: [assignerInfo],
+      assignees: internalAssignee ? [internalAssignee] : [],
       status: 'IN PROGRESS'
     };
-    // Add internalAssignee to assignees if not already present (e.g., if assigner is the internal tech)
-    if (!updatePayload.assignees.some(a => a.id === internalAssignee.id)) {
-      updatePayload.assignees.push(internalAssignee);
-    }
+    if (dueDate) updatePayload.fixDeadline = new Date(dueDate);
 
 
     // If a linked User exists, set assignedTo to that user's id so they can fetch assigned issues
     if (linkedUser && (linkedUser.id || linkedUser._id)) {
       updatePayload.assignedTo = linkedUser.id || linkedUser._id;
+    } else if (internalAssignee?.id) {
+      updatePayload.assignedTo = internalAssignee.id;
     }
 
     const updated = await service.update(id, updatePayload);
@@ -550,8 +738,14 @@ exports.getByRole = async (req, res) => {
 
   let issues = [];
   const companyName = req.user?.companyName || null;
-  if (user.role === 'admin') {
-    issues = await service.getAll(companyName);
+  if (user.role === 'superadmin') {
+    issues = await service.getAll(null);
+    issues = await attachClientNames(issues);
+  } else if ((user.role === 'admin' || user.role === 'manager') && companyName) {
+    issues = await getCompanyScopedIssues(companyName);
+    issues = await attachClientNames(issues);
+  } else if (user.role === 'admin') {
+    issues = await service.getAll(null);
     issues = await attachClientNames(issues);
   } else if (user.role === 'manager') {
     issues = await service.getByManagerId ? await service.getByManagerId(user.userId) : [];
@@ -568,7 +762,7 @@ exports.getByRole = async (req, res) => {
     issues = await attachClientNames(issues);
   } else if (user.role === 'client' || user.role === 'requestor') {
     if (companyName) {
-      issues = await service.getAll(companyName);
+      issues = await getCompanyScopedIssues(companyName);
     } else {
       const propertyModel = require('../property/property.model');
       const clientProperties = await propertyModel.findAll({
@@ -619,6 +813,7 @@ exports.getById = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     let data = req.body;
+    let resolvedPublicCompany = null;
 
     console.log('[CREATE ISSUE] Received request with userId from auth:', req.user?.userId);
     console.log('[CREATE ISSUE] Received data fields:', Object.keys(data).slice(0, 10));
@@ -646,6 +841,20 @@ exports.create = async (req, res) => {
     // Ensure overdue is boolean
     if (typeof data.overdue === 'string') {
       data.overdue = data.overdue === 'true';
+    }
+    if (!req.user && data.publicCompanySlug) {
+      try {
+        const userService = require('../user/user.service');
+        resolvedPublicCompany = await userService.findCompanyBySlug(data.publicCompanySlug);
+      } catch (e) {
+        console.error('Error resolving public request company slug:', e);
+      }
+
+      if (!resolvedPublicCompany) {
+        return res.status(400).json({ error: 'Invalid public request link.' });
+      }
+
+      data.companyName = resolvedPublicCompany.companyName;
     }
     // Attach image path if file uploaded
     // handle single 'photo' or multiple 'file' attachments (from WorkOrder)
@@ -878,6 +1087,7 @@ exports.create = async (req, res) => {
         category: data.category || data.tags?.[0] || 'General',
         priority: data.priority || 'Normal'
       };
+      const notificationCompanyName = created?.companyName || data.companyName || client?.companyName || resolvedPublicCompany?.companyName || null;
 
       const assignerInfo = client
         ? { name: client.name, email: client.email }
@@ -910,7 +1120,7 @@ exports.create = async (req, res) => {
       // 2. Notify Admins/Managers (Standard flow)
       if (client) {
         // Authenticated submitter: notify admins/managers as before
-        await emailService.sendNewRequestNotification(requestPayload, client);
+        await emailService.sendNewRequestNotification(requestPayload, client, notificationCompanyName);
       } else {
         // Anonymous submit: notify property staff (internalTechnicians) and admins/managers
         try {
@@ -1013,6 +1223,12 @@ exports.create = async (req, res) => {
         } catch (notifyErr) {
           console.error('Error notifying on anonymous issue create:', notifyErr);
         }
+
+        try {
+          await emailService.sendNewRequestNotification(requestPayload, assignerInfo, notificationCompanyName);
+        } catch (companyNotifyErr) {
+          console.error('Error notifying company admins on anonymous issue create:', companyNotifyErr);
+        }
       }
     } catch (emailError) {
       console.error('Error sending new request notification:', emailError);
@@ -1020,7 +1236,9 @@ exports.create = async (req, res) => {
 
     // In-app notification for admins
     try {
-      await notificationService.notifyAdmins({
+      const notificationCompanyName = created?.companyName || data.companyName || resolvedPublicCompany?.companyName || null;
+      await notificationService.notifyCompanyAdmins({
+        companyName: notificationCompanyName,
         title: "New Maintenance Request",
         message: `A new request "${data.title}" has been submitted.`,
         type: "info",
@@ -1069,16 +1287,15 @@ exports.update = async (req, res) => {
 
   const statusFromIncoming = typeof incoming.status === 'string' ? incoming.status.toUpperCase() : null;
   if (oldIssue && statusFromIncoming && oldIssue.status !== statusFromIncoming) {
-    if (statusFromIncoming === 'APPROVED') {
-      const senderName = await resolveActorName(req.user, 'Manager');
-      const senderRole = req.user?.role || 'manager';
+    const lifecycleMessage = getStatusLifecycleMessage(statusFromIncoming);
+    if (lifecycleMessage) {
+      const fallbackActor = statusFromIncoming === 'IN PROGRESS' || statusFromIncoming === 'COMPLETED' || statusFromIncoming === 'COMPLETE'
+        ? 'Technician'
+        : 'Manager';
+      const senderName = await resolveActorName(req.user, fallbackActor);
+      const senderRole = req.user?.role || (fallbackActor === 'Technician' ? 'technician' : 'manager');
       const baseChat = Array.isArray(incoming.chat) ? incoming.chat : (Array.isArray(oldIssue.chat) ? oldIssue.chat : []);
-      incoming.chat = appendSystemChatMessage(baseChat, 'Request approved.', { sender: senderName, role: senderRole });
-    } else if (statusFromIncoming === 'DECLINED' || statusFromIncoming === 'REJECTED') {
-      const senderName = await resolveActorName(req.user, 'Manager');
-      const senderRole = req.user?.role || 'manager';
-      const baseChat = Array.isArray(incoming.chat) ? incoming.chat : (Array.isArray(oldIssue.chat) ? oldIssue.chat : []);
-      incoming.chat = appendSystemChatMessage(baseChat, 'Request declined.', { sender: senderName, role: senderRole });
+      incoming.chat = appendSystemChatMessage(baseChat, lifecycleMessage, { sender: senderName, role: senderRole });
     }
   }
   try {
@@ -1108,6 +1325,15 @@ exports.update = async (req, res) => {
   }
 
   const updated = await service.update(req.params.id, incoming);
+
+  if (Array.isArray(incoming.chat)) {
+    await notifyMentionedUsers({
+      oldChat: oldIssue?.chat || [],
+      newChat: updated?.chat || incoming.chat,
+      actorUser: req.user,
+      issue: updated
+    });
+  }
 
   // Send email notifications based on status changes
   try {
@@ -1415,11 +1641,62 @@ exports.approveIssue = async (req, res) => {
   try {
     const id = req.params.id;
     const existing = await service.getById(id);
+    if (!existing) return res.status(404).json({ error: 'Issue not found' });
+    if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
+      const ownerId = normalizeId(existing.userId || existing.requestorId);
+      const requesterId = normalizeId(req.user.userId);
+      if (ownerId && requesterId !== ownerId) {
+        return res.status(403).json({ error: 'Clients can only approve their own requests' });
+      }
+    }
     const baseChat = Array.isArray(existing?.chat) ? existing.chat : [];
-    const senderName = await resolveActorName(req.user, 'Manager');
+    const senderName = await resolveActorName(req.user, req.user?.role === 'client' || req.user?.role === 'requestor' ? 'Client' : 'Manager');
     const senderRole = req.user?.role || 'manager';
     const chat = appendSystemChatMessage(baseChat, 'Request approved.', { sender: senderName, role: senderRole });
-    const updated = await service.update(id, { approved: true, approvedAt: new Date(), status: 'APPROVED', chat });
+    const incoming = { ...(req.body || {}) };
+    if (typeof incoming.additionalResponsibleWorkers === 'string') {
+      try {
+        incoming.additionalResponsibleWorkers = JSON.parse(incoming.additionalResponsibleWorkers);
+      } catch (e) {
+        incoming.additionalResponsibleWorkers = incoming.additionalResponsibleWorkers
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+      }
+    }
+    if ('fixDeadline' in incoming) {
+      const normalizedFixDeadline = normalizeDateInput(incoming.fixDeadline);
+      if (normalizedFixDeadline === undefined) {
+        delete incoming.fixDeadline;
+      } else {
+        incoming.fixDeadline = normalizedFixDeadline;
+      }
+    }
+    const allowedFields = [
+      'title',
+      'description',
+      'category',
+      'priority',
+      'location',
+      'propertyId',
+      'assetId',
+      'assetName',
+      'assignedTo',
+      'assignees',
+      'team',
+      'additionalResponsibleWorkers',
+      'checklist',
+      'estimatedTime',
+      'signature',
+      'fixDeadline'
+    ];
+    const approvalPayload = { approved: true, approvedAt: new Date(), status: 'APPROVED', chat };
+    allowedFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(incoming, field)) {
+        approvalPayload[field] = incoming[field];
+      }
+    });
+    const updated = await service.update(id, approvalPayload);
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[issue.controller.js:approveIssue]', err);
@@ -1433,8 +1710,16 @@ exports.declineIssue = async (req, res) => {
     const id = req.params.id;
     const reason = req.body.reason || 'Declined by manager';
     const existing = await service.getById(id);
+    if (!existing) return res.status(404).json({ error: 'Issue not found' });
+    if (req.user && (req.user.role === 'client' || req.user.role === 'requestor')) {
+      const ownerId = normalizeId(existing.userId || existing.requestorId);
+      const requesterId = normalizeId(req.user.userId);
+      if (ownerId && requesterId !== ownerId) {
+        return res.status(403).json({ error: 'Clients can only decline their own requests' });
+      }
+    }
     const baseChat = Array.isArray(existing?.chat) ? existing.chat : [];
-    const senderName = await resolveActorName(req.user, 'Manager');
+    const senderName = await resolveActorName(req.user, req.user?.role === 'client' || req.user?.role === 'requestor' ? 'Client' : 'Manager');
     const senderRole = req.user?.role || 'manager';
     const chat = appendSystemChatMessage(baseChat, 'Request declined.', { sender: senderName, role: senderRole });
     const updated = await service.update(id, { rejected: true, rejectionReason: reason, rejectedAt: new Date(), status: 'DECLINED', chat });

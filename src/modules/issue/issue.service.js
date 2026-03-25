@@ -1,10 +1,143 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const mongoose = require('mongoose');
+const fallbackLogTimestamps = new Map();
+
+const logPrismaFallback = (scope, err) => {
+  const now = Date.now();
+  const last = fallbackLogTimestamps.get(scope) || 0;
+  if (now - last > 60000) {
+    console.warn(`CRITICAL: Prisma conversion error in ${scope}. Falling back to raw MongoDB.`);
+    if (err?.message) {
+      console.warn(`[${scope}] ${err.message}`);
+    }
+    fallbackLogTimestamps.set(scope, now);
+  }
+};
+
+const isNullUpdatedAtPrismaError = (err) => {
+  const message = String(err?.message || '');
+  return err?.code === 'P2032' && message.includes('"updatedAt"') && message.includes('found incompatible value of "null"');
+};
+
+const repairIssueUpdatedAtValues = async () => {
+  const db = mongoose.connection.db;
+  if (!db) return false;
+  try {
+    const result = await db.collection('Issue').updateMany(
+      {
+        $or: [
+          { updatedAt: null },
+          { updatedAt: { $exists: false } }
+        ]
+      },
+      [
+        {
+          $set: {
+            updatedAt: {
+              $ifNull: ['$createdAt', '$$NOW']
+            }
+          }
+        }
+      ]
+    );
+    return (result.modifiedCount || 0) > 0;
+  } catch (repairErr) {
+    console.error('[issue.service] Failed to repair null updatedAt values:', repairErr.message || repairErr);
+    return false;
+  }
+};
 
 const applyCompanyFilter = (filter = {}, companyName) => {
   if (!companyName) return filter;
   return { ...filter, companyName };
+};
+
+const ISSUE_MUTABLE_FIELDS = new Set([
+  'rejected',
+  'rejectedAt',
+  'rejectionReason',
+  'companyName',
+  'title',
+  'description',
+  'location',
+  'propertyId',
+  'assetId',
+  'tags',
+  'assignees',
+  'overdue',
+  'time',
+  'photo',
+  'userId',
+  'anonId',
+  'submissionType',
+  'name',
+  'email',
+  'phone',
+  'assignedTo',
+  'inspectorId',
+  'requestorId',
+  'address',
+  'beforeImage',
+  'afterImage',
+  'fixTime',
+  'fixDeadline',
+  'priority',
+  'frequency',
+  'status',
+  'approved',
+  'approvedAt',
+  'resubmitted',
+  'resubmittedAt',
+  'resubmittedBy',
+  'category',
+  'assetName',
+  'team',
+  'additionalResponsibleWorkers',
+  'checklist',
+  'estimatedTime',
+  'signature',
+  'chat',
+  'createdAt',
+  'updatedAt'
+]);
+
+const normalizeDateValue = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+};
+
+const sanitizeIssueUpdateData = (data = {}) => {
+  const cleaned = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (ISSUE_MUTABLE_FIELDS.has(key)) cleaned[key] = value;
+  }
+
+  ['fixDeadline', 'approvedAt', 'rejectedAt', 'resubmittedAt', 'createdAt', 'updatedAt'].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(cleaned, field)) {
+      const normalized = normalizeDateValue(cleaned[field]);
+      if (normalized === undefined) {
+        delete cleaned[field];
+      } else {
+        cleaned[field] = normalized;
+      }
+    }
+  });
+
+  if (typeof cleaned.estimatedTime === 'string') {
+    const parsed = parseFloat(cleaned.estimatedTime);
+    cleaned.estimatedTime = Number.isNaN(parsed) ? undefined : parsed;
+    if (cleaned.estimatedTime === undefined) delete cleaned.estimatedTime;
+  }
+
+  if (typeof cleaned.signature === 'boolean') {
+    cleaned.signature = cleaned.signature ? 'true' : 'false';
+  }
+
+  return cleaned;
 };
 
 // Helper to translate Prisma filters to raw MongoDB filters (handles OR -> $or and ObjectId conversion)
@@ -43,8 +176,18 @@ module.exports = {
     try {
       return await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
     } catch (err) {
+      if (isNullUpdatedAtPrismaError(err)) {
+        const repaired = await repairIssueUpdatedAtValues();
+        if (repaired) {
+          try {
+            return await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
       if (err.message.includes('userId') || err.message.includes('converting')) {
-        console.error('CRITICAL: Prisma conversion error in issue.service:getAll. Falling back to raw MongoDB.');
+        logPrismaFallback('issue.service:getAll', err);
         const db = mongoose.connection.db;
         if (!db) throw err;
         const issues = await db.collection('Issue').find(applyCompanyFilter({}, companyName)).toArray();
@@ -58,8 +201,18 @@ module.exports = {
     try {
       return await prisma.issue.findUnique({ where: { id } });
     } catch (err) {
+      if (isNullUpdatedAtPrismaError(err)) {
+        const repaired = await repairIssueUpdatedAtValues();
+        if (repaired) {
+          try {
+            return await prisma.issue.findUnique({ where: { id } });
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
       if (err.message.includes('userId') || err.message.includes('converting')) {
-        console.error('CRITICAL: Prisma conversion error in issue.service:getById. Falling back to raw MongoDB.');
+        logPrismaFallback('issue.service:getById', err);
         const db = mongoose.connection.db;
         if (!db) throw err;
         const { ObjectId } = require('mongodb');
@@ -74,8 +227,18 @@ module.exports = {
     try {
       return await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
     } catch (err) {
+      if (isNullUpdatedAtPrismaError(err)) {
+        const repaired = await repairIssueUpdatedAtValues();
+        if (repaired) {
+          try {
+            return await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
       if (err.message.includes('userId') || err.message.includes('converting')) {
-        console.error('CRITICAL: Prisma conversion error in issue.service:getByUserId. Falling back to raw MongoDB.');
+        logPrismaFallback('issue.service:getByUserId', err);
         const db = mongoose.connection.db;
         if (!db) throw err;
         const mongoFilter = translateFilterToMongo(applyCompanyFilter({ userId }, companyName));
@@ -98,7 +261,23 @@ module.exports = {
       const merged = [...issues, ...withAssignee.filter(i => !issues.some(j => j.id === i.id))];
       return merged;
     } catch (err) {
-      console.error('CRITICAL: Prisma conversion error in issue.service:getByAssignedTech. Falling back to raw MongoDB.');
+      if (isNullUpdatedAtPrismaError(err)) {
+        const repaired = await repairIssueUpdatedAtValues();
+        if (repaired) {
+          try {
+            const issues = await prisma.issue.findMany({
+              where: applyCompanyFilter({ OR: [{ assignedTo: techId }] }, companyName)
+            });
+            const allIssues = await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
+            const withAssignee = allIssues.filter(issue => Array.isArray(issue.assignees) && issue.assignees.some(a => a && a.id === techId));
+            const merged = [...issues, ...withAssignee.filter(i => !issues.some(j => j.id === i.id))];
+            return merged;
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
+      logPrismaFallback('issue.service:getByAssignedTech', err);
       const db = mongoose.connection.db;
       if (!db) throw err;
       const issues = await db.collection('Issue').find(applyCompanyFilter({
@@ -142,7 +321,10 @@ module.exports = {
         }, companyName)
       });
     } catch (err) {
-      console.error('CRITICAL: Prisma conversion error in issue.service:getByTechnicianProperties. Falling back to raw MongoDB.');
+      if (isNullUpdatedAtPrismaError(err)) {
+        await repairIssueUpdatedAtValues();
+      }
+      logPrismaFallback('issue.service:getByTechnicianProperties', err);
       const db = mongoose.connection.db;
       if (!db) throw err;
       // Fallback logic using raw MongoDB
@@ -163,7 +345,26 @@ module.exports = {
         }, companyName)
       });
     } catch (err) {
-      console.error('CRITICAL: Prisma conversion error in issue.service:getByPropertyId. Falling back to raw MongoDB.');
+      if (isNullUpdatedAtPrismaError(err)) {
+        const repaired = await repairIssueUpdatedAtValues();
+        if (repaired) {
+          try {
+            const assets = await prisma.asset.findMany({ where: { propertyId }, select: { id: true } });
+            const assetIds = assets.map(a => a.id).filter(Boolean);
+            return await prisma.issue.findMany({
+              where: applyCompanyFilter({
+                OR: [
+                  { propertyId },
+                  ...(assetIds.length ? [{ assetId: { in: assetIds } }] : []),
+                ]
+              }, companyName)
+            });
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
+      logPrismaFallback('issue.service:getByPropertyId', err);
         const db = mongoose.connection.db;
         if (!db) throw err;
         const assetsFilter = translateFilterToMongo({ propertyId });
@@ -198,7 +399,30 @@ module.exports = {
         orderBy: { createdAt: 'desc' }
       });
     } catch (err) {
-      console.error('CRITICAL: Prisma conversion error in issue.service:getByPropertyIds. Falling back to raw MongoDB.');
+      if (isNullUpdatedAtPrismaError(err)) {
+        const repaired = await repairIssueUpdatedAtValues();
+        if (repaired) {
+          try {
+            const assets = await prisma.asset.findMany({
+              where: { propertyId: { in: propertyIds } },
+              select: { id: true }
+            });
+            const assetIds = assets.map(a => a.id).filter(Boolean);
+            return await prisma.issue.findMany({
+              where: applyCompanyFilter({
+                OR: [
+                  { propertyId: { in: propertyIds } },
+                  ...(assetIds.length ? [{ assetId: { in: assetIds } }] : []),
+                ]
+              }, companyName),
+              orderBy: { createdAt: 'desc' }
+            });
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
+      logPrismaFallback('issue.service:getByPropertyIds', err);
         const db = mongoose.connection.db;
         if (!db) throw err;
         const assetsFilter = translateFilterToMongo({ propertyId: { in: propertyIds } });
@@ -239,7 +463,10 @@ module.exports = {
       if (!assetIds.length) return [];
       return await prisma.issue.findMany({ where: { assetId: { in: assetIds } } });
     } catch (err) {
-      console.error('CRITICAL: Prisma conversion error in issue.service:getByManagerId. Falling back to raw MongoDB.');
+      if (isNullUpdatedAtPrismaError(err)) {
+        await repairIssueUpdatedAtValues();
+      }
+      logPrismaFallback('issue.service:getByManagerId', err);
       return [];
     }
   },
@@ -297,7 +524,7 @@ module.exports = {
     return created;
   },
   update: (id, data) => {
-    const d = { ...data };
+    const d = sanitizeIssueUpdateData({ ...data });
     if ('id' in d) delete d.id;
     if (Object.prototype.hasOwnProperty.call(d, 'assetId')) {
       if (d.assetId === null) {

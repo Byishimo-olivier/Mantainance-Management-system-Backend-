@@ -1,0 +1,10 @@
+{
+  "name": "System Super Admin",
+  "email": "superadmin-test@example.com",
+  "phone": "+250788000000",
+  "password": "SuperAdmin@123",
+  "role": "SUPERADMIN",
+  "accessLevel": "full",
+  "companyName": "SYSTEM-THUNDER-TEST",
+  "companyType": "main"
+}

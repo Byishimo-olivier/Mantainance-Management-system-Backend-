@@ -90,6 +90,24 @@ async function create(req, res) {
       vendorId,
       vendor: vendorName,
       expectedDate: data.expectedDate || data.deliveryDate,
+      purchaseDate: data.purchaseDate || undefined,
+      shippingMethod: data.shippingMethod || '',
+      terms: data.terms || '',
+      fobShippingPoint: data.fobShippingPoint || '',
+      category: data.category || '',
+      additionalDetails: data.additionalDetails || '',
+      requisitioner: data.requisitioner || '',
+      billing: {
+        companyName: data.billing?.companyName || '',
+        address: data.billing?.address || '',
+        phone: data.billing?.phone || '',
+        fax: data.billing?.fax || ''
+      },
+      shipping: {
+        name: data.shipping?.name || '',
+        address: data.shipping?.address || '',
+        phone: data.shipping?.phone || ''
+      },
       notes: data.notes || data.description || '',
       createdBy: buildCreatedBy(req, data)
     });
@@ -106,7 +124,11 @@ async function create(req, res) {
 async function update(req, res) {
   try {
     const data = req.body || {};
-    const existing = await PurchaseOrder.findById(req.params.id);
+    let existing = await PurchaseOrder.findById(req.params.id);
+    // If no document by ObjectId, try matching by poNumber so PATCH PO-123 works
+    if (!existing) {
+      existing = await PurchaseOrder.findOne({ poNumber: req.params.id });
+    }
     if (!existing) return res.status(404).json({ error: 'Not found' });
 
     const items = data.items ? normalizeItems(data.items) : existing.items;
@@ -126,6 +148,24 @@ async function update(req, res) {
     existing.vendorId = vendorId;
     existing.vendor = vendorName;
     existing.expectedDate = data.expectedDate || data.deliveryDate || existing.expectedDate;
+    existing.purchaseDate = data.purchaseDate || existing.purchaseDate;
+    existing.shippingMethod = data.shippingMethod ?? existing.shippingMethod;
+    existing.terms = data.terms ?? existing.terms;
+    existing.fobShippingPoint = data.fobShippingPoint ?? existing.fobShippingPoint;
+    existing.category = data.category ?? existing.category;
+    existing.additionalDetails = data.additionalDetails ?? existing.additionalDetails;
+    existing.requisitioner = data.requisitioner ?? existing.requisitioner;
+    existing.billing = {
+      companyName: data.billing?.companyName ?? existing.billing?.companyName ?? '',
+      address: data.billing?.address ?? existing.billing?.address ?? '',
+      phone: data.billing?.phone ?? existing.billing?.phone ?? '',
+      fax: data.billing?.fax ?? existing.billing?.fax ?? ''
+    };
+    existing.shipping = {
+      name: data.shipping?.name ?? existing.shipping?.name ?? '',
+      address: data.shipping?.address ?? existing.shipping?.address ?? '',
+      phone: data.shipping?.phone ?? existing.shipping?.phone ?? ''
+    };
     existing.notes = data.notes || data.description || existing.notes;
     if (data.createdBy) existing.createdBy = data.createdBy;
 

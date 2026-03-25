@@ -28,6 +28,24 @@ const PurchaseOrderSchema = new mongoose.Schema(
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
     vendor: { type: String, default: '' }, // denormalized vendor name
     expectedDate: { type: Date },
+    purchaseDate: { type: Date },
+    shippingMethod: { type: String, default: '' },
+    terms: { type: String, default: '' },
+    fobShippingPoint: { type: String, default: '' },
+    category: { type: String, default: '' },
+    additionalDetails: { type: String, default: '' },
+    requisitioner: { type: String, default: '' },
+    billing: {
+      companyName: { type: String, default: '' },
+      address: { type: String, default: '' },
+      phone: { type: String, default: '' },
+      fax: { type: String, default: '' }
+    },
+    shipping: {
+      name: { type: String, default: '' },
+      address: { type: String, default: '' },
+      phone: { type: String, default: '' }
+    },
     notes: { type: String, default: '' },
     createdBy: {
       id: { type: String },

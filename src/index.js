@@ -20,6 +20,7 @@ const emailRoutes = require('./modules/emailService/email.routes');
 const materialRequestRoutes = require('./modules/materialRequest/materialRequest.routes');
 const aiRoutes = require('./modules/ai/ai.routes');
 const notificationRoutes = require('./modules/notification/notification.routes');
+const privateNoteRoutes = require('./modules/privateNote/privateNote.routes');
 const subscriptionRoutes = require('./modules/subscription/subscription.routes');
 const meterRoutes = require('./modules/meter/meter.routes');
 const deviceRoutes = require('./modules/device/device.routes');
@@ -31,6 +32,15 @@ const partRoutes = require('./modules/part/part.routes');
 const vendorRoutes = require('./modules/vendor/vendor.routes');
 const clientRoutes = require('./modules/client/client.routes');
 const purchaseOrderRoutes = require('./modules/purchaseOrder/purchaseOrder.routes');
+const auditLogRoutes = require('./modules/auditLog/auditLog.routes');
+const systemSettingsRoutes = require('./modules/systemSettings/systemSettings.routes');
+const systemSettingsService = require('./modules/systemSettings/systemSettings.service');
+const paymentService = require('./modules/subscription/payment.service');
+const { startMonthlyReportScheduler } = require('./modules/report/monthlyReport.service');
+const { ensureSuperadmin } = require('./bootstrap/superadmin');
+const { auditRequests } = require('./middleware/audit');
+
+dotenv.config();
 
 const app = express();
 
@@ -70,6 +80,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(auditRequests);
 // Serve uploaded files statically
 app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')));
 
@@ -77,6 +88,16 @@ app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')
 mongoose.connect(process.env.DATABASE_URL)
   .then(() => console.log('MongoDB connected'))
   .catch((err) => console.error('MongoDB connection error:', err));
+
+mongoose.connection.once('open', () => {
+  startMonthlyReportScheduler();
+  ensureSuperadmin().catch((err) => {
+    console.error('[bootstrap] Failed to ensure superadmin:', err);
+  });
+  systemSettingsService.getSettings()
+    .then((settings) => paymentService.setPricing(settings.pricing))
+    .catch((err) => console.error('[bootstrap] Failed to load system settings:', err));
+});
 
 app.get('/', (req, res) => {
   res.send('Maintenance Management System API is running');
@@ -137,6 +158,7 @@ app.use('/api/email', emailRoutes);
 app.use('/api/material-requests', materialRequestRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/private-notes', privateNoteRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/meters', meterRoutes);
 app.use('/api/devices', deviceRoutes);
@@ -148,6 +170,8 @@ app.use('/api/parts', partRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/purchase-orders', purchaseOrderRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/system-settings', systemSettingsRoutes);
 
 const PORT = process.env.PORT || 5000;
 

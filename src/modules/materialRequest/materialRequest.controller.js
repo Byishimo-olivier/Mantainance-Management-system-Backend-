@@ -5,14 +5,43 @@ const prisma = new PrismaClient();
 
 const sendJson = (res, data, status = 200) => res.status(status).json(data);
 
+const getCompanyUserIds = async (companyName) => {
+  if (!companyName) return [];
+  try {
+    const userService = require('../user/user.service');
+    const users = await userService.getAllUsers({ companyName });
+    return users.map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
+  } catch (err) {
+    console.error('[materialRequest] Failed to resolve company users:', err);
+    return [];
+  }
+};
+
+const isCompanyMaterialRequest = (item, companyUserIds = []) => {
+  const linkedIds = [
+    item?.clientId,
+    item?.technicianId,
+    item?.approvedBy,
+    item?.requestedBy,
+    item?.userId
+  ].map((value) => String(value || '')).filter(Boolean);
+  return linkedIds.some((id) => companyUserIds.includes(id));
+};
+
 async function getAll(req, res) {
   try {
     // Support optional ?clientId= query for client-side fetching
-    if (req.query.clientId) {
+    if (req.query.clientId && !req.user?.companyName) {
       const items = await service.getByClient(req.query.clientId);
       return sendJson(res, items.map(enrichRequest));
     }
     const user = req.user;
+    if (user?.companyName) {
+      const allItems = await service.getAll();
+      const companyUserIds = await getCompanyUserIds(user.companyName);
+      const items = allItems.filter((item) => isCompanyMaterialRequest(item, companyUserIds));
+      return sendJson(res, items.map(enrichRequest));
+    }
     if (user && (user.role === 'client' || user.role === 'requestor')) {
       const items = await service.getByClient(user.userId);
       return sendJson(res, items.map(enrichRequest));
@@ -28,6 +57,16 @@ async function getAll(req, res) {
 async function getByTechnician(req, res) {
   try {
     const { techId } = req.params;
+    const user = req.user;
+    if (user?.companyName) {
+      const companyUserIds = await getCompanyUserIds(user.companyName);
+      const allItems = await service.getAll();
+      const scopedItems = allItems.filter((item) => (
+        String(item.technicianId || '') === String(techId || '') ||
+        isCompanyMaterialRequest(item, companyUserIds)
+      ));
+      return sendJson(res, scopedItems.map(enrichRequest));
+    }
     const items = await service.getByTechnician(techId);
     return sendJson(res, items.map(enrichRequest));
   } catch (err) {
@@ -39,16 +78,22 @@ async function getByTechnician(req, res) {
 async function create(req, res) {
   try {
     const payload = req.body || {};
+    const user = req.user || {};
     const generatedRequestId = `MR-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const createData = {
-      technicianId: payload.technicianId || payload.techId || '',
+      technicianId: payload.technicianId || payload.techId || user.userId || '',
       requestId: payload.requestId || generatedRequestId,
       status: payload.status || 'PENDING',
       description: payload.description || null,
       urgency: payload.urgency || null,
-      technicianName: payload.technicianName || null,
+      technicianName: payload.technicianName || user.name || null,
       issueId: payload.issueId || null,
+      clientId: payload.clientId || user.userId || null,
     };
+
+    if (!createData.clientId && createData.technicianId) {
+      createData.clientId = createData.technicianId;
+    }
 
     // Notify all managers/admins about new material request
     notificationService.notifyAdmins({

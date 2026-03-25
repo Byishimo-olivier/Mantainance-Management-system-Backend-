@@ -1,5 +1,6 @@
 const paymentService = require('./payment.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
+const systemSettingsService = require('../systemSettings/systemSettings.service');
 
 exports.processPayment = async (req, res) => {
   try {
@@ -125,10 +126,14 @@ exports.refundPayment = async (req, res) => {
 exports.getPricing = async (req, res) => {
   try {
     const pricing = paymentService.getPricing();
+    const settings = await systemSettingsService.getSettings();
 
     res.json({
       message: 'Pricing retrieved',
-      data: pricing,
+      data: {
+        pricing,
+        currency: settings?.platform?.subscriptionCurrency || 'USD',
+      },
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -146,12 +151,14 @@ exports.calculateAmount = async (req, res) => {
     }
 
     const amount = paymentService.calculateAmount(plan, billingCycle);
+    const settings = await systemSettingsService.getSettings();
 
     res.json({
       message: 'Amount calculated',
       plan,
       billingCycle,
       amount,
+      currency: settings?.platform?.subscriptionCurrency || 'USD',
     });
   } catch (error) {
     res.status(400).json({ error: error.message });

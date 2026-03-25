@@ -1,9 +1,24 @@
 const crypto = require('crypto');
-const { createUser, findUserByEmail, getAllUsers, getUsersByRoles } = require('./user.service.js');
+const { createUser, findUserByEmail, getAllUsers, getUsersByRoles, findCompanyBySlug, slugifyCompanyName } = require('./user.service.js');
 const UserInvite = require('./userInvite.model.js');
+const User = require('./user.model.js');
+
+const propertyModel = require('../property/property.model');
+const assetModel = require('../asset/asset.model');
+const internalTechnicianModel = require('../internalTechnician/internalTechnician.model');
+const checklistService = require('../checklist/checklist.service');
 
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim().toLowerCase());
+const roleLabelMap = {
+  superadmin: 'Super Admin',
+  admin: 'Administrator',
+  manager: 'Administrator',
+  technician: 'Technician',
+  client: 'View Only',
+  requestor: 'Requester',
+  staff: 'Staff',
+};
 
 const resolveInviteRole = (inputRole, inputAccessLevel) => {
   const raw = String(inputRole || '').trim().toLowerCase();
@@ -23,22 +38,125 @@ const resolveInviteRole = (inputRole, inputAccessLevel) => {
   const allowed = new Set(['admin', 'manager', 'technician', 'client', 'requestor', 'staff']);
   const role = allowed.has(raw) ? raw : 'technician';
   const accessLevel = requestedAccess === 'limited' ? 'limited' : 'full';
-  const label = accessLevel === 'limited' ? `Limited ${role}` : role;
+  const baseLabel = roleLabelMap[role] || role;
+  const label = accessLevel === 'limited' ? `Limited ${baseLabel}` : baseLabel;
   return { role, accessLevel, label };
 };
 
 exports.registerUser = async (req, res) => {
   try {
-    const user = await createUser(req.body);
+    const payload = { ...(req.body || {}) };
+
+    if (req.files?.branchEvidenceOneFile?.[0]) {
+      payload.branchEvidenceOne = `/uploads/${req.files.branchEvidenceOneFile[0].filename}`;
+    }
+    if (req.files?.branchEvidenceTwoFile?.[0]) {
+      payload.branchEvidenceTwo = `/uploads/${req.files.branchEvidenceTwoFile[0].filename}`;
+    }
+    if (Array.isArray(req.files?.branchImages) && req.files.branchImages.length > 0) {
+      payload.branchImages = req.files.branchImages.map((file) => `/uploads/${file.filename}`);
+    }
+
+    const user = await createUser(payload);
     res.status(201).json(user);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 };
 
+exports.getPublicRequestContext = async (req, res) => {
+  try {
+    const companySlug = String(req.params.companySlug || '').trim();
+    if (!companySlug) {
+      return res.status(400).json({ error: 'Company link is required' });
+    }
+
+    const companyRecord = await findCompanyBySlug(companySlug);
+    if (!companyRecord) {
+      return res.status(404).json({ error: 'Public request link not found' });
+    }
+
+    const companyUsers = Array.isArray(companyRecord.users) ? companyRecord.users : [];
+    const companyUserIds = companyUsers.map((user) => String(user._id || user.id || '')).filter(Boolean);
+    const companyName = companyRecord.companyName;
+
+    const properties = companyUserIds.length
+      ? await propertyModel.findAll({
+          OR: [
+            { userId: { in: companyUserIds } },
+            { clientId: { in: companyUserIds } },
+            { requestorId: { in: companyUserIds } },
+          ]
+        })
+      : [];
+
+    const propertyIds = properties.map((property) => String(property.id || property._id || '')).filter(Boolean);
+    const assets = propertyIds.length
+      ? await assetModel.findAll({ propertyId: { in: propertyIds } })
+      : [];
+    const internalTechnicians = propertyIds.length
+      ? await internalTechnicianModel.findAll({ propertyId: { in: propertyIds } })
+      : [];
+    const checklistTemplates = await checklistService.findAll(companyName);
+
+    const sanitizeProperty = (property) => ({
+      id: property.id || property._id,
+      name: property.name || property.title || '',
+      address: property.address || property.location || '',
+      location: property.location || property.address || '',
+    });
+
+    const sanitizeAsset = (asset) => ({
+      id: asset.id || asset._id,
+      name: asset.name || asset.assetName || asset.title || '',
+      serialNumber: asset.serialNumber || '',
+      propertyId: asset.propertyId || asset.property?.id || asset.property?._id || '',
+      property: asset.property ? {
+        id: asset.property.id || asset.property._id,
+        name: asset.property.name || '',
+      } : null,
+      location: asset.location || null,
+    });
+
+    const sanitizeTechnician = (tech) => ({
+      id: tech.id || tech._id,
+      name: tech.name || '',
+      email: tech.email || '',
+      phone: tech.phone || '',
+      propertyId: tech.propertyId || tech.property?.id || tech.property?._id || '',
+      property: tech.property ? {
+        id: tech.property.id || tech.property._id,
+        name: tech.property.name || '',
+      } : null,
+    });
+
+    const sanitizeChecklist = (tpl) => ({
+      id: tpl.id || tpl._id,
+      name: tpl.name || tpl.title || 'Checklist',
+      title: tpl.title || tpl.name || 'Checklist',
+      description: tpl.description || '',
+      category: Array.isArray(tpl.tags) && tpl.tags.length ? tpl.tags[0] : 'Checklist',
+      items: Array.isArray(tpl.items) ? tpl.items : (Array.isArray(tpl.checklist) ? tpl.checklist : []),
+      updatedAt: tpl.updatedAt || tpl.createdAt || null,
+    });
+
+    return res.json({
+      companyName,
+      companySlug: slugifyCompanyName(companyName),
+      publicRequestUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/public-request/${slugifyCompanyName(companyName)}`,
+      properties: properties.map(sanitizeProperty),
+      assets: assets.map(sanitizeAsset),
+      internalTechnicians: internalTechnicians.map(sanitizeTechnician),
+      checklistTemplates: checklistTemplates.map(sanitizeChecklist),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 exports.listUsers = async (req, res) => {
   try {
-    const filter = req.user?.companyName ? { companyName: req.user.companyName } : {};
+    const filter = req.user?.role === 'superadmin' ? {} : (req.user?.companyName ? { companyName: req.user.companyName } : {});
     const users = await getAllUsers(filter);
     res.json(users);
   } catch (err) {
@@ -48,7 +166,7 @@ exports.listUsers = async (req, res) => {
 
 exports.listClientsAndRequestors = async (req, res) => {
   try {
-    const filter = req.user?.companyName ? { companyName: req.user.companyName } : {};
+    const filter = req.user?.role === 'superadmin' ? {} : (req.user?.companyName ? { companyName: req.user.companyName } : {});
     const users = await getUsersByRoles(['client', 'requestor'], filter);
     res.json(users || []);
   } catch (err) {
@@ -220,6 +338,80 @@ exports.acceptInvite = async (req, res) => {
     res.status(201).json({ success: true, user: createdUser });
   } catch (err) {
     console.error('[users.acceptInvite] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.updateUser = async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+    const existing = await User.findById(id);
+    if (!existing) return res.status(404).json({ error: 'User not found' });
+
+    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const updates = {};
+    ['name', 'phone', 'role', 'status', 'companyName', 'accessLevel', 'branchName', 'branchDetails', 'companyType'].forEach((field) => {
+      if (req.body?.[field] !== undefined) updates[field] = req.body[field];
+    });
+    if (req.body?.email !== undefined) updates.email = normalizeEmail(req.body.email);
+
+    const updated = await User.findByIdAndUpdate(id, { $set: updates }, { new: true }).select('-password');
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.deleteUser = async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+    const existing = await User.findById(id);
+    if (!existing) return res.status(404).json({ error: 'User not found' });
+
+    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    await User.findByIdAndDelete(id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.manageCompany = async (req, res) => {
+  try {
+    const action = String(req.body?.action || '').trim().toLowerCase();
+    const companyName = String(req.body?.companyName || '').trim();
+    const nextCompanyName = String(req.body?.nextCompanyName || '').trim();
+
+    if (!companyName) return res.status(400).json({ error: 'companyName is required' });
+
+    if (action === 'rename') {
+      if (!nextCompanyName) return res.status(400).json({ error: 'nextCompanyName is required' });
+      await User.updateMany({ companyName }, { $set: { companyName: nextCompanyName } });
+      return res.json({ success: true, companyName: nextCompanyName });
+    }
+
+    if (action === 'suspend') {
+      await User.updateMany({ companyName }, { $set: { status: 'inactive' } });
+      return res.json({ success: true });
+    }
+
+    if (action === 'activate') {
+      await User.updateMany({ companyName }, { $set: { status: 'active' } });
+      return res.json({ success: true });
+    }
+
+    return res.status(400).json({ error: 'Unsupported company action' });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };

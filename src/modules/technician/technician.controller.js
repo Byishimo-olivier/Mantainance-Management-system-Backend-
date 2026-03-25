@@ -6,7 +6,7 @@ exports.invite = async (req, res) => {
   try {
     // Only admins may invite external technicians
     const inviter = req.user;
-    if (!inviter || (inviter.role !== 'admin' && inviter.role !== 'manager')) {
+    if (!inviter || !['superadmin', 'admin', 'manager'].includes(inviter.role)) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
     const { email, name, phone, expiresInHours } = req.body;

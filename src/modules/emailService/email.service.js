@@ -290,6 +290,70 @@ templates.userInvite = (data) => ({
   `
 });
 
+templates.monthlyReport = (data) => ({
+  subject: `Monthly MMS Report - ${data.companyName}`,
+  html: `
+    <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; color: #111827;">
+      <h2 style="color: #2563eb;">Monthly Maintenance Report</h2>
+      <p>Hi ${data.name || 'there'},</p>
+      <p>Here is your report for <strong>${data.companyName}</strong>.</p>
+
+      <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <p><strong>Reporting period:</strong> ${new Date(data.periodStart).toLocaleDateString()} - ${new Date(data.periodEnd).toLocaleDateString()}</p>
+        <p><strong>Active users:</strong> ${data.summary.totalActiveUsers}</p>
+        <p><strong>New users this period:</strong> ${data.summary.usersJoined}</p>
+        <p><strong>Properties added:</strong> ${data.summary.propertiesCreated}</p>
+        <p><strong>Assets added:</strong> ${data.summary.assetsCreated}</p>
+        <p><strong>Active subscriptions:</strong> ${data.summary.activeSubscriptions}</p>
+      </div>
+
+      <div style="background: #eff6ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin-top: 0; color: #1d4ed8;">Issue Summary</h3>
+        <p><strong>Created:</strong> ${data.summary.issueSummary.totalCreated}</p>
+        <p><strong>Open:</strong> ${data.summary.issueSummary.open}</p>
+        <p><strong>Resolved:</strong> ${data.summary.issueSummary.resolved}</p>
+        <p><strong>High priority:</strong> ${data.summary.issueSummary.highPriority}</p>
+        <p><strong>Top category:</strong> ${data.summary.issueSummary.topCategory}</p>
+      </div>
+
+      <p>You can review more details in your dashboard any time.</p>
+      <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/login" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Open MMS</a>
+    </div>
+  `
+});
+
+templates.operationalSummaryReport = (data) => {
+  const reportLabel = `${String(data.reportType || 'daily').charAt(0).toUpperCase()}${String(data.reportType || 'daily').slice(1)} Summary`;
+  return {
+    subject: `${reportLabel} - ${data.companyName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; color: #111827;">
+        <h2 style="color: #2563eb;">${reportLabel}</h2>
+        <p>Hi ${data.name || 'there'},</p>
+        <p>Here is the latest operations summary for <strong>${data.companyName}</strong>.</p>
+
+        <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0;">
+          <p><strong>Reporting period:</strong> ${new Date(data.periodStart).toLocaleDateString()} - ${new Date(data.periodEnd).toLocaleDateString()}</p>
+          <p><strong>Requests submitted:</strong> ${data.summary.operationalSummary.requestsSubmitted}</p>
+          <p><strong>Work orders completed:</strong> ${data.summary.operationalSummary.workOrdersCompleted}</p>
+          <p><strong>Work orders in progress:</strong> ${data.summary.operationalSummary.workOrdersInProgress}</p>
+        </div>
+
+        <div style="background: #eff6ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
+          <h3 style="margin-top: 0; color: #1d4ed8;">Company Snapshot</h3>
+          <p><strong>Active users:</strong> ${data.summary.totalActiveUsers}</p>
+          <p><strong>Open issues:</strong> ${data.summary.issueSummary.open}</p>
+          <p><strong>Resolved issues:</strong> ${data.summary.issueSummary.resolved}</p>
+          <p><strong>High priority issues:</strong> ${data.summary.issueSummary.highPriority}</p>
+        </div>
+
+        <p>You can review the same company counts on your dashboard overview any time.</p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/login" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Open MMS</a>
+      </div>
+    `
+  };
+};
+
 // Email service methods will be exported below via module.exports = { ... }
 
 module.exports = {
@@ -401,7 +465,7 @@ module.exports = {
     }
   },
   // Send email to admin/manager when new request is created
-  async sendNewRequestNotification(requestData, clientData) {
+  async sendNewRequestNotification(requestData, clientData, companyName = null) {
     try {
       console.log('📧 Sending new request notification to admins/managers');
       console.log('Request data:', requestData);
@@ -414,7 +478,7 @@ module.exports = {
       });
 
       // Get all admin and manager emails
-      const adminEmails = await this.getAdminManagerEmails();
+      const adminEmails = await this.getAdminManagerEmails(companyName);
       console.log('Admin/Manager emails found:', adminEmails);
 
       if (adminEmails.length === 0) {
@@ -526,15 +590,19 @@ module.exports = {
   },
 
   // Helper function to get admin and manager emails
-  async getAdminManagerEmails() {
-    try {
-      const User = require('../user/user.model.js');
-      const admins = await User.find({
-        role: { $in: ['admin'] },
-        status: 'active'
-      }, { email: 1 });
+ async getAdminManagerEmails(companyName = null) {
+   try {
+     const User = require('../user/user.model.js');
+     const filter = {
+       role: { $in: ['admin', 'manager'] },
+       status: 'active'
+     };
+     if (companyName) {
+       filter.companyName = String(companyName).trim();
+     }
+     const admins = await User.find(filter, { email: 1 });
 
-      return admins.map(admin => admin.email);
+     return admins.map(admin => admin.email);
     } catch (error) {
       console.error('Error fetching admin/manager emails:', error);
       return [];
@@ -634,6 +702,180 @@ module.exports = {
       console.log('Maintenance reminder sent to:', recipients);
     } catch (error) {
       console.error('Error sending maintenance reminder:', error);
+    }
+  },
+
+  async sendMonthlyReport(data) {
+    try {
+      const template = templates.monthlyReport(data);
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: data.email,
+        subject: template.subject,
+        html: template.html
+      });
+      console.log('Monthly report sent to', data.email);
+    } catch (error) {
+      console.error('Error sending monthly report email:', error);
+      throw error;
+    }
+  },
+
+  async sendOperationalSummary(data) {
+    try {
+      const template = templates.operationalSummaryReport(data);
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: data.email,
+        subject: template.subject,
+        html: template.html
+      });
+      console.log(`${data.reportType || 'summary'} operational report sent to`, data.email);
+    } catch (error) {
+      console.error(`Error sending ${data.reportType || 'summary'} operational report email:`, error);
+      throw error;
+    }
+  },
+
+  async getAllSystemUsers() {
+    try {
+      const User = require('../user/user.model.js');
+      const { PrismaClient } = require('@prisma/client');
+      const prisma = new PrismaClient();
+
+      const [users, technicians] = await Promise.all([
+        User.find({ status: 'active' }, { email: 1, name: 1, role: 1 }).lean(),
+        prisma.technician.findMany({
+          where: { email: { not: null } },
+          select: { email: true, name: true }
+        }).catch(() => []),
+      ]);
+
+      const seen = new Set();
+      return [...users, ...technicians]
+        .filter((entry) => entry?.email)
+        .filter((entry) => {
+          const key = String(entry.email).trim().toLowerCase();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((entry) => ({
+          email: String(entry.email).trim().toLowerCase(),
+          name: entry.name || 'there',
+          role: entry.role || 'technician',
+        }));
+    } catch (error) {
+      console.error('Error fetching all system users:', error);
+      return [];
+    }
+  },
+
+  async sendMaintenanceModeNotice({ email, name, appName, supportEmail }) {
+    try {
+      if (!email) return;
+      const subject = `${appName || 'MMS'} is currently in maintenance mode`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #b45309;">System Maintenance Notice</h2>
+          <div style="background: #fff7ed; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p>Hi ${name || 'there'},</p>
+            <p><strong>${appName || 'The system'}</strong> is currently in maintenance mode.</p>
+            <p>During this period, login and normal activity may be temporarily unavailable while the platform is being secured or updated.</p>
+            ${supportEmail ? `<p><strong>Support contact:</strong> ${supportEmail}</p>` : ''}
+          </div>
+          <p>Please try again later. If you were not expecting this notice, contact support immediately.</p>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject,
+        html,
+      });
+    } catch (error) {
+      console.error('Error sending maintenance mode notice:', error);
+    }
+  },
+
+  async broadcastMaintenanceModeNotice({ appName, supportEmail }) {
+    try {
+      const recipients = await this.getAllSystemUsers();
+      await Promise.all(
+        recipients.map((recipient) => this.sendMaintenanceModeNotice({
+          email: recipient.email,
+          name: recipient.name,
+          appName,
+          supportEmail,
+        }))
+      );
+      console.log(`Maintenance mode notice sent to ${recipients.length} user(s)`);
+    } catch (error) {
+      console.error('Error broadcasting maintenance mode notice:', error);
+    }
+  },
+
+  async sendSecurityAlert({ recipients = [], attemptedEmail, ipAddress, userAgent, threshold, dashboardUrl }) {
+    try {
+      const emails = recipients.map((recipient) => recipient?.email).filter(Boolean);
+      if (!emails.length) return;
+
+      const subject = `Security Alert: ${threshold} failed login attempts detected`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">
+          <h2 style="color: #dc2626;">Suspicious Login Activity Detected</h2>
+          <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p><strong>Attempted account:</strong> ${attemptedEmail || 'Unknown'}</p>
+            <p><strong>Consecutive failed attempts:</strong> ${threshold}</p>
+            <p><strong>Source IP:</strong> ${ipAddress || 'Unknown'}</p>
+            <p><strong>User agent:</strong> ${userAgent || 'Unknown'}</p>
+          </div>
+          <p>Recommended next steps:</p>
+          <ul>
+            <li>Review the audit trail immediately.</li>
+            <li>Confirm whether the user recognizes the attempts.</li>
+            <li>Enable maintenance mode if the pattern continues or looks hostile.</li>
+          </ul>
+          ${dashboardUrl ? `<a href="${dashboardUrl}" style="background: #dc2626; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Open Security Settings</a>` : ''}
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: emails.join(','),
+        subject,
+        html,
+      });
+    } catch (error) {
+      console.error('Error sending security alert email:', error);
+    }
+  },
+
+  async sendAccountLockedNotice({ email, name, appName, supportEmail }) {
+    try {
+      if (!email) return;
+      const subject = `${appName || 'MMS'} account security notice`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #dc2626;">Account Temporarily Locked</h2>
+          <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p>Hi ${name || 'there'},</p>
+            <p>Your account has been temporarily locked because the system detected suspicious login activity.</p>
+            <p>Please contact support before trying again.</p>
+            ${supportEmail ? `<p><strong>Support contact:</strong> ${supportEmail}</p>` : ''}
+          </div>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject,
+        html,
+      });
+    } catch (error) {
+      console.error('Error sending account locked notice:', error);
     }
   }
 }

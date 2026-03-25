@@ -1,6 +1,18 @@
 const propertyModel = require('./property.model');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
+const getCompanyUserIds = async (companyName) => {
+  if (!companyName) return [];
+  try {
+    const userService = require('../user/user.service');
+    const users = await userService.getAllUsers({ companyName });
+    return users.map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
+  } catch (err) {
+    console.error('[property.controller] Failed to resolve company users:', err);
+    return [];
+  }
+};
+
 module.exports = {
   async create(req, res) {
     try {
@@ -10,6 +22,9 @@ module.exports = {
 
       if (req.user && req.user.userId) {
         data.userId = req.user.userId;
+      }
+      if (!data.companyName && req.user?.companyName) {
+        data.companyName = req.user.companyName;
       }
 
       // Fallback: if userId is still missing but clientId is present, use it
@@ -31,11 +46,23 @@ module.exports = {
   },
   async getAll(req, res) {
     try {
-      // Anonymous and admin/manager see all, others see only their own
       const user = req.user;
       let properties;
-      if (!user || user.role === 'admin' || user.role === 'manager') {
+      if (!user || user.role === 'superadmin') {
         properties = await propertyModel.findAll();
+      } else if ((user.role === 'admin' || user.role === 'manager' || user.role === 'client' || user.role === 'requestor') && user.companyName) {
+        const companyUserIds = await getCompanyUserIds(user.companyName);
+        if (!companyUserIds.length) {
+          properties = [];
+        } else {
+          properties = await propertyModel.findAll({
+            OR: [
+              { userId: { in: companyUserIds } },
+              { clientId: { in: companyUserIds } },
+              { requestorId: { in: companyUserIds } }
+            ]
+          });
+        }
       } else {
         properties = await propertyModel.findAll({
           OR: [

@@ -1,19 +1,20 @@
 
 const express = require('express');
 const controller = require('./asset.controller');
+const { authenticate, optionalAuthenticate } = require('../../middleware/auth');
 const router = express.Router();
 
-router.get('/count', controller.count);
+router.get('/count', optionalAuthenticate, controller.count);
 
-router.post('/', controller.create);
-router.get('/', controller.getAll);
-router.get('/:id', controller.getById);
-router.put('/:id', controller.update);
-router.delete('/:id', controller.remove);
+router.post('/', authenticate, controller.create);
+router.get('/', optionalAuthenticate, controller.getAll);
+router.get('/:id', optionalAuthenticate, controller.getById);
+router.put('/:id', authenticate, controller.update);
+router.delete('/:id', authenticate, controller.remove);
 // Movement and spare parts
-router.post('/:id/move', controller.move);
-router.get('/:id/movements', controller.getMovements);
-router.post('/:id/spare-parts', controller.addSparePart);
-router.get('/:id/spare-parts', controller.listSpareParts);
+router.post('/:id/move', authenticate, controller.move);
+router.get('/:id/movements', optionalAuthenticate, controller.getMovements);
+router.post('/:id/spare-parts', authenticate, controller.addSparePart);
+router.get('/:id/spare-parts', optionalAuthenticate, controller.listSpareParts);
 
 module.exports = router;

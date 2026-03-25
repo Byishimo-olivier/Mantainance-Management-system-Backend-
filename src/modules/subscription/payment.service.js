@@ -32,7 +32,7 @@ if (PAYPACK_CALLBACK_URL.startsWith('http://localhost')) {
 }
 
 // Pricing configuration for different plans and billing cycles
-const PRICING = {
+const DEFAULT_PRICING = {
   basic: {
     weekly: 9.99,
     monthly: 29.99,
@@ -48,6 +48,20 @@ const PRICING = {
     monthly: 199.99,
     yearly: 1999.99,
   },
+};
+let PRICING = JSON.parse(JSON.stringify(DEFAULT_PRICING));
+
+const normalizePricing = (pricing = {}) => {
+  const next = JSON.parse(JSON.stringify(DEFAULT_PRICING));
+  for (const plan of Object.keys(next)) {
+    for (const cycle of Object.keys(next[plan])) {
+      const value = Number(pricing?.[plan]?.[cycle]);
+      if (Number.isFinite(value) && value >= 0) {
+        next[plan][cycle] = value;
+      }
+    }
+  }
+  return next;
 };
 
 // Initialize PayPack payment (mobile money or card)
@@ -531,7 +545,12 @@ function calculateNextBillingDate(billingCycle) {
 
 // Get pricing
 exports.getPricing = () => {
-  return PRICING;
+  return JSON.parse(JSON.stringify(PRICING));
+};
+
+exports.setPricing = (pricing = {}) => {
+  PRICING = normalizePricing(pricing);
+  return exports.getPricing();
 };
 
 // Calculate amount for plan and billing cycle

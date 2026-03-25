@@ -1,9 +1,15 @@
 const express = require('express');
 const controller = require('./maintenanceSchedule.controller');
 const { authenticate } = require('../../middleware/auth');
+const upload = require('../../middleware/upload');
 const router = express.Router();
 
-router.post('/', authenticate, controller.create);
+const maintenanceUpload = upload.fields([
+  { name: 'photos', maxCount: 10 },
+  { name: 'files', maxCount: 10 },
+]);
+
+router.post('/', authenticate, maintenanceUpload, controller.create);
 router.get('/technician/:id', authenticate, controller.getForTechnician);
 router.get('/', controller.getAll);
 router.get('/:id', controller.getById);
