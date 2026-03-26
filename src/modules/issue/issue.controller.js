@@ -1442,6 +1442,16 @@ exports.addLink = async (req, res) => {
   }
 };
 
+exports.removeLink = async (req, res) => {
+  try {
+    const result = await service.removeLink(req.params.id, req.params.linkId);
+    res.json(result);
+  } catch (err) {
+    console.error('[issue.controller.js:removeLink]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.getFiles = async (req, res) => {
   try {
     const files = await service.getFiles(req.params.id);

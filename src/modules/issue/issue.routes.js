@@ -29,6 +29,7 @@ router.get('/user/:userId', authenticate, authorizeRoles('client'), ctrl.getByUs
 router.get('/assigned/:techId', authenticate, authorizeRoles('technician', 'internal'), ctrl.getByAssignedTech);
 router.get('/:id/links', authenticate, ctrl.getLinks);
 router.post('/:id/links', authenticate, ctrl.addLink);
+router.delete('/:id/links/:linkId', authenticate, ctrl.removeLink);
 router.get('/:id/files', authenticate, ctrl.getFiles);
 router.post('/:id/files', authenticate, upload.array('files', 10), ctrl.addFiles);
 router.get('/:id/activity', authenticate, ctrl.getActivity);

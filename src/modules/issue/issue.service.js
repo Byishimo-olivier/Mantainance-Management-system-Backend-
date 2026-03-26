@@ -568,6 +568,20 @@ module.exports = {
     );
     return entry;
   },
+  removeLink: async (id, linkId) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { links: 1 } });
+    const existing = Array.isArray(issue?.links) ? issue.links : [];
+    const nextLinks = existing.filter((entry) => String(entry?.id || entry?._id || '') !== String(linkId));
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $set: { links: nextLinks, updatedAt: new Date() } }
+    );
+    return { removed: existing.length !== nextLinks.length };
+  },
   getFiles: async (id) => {
     const db = mongoose.connection.db;
     if (!db) throw new Error('Database connection not ready');

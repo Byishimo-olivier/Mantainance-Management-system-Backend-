@@ -357,6 +357,68 @@ templates.operationalSummaryReport = (data) => {
 // Email service methods will be exported below via module.exports = { ... }
 
 module.exports = {
+  async sendInvoiceEmail({ to, invoiceNumber, title, customerName, companyName, invoiceDate, paymentDue, currency, lineItems = [], totals = {}, description = '' }) {
+    try {
+      if (!to) throw new Error('Recipient email is required');
+      const itemRows = (Array.isArray(lineItems) ? lineItems : []).map((item) => `
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.name || 'Item'}</td>
+          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.quantity || 0}</td>
+          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.costLabel || '$0.00'}</td>
+          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.totalLabel || '$0.00'}</td>
+        </tr>
+      `).join('');
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to,
+        subject: `Invoice ${invoiceNumber || ''}${title ? ` - ${title}` : ''}`.trim(),
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 760px; margin: 0 auto; color: #111827;">
+            <h1 style="margin-bottom: 8px;">Invoice ${invoiceNumber || ''}</h1>
+            <p style="color: #6b7280; margin-bottom: 20px;">${title || ''}</p>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:24px;">
+              <div style="border:1px solid #e5e7eb; border-radius:12px; padding:16px;">
+                <h3 style="margin:0 0 12px;">From</h3>
+                <div>${companyName || ''}</div>
+                <div>${invoiceDate ? `Invoice Date: ${invoiceDate}` : ''}</div>
+                <div>${paymentDue ? `Payment Due: ${paymentDue}` : ''}</div>
+              </div>
+              <div style="border:1px solid #e5e7eb; border-radius:12px; padding:16px;">
+                <h3 style="margin:0 0 12px;">Bill To</h3>
+                <div>${customerName || ''}</div>
+              </div>
+            </div>
+            ${description ? `<p style="margin-bottom:20px;">${description}</p>` : ''}
+            <table style="width:100%; border-collapse:collapse; margin-bottom:24px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:8px;border-bottom:1px solid #d1d5db;">Item</th>
+                  <th style="text-align:left;padding:8px;border-bottom:1px solid #d1d5db;">Qty</th>
+                  <th style="text-align:left;padding:8px;border-bottom:1px solid #d1d5db;">Cost</th>
+                  <th style="text-align:left;padding:8px;border-bottom:1px solid #d1d5db;">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || '<tr><td colspan="4" style="padding:8px;">No line items</td></tr>'}
+              </tbody>
+            </table>
+            <div style="border:1px solid #e5e7eb; border-radius:12px; padding:16px;">
+              <div>Currency: ${currency || 'USD'}</div>
+              <div>Parts: ${totals.parts || '$0.00'}</div>
+              <div>Additional Costs: ${totals.additional || '$0.00'}</div>
+              <div>Labor Costs: ${totals.labor || '$0.00'}</div>
+              <div style="font-weight:700; margin-top:8px;">Total: ${totals.total || '$0.00'}</div>
+            </div>
+          </div>
+        `
+      });
+      return { success: true };
+    } catch (err) {
+      console.error('Error sending invoice email:', err);
+      throw err;
+    }
+  },
   // Send invitation to user (manager/technician, etc.)
   async sendUserInvite(inviteData) {
     try {

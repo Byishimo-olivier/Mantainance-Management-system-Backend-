@@ -29,4 +29,29 @@ router.post('/test-admins', authenticate, authorizeRoles('admin'), async (req, r
   }
 });
 
+router.post('/invoice', authenticate, async (req, res) => {
+  try {
+    const { to, invoiceNumber, title, customerName, companyName, invoiceDate, paymentDue, currency, lineItems, totals, description } = req.body || {};
+    if (!to) {
+      return res.status(400).json({ error: 'Recipient email is required' });
+    }
+    const result = await emailService.sendInvoiceEmail({
+      to,
+      invoiceNumber,
+      title,
+      customerName,
+      companyName,
+      invoiceDate,
+      paymentDue,
+      currency,
+      lineItems,
+      totals,
+      description
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to send invoice email' });
+  }
+});
+
 module.exports = router;
