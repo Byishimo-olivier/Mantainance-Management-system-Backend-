@@ -34,6 +34,7 @@ const clientRoutes = require('./modules/client/client.routes');
 const purchaseOrderRoutes = require('./modules/purchaseOrder/purchaseOrder.routes');
 const auditLogRoutes = require('./modules/auditLog/auditLog.routes');
 const systemSettingsRoutes = require('./modules/systemSettings/systemSettings.routes');
+const requestSettingsRoutes = require('./modules/requestSettings/requestSettings.routes');
 const systemSettingsService = require('./modules/systemSettings/systemSettings.service');
 const paymentService = require('./modules/subscription/payment.service');
 const { startMonthlyReportScheduler } = require('./modules/report/monthlyReport.service');
@@ -172,6 +173,7 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/purchase-orders', purchaseOrderRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
+app.use('/api/request-settings', requestSettingsRoutes);
 
 const PORT = process.env.PORT || 5000;
 

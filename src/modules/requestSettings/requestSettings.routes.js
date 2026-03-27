@@ -1,0 +1,52 @@
+const express = require('express');
+const upload = require('../../middleware/upload');
+const { authenticate, authorizeRoles } = require('../../middleware/auth');
+const ctrl = require('./requestSettings.controller');
+
+const router = express.Router();
+
+router.use(authenticate);
+router.use(authorizeRoles('admin', 'manager', 'client'));
+
+router.get('/', ctrl.getRequestSettings);
+router.put('/general', ctrl.updateGeneralSettings);
+router.put('/internal', ctrl.updateInternalRequests);
+router.put('/legacy', ctrl.updateLegacyPublicRequests);
+router.put('/branding', upload.single('logo'), ctrl.updateBranding);
+router.put('/automation', ctrl.updateAutomationSettings);
+router.post('/roles', ctrl.createUserRole);
+router.post('/assets/fields', ctrl.createAssetField);
+router.post('/assets/operating-hours', ctrl.createAssetOperatingSchedule);
+router.post('/assets/statuses', ctrl.createAssetStatus);
+router.put('/assets/check-in-out', ctrl.updateAssetCheckInOut);
+router.put('/parts-inventory/general', ctrl.updatePartsInventoryGeneral);
+router.post('/parts-inventory/auto-group', ctrl.autoGroupParts);
+router.post('/parts-inventory/sync', ctrl.syncAllocatedPartQuantities);
+router.post('/parts-inventory/groups', ctrl.createPartGroup);
+router.post('/parts-inventory/fields', ctrl.createPartCustomField);
+router.put('/work-orders/general', ctrl.updateWorkOrderGeneral);
+router.put('/work-orders/configuration', ctrl.updateWorkOrderConfiguration);
+router.post('/work-orders/statuses', ctrl.createWorkOrderStatus);
+router.post('/work-orders/categories', ctrl.createWorkOrderCategory);
+router.put('/work-orders/categories/:id', ctrl.updateWorkOrderCategory);
+router.delete('/work-orders/categories/:id', ctrl.deleteWorkOrderCategory);
+router.post('/work-orders/timers', ctrl.createWorkOrderTimer);
+router.put('/work-orders/timers/:id', ctrl.updateWorkOrderTimer);
+router.delete('/work-orders/timers/:id', ctrl.deleteWorkOrderTimer);
+router.post('/work-orders/fields', ctrl.createWorkOrderCustomField);
+router.put('/purchase-orders/general', ctrl.updatePurchaseOrderGeneral);
+router.post('/purchase-orders/categories', ctrl.createPurchaseOrderCategory);
+router.put('/purchase-orders/categories/:id', ctrl.updatePurchaseOrderCategory);
+router.delete('/purchase-orders/categories/:id', ctrl.deletePurchaseOrderCategory);
+router.put('/purchase-orders/public-request-portal', ctrl.updatePurchaseOrderPublicRequestPortal);
+router.post('/meters/categories', ctrl.createMeterCategory);
+router.put('/meters/categories/:id', ctrl.updateMeterCategory);
+router.delete('/meters/categories/:id', ctrl.deleteMeterCategory);
+router.post('/tags', ctrl.createTag);
+router.put('/tags/:id', ctrl.updateTag);
+router.delete('/tags/:id', ctrl.deleteTag);
+router.get('/portals', ctrl.listPortals);
+router.post('/portals', ctrl.createPortal);
+router.put('/portals/:id', ctrl.updatePortal);
+
+module.exports = router;
