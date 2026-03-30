@@ -108,6 +108,16 @@ module.exports = {
       res.status(400).json({ error: err.message });
     }
   },
+  async updateStatus(req, res) {
+    try {
+      const status = req.body?.status;
+      if (!status) return res.status(400).json({ error: 'Status is required.' });
+      const asset = await assetModel.updateOperationalStatus(req.params.id, status);
+      res.json(normalizeExtendedJSON(asset));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
   async remove(req, res) {
     try {
       await assetModel.delete(req.params.id);
@@ -161,6 +171,33 @@ module.exports = {
       const assetId = req.params.id;
       const parts = await assetModel.findSparePartsForAsset(assetId);
       res.json(normalizeExtendedJSON(parts));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+  async addDowntime(req, res) {
+    try {
+      const assetId = req.params.id;
+      const payload = {
+        ...req.body,
+        createdBy: req.user?.userId || req.user?.id || req.user?.email || null,
+      };
+      const entry = await assetModel.addDowntime(assetId, payload);
+      const asset = await assetModel.findById(assetId);
+      res.status(201).json(normalizeExtendedJSON({ entry, asset }));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
+  async getDowntime(req, res) {
+    try {
+      const assetId = req.params.id;
+      const start = req.query?.start ? new Date(req.query.start) : null;
+      const end = req.query?.end ? new Date(req.query.end) : null;
+      const validStart = start && !Number.isNaN(start.getTime()) ? start : null;
+      const validEnd = end && !Number.isNaN(end.getTime()) ? end : null;
+      const entries = await assetModel.getDowntimeLogs(assetId, { start: validStart, end: validEnd });
+      res.json(normalizeExtendedJSON(entries));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

@@ -35,6 +35,7 @@ const purchaseOrderRoutes = require('./modules/purchaseOrder/purchaseOrder.route
 const auditLogRoutes = require('./modules/auditLog/auditLog.routes');
 const systemSettingsRoutes = require('./modules/systemSettings/systemSettings.routes');
 const requestSettingsRoutes = require('./modules/requestSettings/requestSettings.routes');
+const analyticsPreferenceRoutes = require('./modules/analyticsPreference/analyticsPreference.routes');
 const systemSettingsService = require('./modules/systemSettings/systemSettings.service');
 const paymentService = require('./modules/subscription/payment.service');
 const { startMonthlyReportScheduler } = require('./modules/report/monthlyReport.service');
@@ -80,7 +81,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(auditRequests);
 // Serve uploaded files statically
 app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')));
@@ -174,6 +176,7 @@ app.use('/api/purchase-orders', purchaseOrderRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
 app.use('/api/request-settings', requestSettingsRoutes);
+app.use('/api/analytics-preferences', analyticsPreferenceRoutes);
 
 const PORT = process.env.PORT || 5000;
 

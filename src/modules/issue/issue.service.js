@@ -110,6 +110,101 @@ const normalizeDateValue = (value) => {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 };
 
+const toCostNumber = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  const normalized = Number(String(value).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(normalized) ? normalized : 0;
+};
+
+const summarizeIssueCosts = (issue = {}) => {
+  const laborEntries = Array.isArray(issue.labor) ? issue.labor : Array.isArray(issue.laborEntries) ? issue.laborEntries : [];
+  const partEntries = Array.isArray(issue.parts) ? issue.parts : Array.isArray(issue.materials) ? issue.materials : Array.isArray(issue.lineItems) ? issue.lineItems : [];
+  const extraCostEntries = Array.isArray(issue.costs) ? issue.costs : Array.isArray(issue.additionalCosts) ? issue.additionalCosts : [];
+
+  const laborFromEntries = laborEntries.reduce((sum, entry) => {
+    if (entry?.cost !== undefined) return sum + toCostNumber(entry.cost);
+    const rate = toCostNumber(entry?.rate ?? entry?.hourlyRate);
+    const hours = toCostNumber(entry?.hours ?? entry?.time);
+    const minutes = toCostNumber(entry?.minutes);
+    const seconds = toCostNumber(entry?.seconds);
+    return sum + (rate * (hours + (minutes / 60) + (seconds / 3600)));
+  }, 0);
+
+  const partsFromEntries = partEntries.reduce((sum, entry) => {
+    const cost = toCostNumber(entry?.unitCost ?? entry?.cost ?? entry?.price);
+    const quantity = toCostNumber(entry?.quantity ?? entry?.qty ?? 1) || 1;
+    return sum + (cost * quantity);
+  }, 0);
+
+  const otherFromEntries = extraCostEntries.reduce((sum, entry) => sum + toCostNumber(entry?.cost ?? entry?.amount ?? entry?.value), 0);
+
+  const laborCost = laborFromEntries || toCostNumber(issue?.laborCost ?? issue?.laborTotal ?? issue?.labor?.total ?? issue?.labor?.cost);
+  const partsCost = partsFromEntries || toCostNumber(issue?.partsCost ?? issue?.materialsCost ?? issue?.totalPartsCost ?? issue?.parts?.total ?? issue?.itemsCost);
+  const otherCost = otherFromEntries || toCostNumber(issue?.otherCost ?? issue?.miscCost ?? issue?.additionalCost);
+  const totalCost = toCostNumber(issue?.totalCost ?? issue?.cost) || (laborCost + partsCost + otherCost);
+
+  return {
+    laborCost,
+    partsCost,
+    otherCost,
+    totalCost,
+  };
+};
+
+const COST_FIELD_NAMES = ['labor', 'laborEntries', 'parts', 'materials', 'lineItems', 'costs', 'additionalCosts'];
+
+const mergeRawIssueCostFields = (issue = {}, rawIssue = null) => {
+  if (!rawIssue) return issue;
+  const merged = { ...issue };
+  COST_FIELD_NAMES.forEach((field) => {
+    if (merged[field] === undefined && rawIssue[field] !== undefined) {
+      merged[field] = rawIssue[field];
+    }
+  });
+  return merged;
+};
+
+const hydrateIssuesFromMongo = async (issues = []) => {
+  if (!Array.isArray(issues) || issues.length === 0) return issues;
+  const db = mongoose.connection.db;
+  if (!db) return issues;
+  const { ObjectId } = require('mongodb');
+  const objectIds = issues
+    .map((issue) => {
+      const id = issue?.id || issue?._id;
+      return (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : null;
+    })
+    .filter(Boolean);
+  if (!objectIds.length) return issues;
+
+  const rawIssues = await db.collection('Issue')
+    .find({ _id: { $in: objectIds } }, { projection: COST_FIELD_NAMES.reduce((acc, field) => ({ ...acc, [field]: 1 }), {}) })
+    .toArray();
+  const rawMap = new Map(rawIssues.map((raw) => [String(raw._id), raw]));
+  return issues.map((issue) => mergeRawIssueCostFields(issue, rawMap.get(String(issue?.id || issue?._id))));
+};
+
+const hydrateIssueFromMongo = async (issue) => {
+  if (!issue) return issue;
+  const [hydrated] = await hydrateIssuesFromMongo([issue]);
+  return hydrated || issue;
+};
+
+const enrichIssueWithCosts = (issue) => {
+  if (!issue) return issue;
+  return {
+    ...issue,
+    ...summarizeIssueCosts(issue),
+  };
+};
+
+const enrichIssuesWithCosts = async (issues = []) => {
+  const hydrated = await hydrateIssuesFromMongo(issues);
+  return hydrated.map(enrichIssueWithCosts);
+};
+
+const enrichSingleIssueWithCosts = async (issue) => enrichIssueWithCosts(await hydrateIssueFromMongo(issue));
+
 const sanitizeIssueUpdateData = (data = {}) => {
   const cleaned = {};
   for (const [key, value] of Object.entries(data)) {
@@ -174,13 +269,15 @@ const translateFilterToMongo = (filter) => {
 module.exports = {
   getAll: async (companyName = null) => {
     try {
-      return await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
+      const issues = await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
+      return await enrichIssuesWithCosts(issues);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         const repaired = await repairIssueUpdatedAtValues();
         if (repaired) {
           try {
-            return await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
+            const issues = await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
+            return await enrichIssuesWithCosts(issues);
           } catch (retryErr) {
             err = retryErr;
           }
@@ -191,7 +288,7 @@ module.exports = {
         const db = mongoose.connection.db;
         if (!db) throw err;
         const issues = await db.collection('Issue').find(applyCompanyFilter({}, companyName)).toArray();
-        return issues.map(i => ({ ...i, id: i._id.toString() }));
+        return await enrichIssuesWithCosts(issues.map(i => ({ ...i, id: i._id.toString() })));
       }
       throw err;
     }
@@ -199,13 +296,15 @@ module.exports = {
 
   getById: async (id) => {
     try {
-      return await prisma.issue.findUnique({ where: { id } });
+      const issue = await prisma.issue.findUnique({ where: { id } });
+      return await enrichSingleIssueWithCosts(issue);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         const repaired = await repairIssueUpdatedAtValues();
         if (repaired) {
           try {
-            return await prisma.issue.findUnique({ where: { id } });
+            const issue = await prisma.issue.findUnique({ where: { id } });
+            return await enrichSingleIssueWithCosts(issue);
           } catch (retryErr) {
             err = retryErr;
           }
@@ -217,7 +316,7 @@ module.exports = {
         if (!db) throw err;
         const { ObjectId } = require('mongodb');
         const issue = await db.collection('Issue').findOne({ _id: new ObjectId(id) });
-        return issue ? { ...issue, id: issue._id.toString() } : null;
+        return issue ? await enrichSingleIssueWithCosts({ ...issue, id: issue._id.toString() }) : null;
       }
       throw err;
     }
@@ -225,13 +324,15 @@ module.exports = {
 
   getByUserId: async (userId, companyName = null) => {
     try {
-      return await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
+      const issues = await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
+      return await enrichIssuesWithCosts(issues);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         const repaired = await repairIssueUpdatedAtValues();
         if (repaired) {
           try {
-            return await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
+            const issues = await prisma.issue.findMany({ where: applyCompanyFilter({ userId }, companyName) });
+            return await enrichIssuesWithCosts(issues);
           } catch (retryErr) {
             err = retryErr;
           }
@@ -243,7 +344,7 @@ module.exports = {
         if (!db) throw err;
         const mongoFilter = translateFilterToMongo(applyCompanyFilter({ userId }, companyName));
         const issues = await db.collection('Issue').find(mongoFilter).toArray();
-        return issues.map(i => ({ ...i, id: i._id.toString() }));
+        return await enrichIssuesWithCosts(issues.map(i => ({ ...i, id: i._id.toString() })));
       }
       throw err;
     }
@@ -259,7 +360,7 @@ module.exports = {
       const allIssues = await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
       const withAssignee = allIssues.filter(issue => Array.isArray(issue.assignees) && issue.assignees.some(a => a && a.id === techId));
       const merged = [...issues, ...withAssignee.filter(i => !issues.some(j => j.id === i.id))];
-      return merged;
+      return await enrichIssuesWithCosts(merged);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         const repaired = await repairIssueUpdatedAtValues();
@@ -271,7 +372,7 @@ module.exports = {
             const allIssues = await prisma.issue.findMany({ where: applyCompanyFilter({}, companyName) });
             const withAssignee = allIssues.filter(issue => Array.isArray(issue.assignees) && issue.assignees.some(a => a && a.id === techId));
             const merged = [...issues, ...withAssignee.filter(i => !issues.some(j => j.id === i.id))];
-            return merged;
+            return await enrichIssuesWithCosts(merged);
           } catch (retryErr) {
             err = retryErr;
           }
@@ -286,7 +387,7 @@ module.exports = {
           { "assignees.id": techId }
         ]
       }, companyName)).toArray();
-      return issues.map(i => ({ ...i, id: i._id.toString() }));
+      return await enrichIssuesWithCosts(issues.map(i => ({ ...i, id: i._id.toString() })));
     }
   },
 
@@ -312,7 +413,7 @@ module.exports = {
       if (!assetIds.length) return [];
       // Exclude anonymous (submissionType === 'request') issues that have NOT been resubmitted.
       // Managers should only see authenticated submissions or anonymous ones that the client has resubmitted.
-      return await prisma.issue.findMany({
+      const issues = await prisma.issue.findMany({
         where: applyCompanyFilter({
           AND: [
             { assetId: { in: assetIds } },
@@ -320,6 +421,7 @@ module.exports = {
           ]
         }, companyName)
       });
+      return await enrichIssuesWithCosts(issues);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         await repairIssueUpdatedAtValues();
@@ -336,7 +438,7 @@ module.exports = {
     try {
       const assets = await prisma.asset.findMany({ where: { propertyId }, select: { id: true } });
       const assetIds = assets.map(a => a.id).filter(Boolean);
-      return await prisma.issue.findMany({
+      const issues = await prisma.issue.findMany({
         where: applyCompanyFilter({
           OR: [
             { propertyId },
@@ -344,6 +446,7 @@ module.exports = {
           ]
         }, companyName)
       });
+      return await enrichIssuesWithCosts(issues);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         const repaired = await repairIssueUpdatedAtValues();
@@ -351,7 +454,7 @@ module.exports = {
           try {
             const assets = await prisma.asset.findMany({ where: { propertyId }, select: { id: true } });
             const assetIds = assets.map(a => a.id).filter(Boolean);
-            return await prisma.issue.findMany({
+            const issues = await prisma.issue.findMany({
               where: applyCompanyFilter({
                 OR: [
                   { propertyId },
@@ -359,6 +462,7 @@ module.exports = {
                 ]
               }, companyName)
             });
+            return await enrichIssuesWithCosts(issues);
           } catch (retryErr) {
             err = retryErr;
           }
@@ -377,7 +481,7 @@ module.exports = {
           ]
         });
         const issues = await db.collection('Issue').find(applyCompanyFilter(mongoFilter, companyName)).toArray();
-        return issues.map(i => ({ ...i, id: i._id.toString() }));
+        return await enrichIssuesWithCosts(issues.map(i => ({ ...i, id: i._id.toString() })));
       }
   },
 
@@ -389,7 +493,7 @@ module.exports = {
         select: { id: true }
       });
       const assetIds = assets.map(a => a.id).filter(Boolean);
-      return await prisma.issue.findMany({
+      const issues = await prisma.issue.findMany({
         where: applyCompanyFilter({
           OR: [
             { propertyId: { in: propertyIds } },
@@ -398,6 +502,7 @@ module.exports = {
         }, companyName),
         orderBy: { createdAt: 'desc' }
       });
+      return await enrichIssuesWithCosts(issues);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         const repaired = await repairIssueUpdatedAtValues();
@@ -408,7 +513,7 @@ module.exports = {
               select: { id: true }
             });
             const assetIds = assets.map(a => a.id).filter(Boolean);
-            return await prisma.issue.findMany({
+            const issues = await prisma.issue.findMany({
               where: applyCompanyFilter({
                 OR: [
                   { propertyId: { in: propertyIds } },
@@ -417,6 +522,7 @@ module.exports = {
               }, companyName),
               orderBy: { createdAt: 'desc' }
             });
+            return await enrichIssuesWithCosts(issues);
           } catch (retryErr) {
             err = retryErr;
           }
@@ -435,7 +541,7 @@ module.exports = {
           ]
         });
         const issues = await db.collection('Issue').find(applyCompanyFilter(mongoFilter, companyName)).sort({ createdAt: -1 }).toArray();
-        return issues.map(i => ({ ...i, id: i._id.toString() }));
+        return await enrichIssuesWithCosts(issues.map(i => ({ ...i, id: i._id.toString() })));
       }
   },
 
@@ -461,7 +567,8 @@ module.exports = {
       const assets = await prisma.asset.findMany({ where: { propertyId: { in: propertyIds } }, select: { id: true } });
       const assetIds = assets.map(a => a.id);
       if (!assetIds.length) return [];
-      return await prisma.issue.findMany({ where: { assetId: { in: assetIds } } });
+      const issues = await prisma.issue.findMany({ where: { assetId: { in: assetIds } } });
+      return await enrichIssuesWithCosts(issues);
     } catch (err) {
       if (isNullUpdatedAtPrismaError(err)) {
         await repairIssueUpdatedAtValues();

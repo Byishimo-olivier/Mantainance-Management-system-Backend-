@@ -50,9 +50,102 @@ const normalizeAssetWhere = (where) => {
   return out;
 };
 
+const toTrimmedString = (value) => {
+  if (value === undefined || value === null) return undefined;
+  const stringValue = String(value).trim();
+  return stringValue === '' ? undefined : stringValue;
+};
+
+const toOptionalNumber = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const toOptionalDate = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const toStringArray = (value) => {
+  if (!value) return [];
+  const source = Array.isArray(value) ? value : [value];
+  return source.map((item) => toTrimmedString(item)).filter(Boolean);
+};
+
+const normalizeOperationalStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'not operational' || normalized === 'down' || normalized === 'inactive') return 'Down';
+  if (normalized === 'operational' || normalized === 'active' || normalized === 'up') return 'Active';
+  return normalized ? String(value).trim() : 'Active';
+};
+
+const normalizeIdentifiersPayload = (identifiers) => {
+  if (!identifiers || typeof identifiers !== 'object' || Array.isArray(identifiers)) return undefined;
+  const normalized = {
+    ...identifiers,
+    barcode: toTrimmedString(identifiers.barcode),
+    model: toTrimmedString(identifiers.model),
+    manufacturer: toTrimmedString(identifiers.manufacturer),
+    category: toTrimmedString(identifiers.category),
+    area: toTrimmedString(identifiers.area),
+    residualValue: toOptionalNumber(identifiers.residualValue),
+    workerId: toTrimmedString(identifiers.workerId),
+    teamId: toTrimmedString(identifiers.teamId),
+    customerId: toTrimmedString(identifiers.customerId),
+    operatingScheduleId: toTrimmedString(identifiers.operatingScheduleId),
+    additionalInformation: toTrimmedString(identifiers.additionalInformation),
+    serviceDate: toOptionalDate(identifiers.serviceDate),
+    trackCheckInOut: Boolean(identifiers.trackCheckInOut),
+    additionalWorkerIds: toStringArray(identifiers.additionalWorkerIds),
+    parts: Array.isArray(identifiers.parts)
+      ? identifiers.parts.map((part) => {
+          if (typeof part === 'string') return { name: part };
+          if (!part || typeof part !== 'object') return null;
+          return {
+            ...part,
+            name: toTrimmedString(part.name) || 'Part',
+          };
+        }).filter(Boolean)
+      : [],
+  };
+
+  if (identifiers.usefulLife && typeof identifiers.usefulLife === 'object' && !Array.isArray(identifiers.usefulLife)) {
+    normalized.usefulLife = {
+      value: toOptionalNumber(identifiers.usefulLife.value),
+      unit: toTrimmedString(identifiers.usefulLife.unit) || 'years',
+    };
+  } else {
+    normalized.usefulLife = null;
+  }
+
+  Object.keys(normalized).forEach((key) => {
+    if (normalized[key] === undefined) delete normalized[key];
+  });
+
+  return normalized;
+};
+
 module.exports = {
   create: async (data) => {
     const payload = { ...data };
+    delete payload.companyName;
+
+    payload.name = toTrimmedString(payload.name);
+    payload.type = toTrimmedString(payload.type) || 'General';
+    payload.description = toTrimmedString(payload.description) || null;
+    payload.serialNumber = toTrimmedString(payload.serialNumber) || null;
+    payload.parentId = toTrimmedString(payload.parentId) || null;
+    payload.vendorId = toTrimmedString(payload.vendorId) || null;
+    payload.vendorName = toTrimmedString(payload.vendorName) || null;
+    payload.purchaseDate = toOptionalDate(payload.purchaseDate);
+    payload.purchaseCost = toOptionalNumber(payload.purchaseCost);
+    payload.currentValue = toOptionalNumber(payload.currentValue);
+    payload.warrantyUntil = toOptionalDate(payload.warrantyUntil);
+    payload.photos = toStringArray(payload.photos);
+    payload.documents = toStringArray(payload.documents);
+    payload.identifiers = normalizeIdentifiersPayload(payload.identifiers);
 
     // Prisma checked inputs don't accept relation scalar FKs (propertyId/userId).
     // Convert them into relation connects for compatibility across client versions.
@@ -110,7 +203,7 @@ module.exports = {
       hadLocation = true;
     }
 
-    const dataToCreate = { ...payload, ...rel, quantity: payload.quantity ?? 1 };
+    const dataToCreate = { ...payload, ...rel, quantity: Math.max(1, parseInt(payload.quantity, 10) || 1) };
     // defensive cleanup: remove any top-level fields that don't exist on the Prisma model
     delete dataToCreate.block;
     delete dataToCreate.blocks;
@@ -118,6 +211,7 @@ module.exports = {
     delete dataToCreate.floor;
     delete dataToCreate.room;
     if (hadLocation) dataToCreate.location = location;
+    if (dataToCreate.identifiers === undefined) delete dataToCreate.identifiers;
 
     try {
       return await prisma.asset.create({ data: dataToCreate });
@@ -175,6 +269,21 @@ module.exports = {
   },
   update: async (id, data) => {
     const payload = { ...data };
+    delete payload.companyName;
+    if (Object.prototype.hasOwnProperty.call(payload, 'name')) payload.name = toTrimmedString(payload.name);
+    if (Object.prototype.hasOwnProperty.call(payload, 'type')) payload.type = toTrimmedString(payload.type) || 'General';
+    if (Object.prototype.hasOwnProperty.call(payload, 'description')) payload.description = toTrimmedString(payload.description) || null;
+    if (Object.prototype.hasOwnProperty.call(payload, 'serialNumber')) payload.serialNumber = toTrimmedString(payload.serialNumber) || null;
+    if (Object.prototype.hasOwnProperty.call(payload, 'parentId')) payload.parentId = toTrimmedString(payload.parentId) || null;
+    if (Object.prototype.hasOwnProperty.call(payload, 'vendorId')) payload.vendorId = toTrimmedString(payload.vendorId) || null;
+    if (Object.prototype.hasOwnProperty.call(payload, 'vendorName')) payload.vendorName = toTrimmedString(payload.vendorName) || null;
+    if (Object.prototype.hasOwnProperty.call(payload, 'purchaseDate')) payload.purchaseDate = toOptionalDate(payload.purchaseDate);
+    if (Object.prototype.hasOwnProperty.call(payload, 'purchaseCost')) payload.purchaseCost = toOptionalNumber(payload.purchaseCost);
+    if (Object.prototype.hasOwnProperty.call(payload, 'currentValue')) payload.currentValue = toOptionalNumber(payload.currentValue);
+    if (Object.prototype.hasOwnProperty.call(payload, 'warrantyUntil')) payload.warrantyUntil = toOptionalDate(payload.warrantyUntil);
+    if (Object.prototype.hasOwnProperty.call(payload, 'photos')) payload.photos = toStringArray(payload.photos);
+    if (Object.prototype.hasOwnProperty.call(payload, 'documents')) payload.documents = toStringArray(payload.documents);
+    if (Object.prototype.hasOwnProperty.call(payload, 'identifiers')) payload.identifiers = normalizeIdentifiersPayload(payload.identifiers);
     const rel = {};
     if (Object.prototype.hasOwnProperty.call(payload, 'propertyId')) {
       if (payload.propertyId) {
@@ -272,7 +381,10 @@ module.exports = {
       }
     }
 
-    const dataToUpdate = { ...payload, ...rel, quantity: payload.quantity ?? 1 };
+    const dataToUpdate = { ...payload, ...rel };
+    if (Object.prototype.hasOwnProperty.call(payload, 'quantity')) {
+      dataToUpdate.quantity = Math.max(1, parseInt(payload.quantity, 10) || 1);
+    }
     // defensive cleanup: remove any top-level fields that don't exist on the Prisma model
     delete dataToUpdate.block;
     delete dataToUpdate.blocks;
@@ -280,6 +392,7 @@ module.exports = {
     delete dataToUpdate.floor;
     delete dataToUpdate.room;
     if (hadLocation) dataToUpdate.location = location;
+    if (dataToUpdate.identifiers === undefined) delete dataToUpdate.identifiers;
 
     try {
       return await prisma.asset.update({ where: { id }, data: dataToUpdate });
@@ -302,6 +415,64 @@ module.exports = {
   },
   delete: (id) => prisma.asset.delete({ where: { id } }),
   count: (filter = {}) => prisma.asset.count({ where: normalizeAssetWhere(filter) }),
+
+  updateOperationalStatus: async (id, status) => {
+    const nextStatus = normalizeOperationalStatus(status);
+    return prisma.asset.update({ where: { id }, data: { status: nextStatus } });
+  },
+
+  addDowntime: async (assetId, { hours, minutes, status, description, startedAt, createdBy }) => {
+    const collection = getRawCollection('AssetDowntimeLog');
+    if (!collection) {
+      throw new Error('Downtime storage is unavailable.');
+    }
+
+    const safeHours = Math.max(0, parseInt(hours, 10) || 0);
+    const safeMinutes = Math.max(0, parseInt(minutes, 10) || 0);
+    const durationMinutes = (safeHours * 60) + safeMinutes;
+    const normalizedStatus = normalizeOperationalStatus(status);
+    const startedDate = toOptionalDate(startedAt) || new Date();
+    const trimmedDescription = toTrimmedString(description);
+
+    if (!trimmedDescription) {
+      throw new Error('Description is required.');
+    }
+
+    const entry = {
+      assetId: String(assetId),
+      hours: safeHours,
+      minutes: safeMinutes,
+      durationMinutes,
+      status: normalizedStatus,
+      description: trimmedDescription,
+      startedAt: startedDate,
+      createdBy: toTrimmedString(createdBy) || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await collection.insertOne(entry);
+    const saved = await collection.findOne({ _id: result.insertedId });
+    await prisma.asset.update({ where: { id: assetId }, data: { status: normalizedStatus } });
+    return mapRecord(saved);
+  },
+
+  getDowntimeLogs: async (assetId, { start, end } = {}) => {
+    const collection = getRawCollection('AssetDowntimeLog');
+    if (!collection) {
+      return [];
+    }
+
+    const query = { assetId: String(assetId) };
+    if (start || end) {
+      query.startedAt = {};
+      if (start) query.startedAt.$gte = start;
+      if (end) query.startedAt.$lte = end;
+    }
+
+    const logs = await collection.find(query).sort({ startedAt: -1, createdAt: -1 }).toArray();
+    return logs.map(mapRecord);
+  },
 
   // Movement log helpers
   addMovement: async (assetId, { from, to, movedBy, notes }) => {

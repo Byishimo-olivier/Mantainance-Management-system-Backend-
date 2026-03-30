@@ -24,8 +24,11 @@ module.exports = {
   update: async (id, data) => {
     const db = mongoose.connection.db;
     const { ObjectId } = require('mongodb');
-    data.updatedAt = new Date();
-    await db.collection(collectionName).updateOne({ _id: new ObjectId(id) }, { $set: data });
+    const nextData = { ...(data || {}) };
+    delete nextData._id;
+    delete nextData.id;
+    nextData.updatedAt = new Date();
+    await db.collection(collectionName).updateOne({ _id: new ObjectId(id) }, { $set: nextData });
     const doc = await db.collection(collectionName).findOne({ _id: new ObjectId(id) });
     return doc ? { ...doc, id: doc._id.toString() } : null;
   },

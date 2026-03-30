@@ -1,5 +1,7 @@
 const service = require('./meter.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
+const notificationService = require('../notification/notification.service');
+const emailService = require('../emailService/email.service');
 
 exports.getAll = async (req, res) => {
   try {
@@ -35,7 +37,49 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
-    const updated = await service.update(req.params.id, req.body || {});
+    const existing = await service.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+
+    const nextPayload = req.body || {};
+    const previousTriggerIds = new Set(
+      (Array.isArray(existing.triggers) ? existing.triggers : [])
+        .map((trigger) => String(trigger?.id || trigger?._id || ''))
+        .filter(Boolean)
+    );
+
+    const updated = await service.update(req.params.id, nextPayload);
+
+    const incomingTriggers = Array.isArray(nextPayload.triggers) ? nextPayload.triggers : [];
+    const createdTriggers = incomingTriggers.filter((trigger) => {
+      const triggerId = String(trigger?.id || trigger?._id || '');
+      return triggerId && !previousTriggerIds.has(triggerId);
+    });
+
+    if (createdTriggers.length > 0) {
+      const companyName = req.user?.companyName || updated?.companyName || existing?.companyName || '';
+      const meterLabel = updated?.name || existing?.name || 'Meter';
+
+      await Promise.all(createdTriggers.map(async (trigger) => {
+        const title = `New meter trigger: ${trigger?.title || meterLabel}`;
+        const message = `${req.user?.name || req.user?.email || 'Someone'} created a meter trigger for ${meterLabel}${trigger?.triggerValue ? ` (${trigger.triggerValue})` : ''}.`;
+
+        await notificationService.notifyCompanyAdmins({
+          companyName,
+          title,
+          message,
+          type: 'info',
+          link: '/dashboard?tab=meters',
+        });
+
+        await emailService.sendMeterTriggerCreatedNotification({
+          companyName,
+          trigger,
+          meter: updated || existing,
+          actor: req.user || null,
+        });
+      }));
+    }
+
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[meter.update]', err);

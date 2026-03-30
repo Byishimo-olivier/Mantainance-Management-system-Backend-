@@ -357,6 +357,41 @@ templates.operationalSummaryReport = (data) => {
 // Email service methods will be exported below via module.exports = { ... }
 
 module.exports = {
+  async sendMeterTriggerCreatedNotification({ companyName, trigger, meter, actor }) {
+    try {
+      const recipients = await this.getAdminManagerEmails(companyName);
+      if (!recipients.length) return;
+
+      const subject = `New meter trigger created: ${trigger?.title || meter?.name || 'Meter Trigger'}`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; color: #111827;">
+          <h2 style="color: #2563eb;">Meter Trigger Created</h2>
+          <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <p><strong>Company:</strong> ${companyName || 'Unknown company'}</p>
+            <p><strong>Meter:</strong> ${meter?.name || 'Unknown meter'}</p>
+            <p><strong>Trigger title:</strong> ${trigger?.title || 'Untitled trigger'}</p>
+            <p><strong>Condition:</strong> ${trigger?.triggerValue || `${trigger?.when || ''} ${trigger?.value || ''}`.trim() || '—'}</p>
+            <p><strong>Due:</strong> ${trigger?.due?.amount ?? 0} ${trigger?.due?.unit || 'Hours'} after trigger</p>
+            <p><strong>Location:</strong> ${trigger?.location || meter?.location || '—'}</p>
+            <p><strong>Asset:</strong> ${trigger?.asset || meter?.asset || '—'}</p>
+            <p><strong>Created by:</strong> ${actor?.name || actor?.email || 'System'}</p>
+            <p><strong>Created at:</strong> ${new Date(trigger?.createdAt || Date.now()).toLocaleString()}</p>
+          </div>
+          <p>This trigger was added to the meter and will be available in the system for your company administrators.</p>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: recipients.join(','),
+        subject,
+        html,
+      });
+    } catch (error) {
+      console.error('Error sending meter trigger created email:', error);
+    }
+  },
+
   async sendInvoiceEmail({ to, invoiceNumber, title, customerName, companyName, invoiceDate, paymentDue, currency, lineItems = [], totals = {}, description = '' }) {
     try {
       if (!to) throw new Error('Recipient email is required');

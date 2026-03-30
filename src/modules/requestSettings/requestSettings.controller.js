@@ -24,6 +24,21 @@ const defaultGeneralSettings = {
   timeZone: 'Africa/Kigali +02:00 CAT',
 };
 
+const defaultApiSettings = {
+  version: '2022-09-14',
+};
+
+const defaultAuthenticationSettings = {
+  saml: {
+    provider: '',
+    configured: false,
+  },
+};
+
+const defaultWebhookSettings = {
+  items: [],
+};
+
 const defaultBranding = {
   logoUrl: '',
   primaryColor: '#d3ac2a',
@@ -158,6 +173,8 @@ const defaultTagSettings = {
   items: [],
 };
 
+const allowedAuthenticationProviders = ['', 'okta', 'google', 'custom_saml_2_0'];
+
 const ensureWorkOrderCategoryDefaults = async (settings) => {
   settings.workOrders = settings.workOrders || { ...defaultWorkOrderSettings };
   settings.workOrders.categories = Array.isArray(settings.workOrders.categories) ? settings.workOrders.categories : [];
@@ -213,6 +230,17 @@ const sanitizeSettings = (doc) => ({
     ...defaultGeneralSettings,
     ...(doc?.general || {}),
   },
+  api: {
+    ...defaultApiSettings,
+    ...(doc?.api || {}),
+  },
+  authentication: {
+    ...defaultAuthenticationSettings,
+    saml: {
+      ...defaultAuthenticationSettings.saml,
+      ...(doc?.authentication?.saml || {}),
+    },
+  },
   internalRequests: doc?.internalRequests || defaultInternalRequests,
   legacyPublicRequests: {
     companyRequestPortalEnabled: !!doc?.legacyPublicRequests?.companyRequestPortalEnabled,
@@ -220,6 +248,20 @@ const sanitizeSettings = (doc) => ({
   branding: {
     ...defaultBranding,
     ...(doc?.branding || {}),
+  },
+  webhooks: {
+    items: Array.isArray(doc?.webhooks?.items)
+      ? doc.webhooks.items.map((webhook) => ({
+          id: String(webhook?._id || ''),
+          title: webhook?.title || '',
+          endpoint: webhook?.endpoint || '',
+          allEvents: webhook?.allEvents !== false,
+          events: Array.isArray(webhook?.events) ? webhook.events.filter(Boolean) : [],
+          active: webhook?.active !== false,
+          createdAt: webhook?.createdAt || null,
+          updatedAt: webhook?.updatedAt || null,
+        }))
+      : [],
   },
   automation: {
     workflows: Array.isArray(doc?.automation?.workflows)
@@ -540,6 +582,41 @@ exports.updateGeneralSettings = async (req, res) => {
   }
 };
 
+exports.updateApiSettings = async (req, res) => {
+  try {
+    const version = String(req.body?.version || defaultApiSettings.version).trim() || defaultApiSettings.version;
+    const settings = await findOrCreateSettings(req.user);
+    settings.api = { version };
+    await settings.save();
+    return res.json({ api: sanitizeSettings(settings).api });
+  } catch (error) {
+    console.error('updateApiSettings error:', error);
+    return res.status(500).json({ message: 'Failed to update API settings' });
+  }
+};
+
+exports.updateAuthenticationSettings = async (req, res) => {
+  try {
+    const provider = String(req.body?.provider || '').trim().toLowerCase();
+    if (!allowedAuthenticationProviders.includes(provider)) {
+      return res.status(400).json({ message: 'Invalid authentication provider' });
+    }
+
+    const settings = await findOrCreateSettings(req.user);
+    settings.authentication = {
+      saml: {
+        provider,
+        configured: provider !== '',
+      },
+    };
+    await settings.save();
+    return res.json({ authentication: sanitizeSettings(settings).authentication });
+  } catch (error) {
+    console.error('updateAuthenticationSettings error:', error);
+    return res.status(500).json({ message: 'Failed to update authentication settings' });
+  }
+};
+
 exports.updateLegacyPublicRequests = async (req, res) => {
   try {
     const companyName = getCompanyName(req);
@@ -573,6 +650,105 @@ exports.updateBranding = async (req, res) => {
     return res.json({ branding: settings.branding });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+};
+
+exports.createWebhook = async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim();
+    const endpoint = String(req.body?.endpoint || '').trim();
+    const allEvents = req.body?.allEvents !== false;
+    const events = Array.isArray(req.body?.events)
+      ? req.body.events.map((event) => String(event || '').trim()).filter(Boolean)
+      : [];
+
+    if (!title) {
+      return res.status(400).json({ message: 'Webhook title is required' });
+    }
+
+    try {
+      new URL(endpoint);
+    } catch {
+      return res.status(400).json({ message: 'Endpoint must be a valid URL' });
+    }
+
+    if (!allEvents && events.length === 0) {
+      return res.status(400).json({ message: 'Select at least one webhook event' });
+    }
+
+    const settings = await findOrCreateSettings(req.user);
+    if (!settings.webhooks) settings.webhooks = { items: [] };
+    settings.webhooks.items.push({
+      title,
+      endpoint,
+      allEvents,
+      events: allEvents ? [] : events,
+      active: true,
+    });
+    await settings.save();
+    return res.status(201).json({ webhooks: sanitizeSettings(settings).webhooks });
+  } catch (error) {
+    console.error('createWebhook error:', error);
+    return res.status(500).json({ message: 'Failed to create webhook' });
+  }
+};
+
+exports.updateWebhook = async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim();
+    const endpoint = String(req.body?.endpoint || '').trim();
+    const allEvents = req.body?.allEvents !== false;
+    const events = Array.isArray(req.body?.events)
+      ? req.body.events.map((event) => String(event || '').trim()).filter(Boolean)
+      : [];
+
+    if (!title) {
+      return res.status(400).json({ message: 'Webhook title is required' });
+    }
+
+    try {
+      new URL(endpoint);
+    } catch {
+      return res.status(400).json({ message: 'Endpoint must be a valid URL' });
+    }
+
+    if (!allEvents && events.length === 0) {
+      return res.status(400).json({ message: 'Select at least one webhook event' });
+    }
+
+    const settings = await findOrCreateSettings(req.user);
+    const webhook = settings.webhooks?.items?.id(req.params.id);
+    if (!webhook) {
+      return res.status(404).json({ message: 'Webhook not found' });
+    }
+
+    webhook.title = title;
+    webhook.endpoint = endpoint;
+    webhook.allEvents = allEvents;
+    webhook.events = allEvents ? [] : events;
+    webhook.active = req.body?.active !== false;
+    await settings.save();
+    return res.json({ webhooks: sanitizeSettings(settings).webhooks });
+  } catch (error) {
+    console.error('updateWebhook error:', error);
+    return res.status(500).json({ message: 'Failed to update webhook' });
+  }
+};
+
+exports.deleteWebhook = async (req, res) => {
+  try {
+    const settings = await findOrCreateSettings(req.user);
+    const webhook = settings.webhooks?.items?.id(req.params.id);
+    if (!webhook) {
+      return res.status(404).json({ message: 'Webhook not found' });
+    }
+
+    webhook.deleteOne();
+    await settings.save();
+    return res.json({ webhooks: sanitizeSettings(settings).webhooks });
+  } catch (error) {
+    console.error('deleteWebhook error:', error);
+    return res.status(500).json({ message: 'Failed to delete webhook' });
   }
 };
 

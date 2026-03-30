@@ -12,6 +12,17 @@ const generalSettingsSchema = new mongoose.Schema({
   timeZone: { type: String, default: 'Africa/Kigali +02:00 CAT' },
 }, { _id: false });
 
+const apiSettingsSchema = new mongoose.Schema({
+  version: { type: String, default: '2022-09-14' },
+}, { _id: false });
+
+const authenticationSettingsSchema = new mongoose.Schema({
+  saml: {
+    provider: { type: String, enum: ['', 'okta', 'google', 'custom_saml_2_0'], default: '' },
+    configured: { type: Boolean, default: false },
+  },
+}, { _id: false });
+
 const workflowConditionSchema = new mongoose.Schema({
   type: { type: String, default: '' },
   value: { type: mongoose.Schema.Types.Mixed, default: '' },
@@ -101,10 +112,26 @@ const tagSchema = new mongoose.Schema({
   model: { type: String, trim: true, default: '' },
 }, { timestamps: true });
 
+const webhookSchema = new mongoose.Schema({
+  title: { type: String, required: true, trim: true, maxlength: 120 },
+  endpoint: { type: String, required: true, trim: true },
+  allEvents: { type: Boolean, default: true },
+  events: { type: [String], default: [] },
+  active: { type: Boolean, default: true },
+}, { timestamps: true });
+
 const requestSettingsSchema = new mongoose.Schema({
   companyName: { type: String, required: true, unique: true, trim: true },
   general: {
     type: generalSettingsSchema,
+    default: () => ({}),
+  },
+  api: {
+    type: apiSettingsSchema,
+    default: () => ({}),
+  },
+  authentication: {
+    type: authenticationSettingsSchema,
     default: () => ({}),
   },
   internalRequests: {
@@ -189,6 +216,9 @@ const requestSettingsSchema = new mongoose.Schema({
   },
   tags: {
     items: { type: [tagSchema], default: [] },
+  },
+  webhooks: {
+    items: { type: [webhookSchema], default: [] },
   },
 }, { timestamps: true });
 

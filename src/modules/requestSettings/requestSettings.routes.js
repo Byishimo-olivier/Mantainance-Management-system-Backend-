@@ -10,9 +10,14 @@ router.use(authorizeRoles('admin', 'manager', 'client'));
 
 router.get('/', ctrl.getRequestSettings);
 router.put('/general', ctrl.updateGeneralSettings);
+router.put('/api', ctrl.updateApiSettings);
+router.put('/authentication', ctrl.updateAuthenticationSettings);
 router.put('/internal', ctrl.updateInternalRequests);
 router.put('/legacy', ctrl.updateLegacyPublicRequests);
 router.put('/branding', upload.single('logo'), ctrl.updateBranding);
+router.post('/webhooks', ctrl.createWebhook);
+router.put('/webhooks/:id', ctrl.updateWebhook);
+router.delete('/webhooks/:id', ctrl.deleteWebhook);
 router.put('/automation', ctrl.updateAutomationSettings);
 router.post('/roles', ctrl.createUserRole);
 router.post('/assets/fields', ctrl.createAssetField);
