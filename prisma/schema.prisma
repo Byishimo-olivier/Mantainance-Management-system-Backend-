@@ -1,5 +1,37 @@
 // --- Preventive & Routine Maintenance Extension ---
 
+model Company {
+  id                  String              @id @default(auto()) @map("_id") @db.ObjectId
+  name                String              @unique
+  email               String?             @unique
+  phone               String?
+  address             String?
+  city                String?
+  country             String?
+  logo                String?
+  industry            String?
+  size                String?             // small, medium, large, enterprise
+  
+  // Subscription info
+  subscription        Subscription?       // Company-level subscription
+  subscriptionStatus  String              @default("inactive") // inactive, trial, active, cancelled, suspended
+  subscriptionPlan    String?             // basic, premium, professional, enterprise
+  subscriptionStartDate DateTime?
+  subscriptionEndDate DateTime?
+  
+  // Team management
+  users               User[]              // All users in this company
+  adminId             String?             @db.ObjectId // Primary account holder
+  
+  // Usage tracking
+  totalUsers          Int                 @default(1)
+  maxUsers            Int                 @default(999) // Seat limit based on plan
+  
+  metadata            Json?               // Additional company data
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
 model Property {
   id                  String               @id @default(auto()) @map("_id") @db.ObjectId
   userId              String?              @db.ObjectId
@@ -216,6 +248,12 @@ model User {
   password             String
   role                 Role
   status               String
+  
+  // Company association
+  companyId            String?               @db.ObjectId
+  company              Company?              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  isCompanyAdmin       Boolean               @default(false) // Can manage team members
+  
   createdAt            DateTime              @default(now())
   properties           Property[]
   assets               Asset[]
@@ -299,11 +337,16 @@ model Procurement {
 
 model Subscription {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
-  clientId         String   // User/Client ID
-  propertyId       String?  @db.ObjectId // Property this subscription is for
+  
+  // Company-level subscription (not individual user)
+  companyId        String   @unique @db.ObjectId
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  // Subscription details
+  propertyId       String?  @db.ObjectId
   property         Property? @relation(fields: [propertyId], references: [id])
   email            String
-  plan             String   // basic, professional, enterprise
+  plan             String   // basic, premium, professional, enterprise
   billingCycle     String   @default("monthly") // weekly, monthly, yearly
   amount           Float    // Amount for current billing cycle
   status           String   @default("active") // active, cancelled, paused, pending
@@ -311,14 +354,16 @@ model Subscription {
   endDate          DateTime?
   nextBillingDate  DateTime
   cancelledAt      DateTime?
-  credentialHash   String? // Hash of clientId:secretId for security
+  credentialHash   String? // Hash for security
   features         String[] // Array of enabled features
-  paymentMethod    String? // card, bank_transfer, paypal, etc
+  paymentMethod    String? // pesapal, card, bank_transfer, etc
   paymentStatus    String @default("pending") // pending, paid, failed, refunded
-  autoRenew        Boolean @default(true) // Auto-renew on billing date
-  invoices         Invoice[] // Related invoices
-  payments         Payment[] // Related payments
-  metadata         Json? // Additional subscription data
+  autoRenew        Boolean @default(true)
+  
+  // Relations
+  invoices         Invoice[]
+  payments         Payment[]
+  metadata         Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

@@ -132,7 +132,7 @@ exports.getPricing = async (req, res) => {
       message: 'Pricing retrieved',
       data: {
         pricing,
-        currency: settings?.platform?.subscriptionCurrency || 'USD',
+        currency: settings?.platform?.subscriptionCurrency || 'RWF',
       },
     });
   } catch (error) {
@@ -207,6 +207,264 @@ exports.paypackCallback = async (req, res) => {
     });
   } catch (error) {
     console.error('PayPack callback error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.initiatePesaPalPayment = async (req, res) => {
+  try {
+    const { subscriptionId, amount, phoneNumber, email, userId } = req.body;
+
+    if (!subscriptionId || !amount) {
+      return res.status(400).json({
+        error: 'Missing required fields: subscriptionId, amount',
+      });
+    }
+
+    const payment = await paymentService.initiatePesaPalPayment({
+      subscriptionId,
+      amount,
+      phoneNumber,
+      email: email || req.user?.email,
+      userId: userId || req.user?.id,
+    });
+
+    res.status(201).json({
+      message: 'PesaPal payment initiated',
+      data: normalizeExtendedJSON(payment),
+      redirectUrl: payment.metadata?.pesapalRedirectUrl,
+    });
+  } catch (error) {
+    console.error('PesaPal initiation error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.pesapalCallback = async (req, res) => {
+  try {
+    const callbackData = { ...req.body, ...req.query };
+    console.log('PesaPal callback received:', callbackData);
+
+    const result = await paymentService.processPesaPalCallback(callbackData);
+
+    // If it's a GET request (browser redirect), redirect to frontend
+    if (req.method === 'GET') {
+      const frontendUrl = process.env.FRONTEND_URL || 'https://mms-frontend.vercel.app';
+      const status = result.status === 'completed' ? 'success' : 'failed';
+      return res.redirect(`${frontendUrl}/subscription?payment_status=${status}&transaction_id=${result.id}`);
+    }
+
+    // If it's a POST request (IPN), just return JSON success
+    res.json({
+      message: 'Payment processed',
+      data: normalizeExtendedJSON(result),
+    });
+  } catch (error) {
+    console.error('PesaPal callback error:', error);
+    
+    // Even if it fails, if it's a GET request, we should redirect to an error page
+    if (req.method === 'GET') {
+      const frontendUrl = process.env.FRONTEND_URL || 'https://mms-frontend.vercel.app';
+      return res.redirect(`${frontendUrl}/subscription?payment_status=error&message=${encodeURIComponent(error.message)}`);
+    }
+    
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Step 5: Get payment status from PesaPal (for post-payment verification)
+exports.getPesaPalPaymentStatus = async (req, res) => {
+  try {
+    const { orderTrackingId, transactionId } = req.query;
+
+    if (!orderTrackingId && !transactionId) {
+      return res.status(400).json({
+        error: 'Missing required parameter: orderTrackingId or transactionId',
+      });
+    }
+
+    const status = await paymentService.getPesaPalPaymentStatus(orderTrackingId || transactionId);
+
+    res.json({
+      message: 'Payment status retrieved',
+      data: {
+        status: status.status,
+        statusCode: status.statusCode,
+      },
+    });
+  } catch (error) {
+    console.error('PesaPal status check error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Initiate mobile money payment (M-Pesa, Airtel Money, MTN Money, Orange Money, etc.)
+exports.initiateMobileMoneyPayment = async (req, res) => {
+  try {
+    const { subscriptionId, amount, phoneNumber, provider, currency, email, userId } = req.body;
+
+    if (!subscriptionId || !amount || !phoneNumber || !provider) {
+      return res.status(400).json({
+        error: 'Missing required fields: subscriptionId, amount, phoneNumber, provider',
+      });
+    }
+
+    const payment = await paymentService.initiateMobileMoneyPayment({
+      subscriptionId,
+      amount,
+      phoneNumber,
+      provider,
+      currency,
+      email: email || req.user?.email,
+      userId: userId || req.user?.id,
+    });
+
+    res.status(201).json({
+      message: 'Mobile money payment initiated',
+      data: normalizeExtendedJSON(payment),
+      // Include instructions for the user
+      instructions: payment.metadata,
+    });
+  } catch (error) {
+    console.error('Mobile money initiation error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Get supported mobile money providers
+exports.getSupportedMobileMoneyProviders = async (req, res) => {
+  try {
+    const providers = [
+      {
+        id: 'mpesa',
+        name: 'M-Pesa',
+        countries: ['KE', 'TZ', 'UG'],
+        description: 'Mobile money service from Safaricom',
+        ussdCode: '*150*50#',
+      },
+      {
+        id: 'airtel',
+        name: 'Airtel Money',
+        countries: ['KE', 'TZ', 'UG', 'RW'],
+        description: 'Mobile money service from Airtel',
+        ussdCode: '*144#',
+      },
+      {
+        id: 'mtn',
+        name: 'MTN Money',
+        countries: ['UG', 'RW', 'BF', 'CI', 'CM'],
+        description: 'Mobile money service from MTN',
+        ussdCode: '*165#',
+      },
+      {
+        id: 'orange',
+        name: 'Orange Money',
+        countries: ['RW', 'SN', 'CI', 'ML', 'CM'],
+        description: 'Mobile money service from Orange',
+        ussdCode: '*120#',
+      },
+      {
+        id: 'vodacom',
+        name: 'Vodacom M-Pesa',
+        countries: ['TZ', 'DZ', 'MZ', 'CD'],
+        description: 'Mobile money service from Vodacom',
+        ussdCode: '*150#',
+      },
+      {
+        id: 'tigo',
+        name: 'Tigo Pesa',
+        countries: ['TZ', 'BF', 'CM'],
+        description: 'Mobile money service from Tigo',
+        ussdCode: '*150#',
+      },
+    ];
+
+    res.json({
+      message: 'Supported mobile money providers',
+      count: providers.length,
+      data: providers,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Process mobile money callback
+exports.mobileMoneyCallback = async (req, res) => {
+  try {
+    const callbackData = { ...req.body, ...req.query };
+    console.log('Mobile money callback received:', callbackData);
+
+    const result = await paymentService.processMobileMoneyCallback(callbackData);
+
+    res.json({
+      message: 'Mobile money payment processed',
+      data: normalizeExtendedJSON(result),
+    });
+  } catch (error) {
+    console.error('Mobile money callback error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ============================================
+// PesaPal Testing & Debugging Endpoints
+// ============================================
+
+/**
+ * Test PesaPal connectivity and configuration
+ * GET /subscriptions/payments/test-pesapal
+ */
+exports.testPesaPalConnectivity = async (req, res) => {
+  try {
+    const result = await paymentService.testPesaPalConnectivity();
+    
+    if (result.success) {
+      return res.status(200).json({
+        success: true,
+        message: 'PesaPal connectivity test passed',
+        data: result
+      });
+    } else {
+      return res.status(503).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    const formatted = paymentService.formatErrorResponse(error, 'Connectivity test failed');
+    res.status(503).json(formatted);
+  }
+};
+
+/**
+ * Get PesaPal configuration details
+ * GET /subscriptions/payments/config
+ */
+exports.getPesaPalConfig = async (req, res) => {
+  try {
+    const config = paymentService.getPesaPalConfig();
+    res.status(200).json({
+      success: true,
+      data: config
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * Get PesaPal API endpoints
+ * GET /subscriptions/payments/endpoints
+ */
+exports.getPesaPalEndpoints = async (req, res) => {
+  try {
+    const endpoints = paymentService.getPesaPalEndpoints();
+    res.status(200).json({
+      success: true,
+      data: endpoints
+    });
+  } catch (error) {
     res.status(400).json({ error: error.message });
   }
 };

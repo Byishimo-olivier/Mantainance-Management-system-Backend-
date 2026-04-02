@@ -18,6 +18,9 @@ router.use('/payments', paymentRoutes);
 // Protected routes - require authentication
 router.use(authenticate);
 
+// Get company subscription status for authenticated user
+router.get('/status', ctrl.getCompanySubscriptionStatus);
+
 // Get all subscriptions (admin/manager only)
 router.get('/', authorizeRoles('admin', 'manager'), ctrl.getAllSubscriptions);
 

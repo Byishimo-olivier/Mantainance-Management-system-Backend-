@@ -35,7 +35,7 @@ exports.createSubscription = async (subscriptionData) => {
 
     const subscription = await prisma.subscription.create({
       data: {
-        clientId: subscriptionData.userId,
+        clientId: subscriptionData.clientId, // Use the passed clientId (company or user)
         email: subscriptionData.email,
         plan,
         billingCycle,
@@ -362,8 +362,9 @@ function calculateNextBillingDate(billingCycle) {
 function getFeaturesByPlan(plan) {
   const features = {
     basic: ['Dashboard', 'Basic Reporting', 'Email Support'],
-    professional: ['Dashboard', 'Advanced Reporting', 'Priority Support', 'API Access', 'Custom Branding'],
-    enterprise: ['All Professional Features', 'Dedicated Support', 'Custom Integration', 'Training', 'SLA'],
+    premium: ['Dashboard', 'Advanced Reporting', 'Priority Support', 'Basic API Access', 'Company Branding'],
+    professional: ['All Premium Features', 'Full API Access', 'Custom Integrations', 'Advanced Analytics', 'Account Manager'],
+    enterprise: ['All Professional Features', 'Dedicated Support', 'Custom Solutions', 'Training & Onboarding', 'SLA Guarantee', 'Multiple Properties'],
   };
   return features[plan] || features.basic;
 }

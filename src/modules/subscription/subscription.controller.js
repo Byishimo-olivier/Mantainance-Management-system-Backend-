@@ -1,27 +1,37 @@
 const service = require('./subscription.service');
+const companySubscriptionService = require('./company-subscription.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 const systemSettingsService = require('../systemSettings/systemSettings.service');
 
 exports.createSubscription = async (req, res) => {
   try {
-    const { userId, email, plan, billingCycle, clientId, secretId, paymentMethod, metadata } = req.body;
+    const { userId, email, plan, billingCycle, clientId, secretId, paymentMethod, metadata, companyId, managerEmail } = req.body;
 
+    // For company subscriptions, use companyId; for individual, use userId
+    const subscriptionClientId = companyId || userId;
+    
     // Validate required fields
-    if (!userId || !email || !clientId || !secretId) {
+    if (!subscriptionClientId || !email || !clientId || !secretId) {
       return res.status(400).json({
-        error: 'Missing required fields: userId, email, clientId, secretId',
+        error: 'Missing required fields: userId/companyId, email, clientId, secretId',
       });
     }
 
     const subscription = await service.createSubscription({
+      clientId: subscriptionClientId,
       userId,
-      email,
+      email: managerEmail || email,
       plan,
       billingCycle,
       clientId,
       secretId,
       paymentMethod,
-      metadata,
+      metadata: {
+        ...metadata,
+        isCompanySubscription: !!companyId,
+        companyId,
+        managerEmail: managerEmail || email
+      },
     });
 
     res.status(201).json({
@@ -268,7 +278,7 @@ exports.getPricing = async (req, res) => {
       message: 'Pricing retrieved successfully',
       data: {
         pricing,
-        currency: settings?.platform?.subscriptionCurrency || 'USD',
+        currency: settings?.platform?.subscriptionCurrency || 'RWF',
       },
     });
   } catch (error) {
@@ -448,6 +458,30 @@ exports.getSubscriptionProperty = async (req, res) => {
       data: normalizeExtendedJSON(property),
     });
   } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * Get company subscription status for authenticated user
+ * Used by frontend to check if user's company has active subscription
+ */
+exports.getCompanySubscriptionStatus = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized - User ID not found' });
+    }
+
+    const subscriptionStatus = await companySubscriptionService.getUserSubscriptionStatus(userId);
+
+    res.json({
+      message: 'Company subscription status retrieved successfully',
+      data: subscriptionStatus,
+    });
+  } catch (error) {
+    console.error('Error getting company subscription status:', error);
     res.status(400).json({ error: error.message });
   }
 };
