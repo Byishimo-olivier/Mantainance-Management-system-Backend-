@@ -16,23 +16,239 @@ const isMaintenanceQuestion = (text) => /issue|incident|property|technician|tech
 class AIService {
   constructor() {
     this.model = null;
+    this.claudeClient = null;
     this.initialized = false;
   }
 
   async init() {
     if (this.initialized) return;
     try {
-      const { GoogleGenerativeAI } = require("@google/generative-ai");
-      const apiKey = process.env.GEMINI_API_KEY;
+      // Try Claude first
+      const Anthropic = require("@anthropic-ai/sdk");
+      const apiKey = process.env.ANTHROPIC_API_KEY;
       if (apiKey) {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        this.model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        this.claudeClient = new Anthropic({ apiKey });
+        console.log("✓ Claude AI Client initialized");
+      }
+      
+      // Fallback to Gemini
+      if (!this.claudeClient) {
+        const { GoogleGenerativeAI } = require("@google/generative-ai");
+        const gApiKey = process.env.GEMINI_API_KEY;
+        if (gApiKey) {
+          const genAI = new GoogleGenerativeAI(gApiKey);
+          this.model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        }
       }
     } catch (err) {
-      console.warn("AI Service: Failed to initialize Gemini model. Falling back to rule-based.", err.message);
+      console.warn("AI Service: Failed to initialize Claude or Gemini. Falling back to rule-based.", err.message);
     } finally {
       this.initialized = true;
     }
+  }
+
+  /**
+   * Fetch live MongoDB data for context injection
+   * This pulls real-time data from the maintenance database
+   */
+  async getMaintenanceContext(companyId = null, includeStatuses = null) {
+    try {
+      const { PrismaClient } = require("@prisma/client");
+      const prisma = new PrismaClient();
+
+      // Default statuses if not specified - includes all statuses for comprehensive data
+      const statusFilter = includeStatuses || ['OPEN', 'IN_PROGRESS', 'PENDING', 'COMPLETED', 'ON_HOLD', 'open', 'in progress', 'in_progress', 'pending', 'completed', 'on hold', 'on_hold'];
+      console.log('📡 [DB Query] Fetching with:', { statusFilter, companyId });
+
+      // Fetch work orders with flexible status filtering - try uppercase and lowercase variations
+      const workOrders = await prisma.issue.findMany({
+        where: {
+          ...(companyId && { companyId })
+          // Note: Removed status filter temporarily to debug
+        },
+        select: {
+          _id: true,
+          title: true,
+          assetName: true,
+          priority: true,
+          status: true,
+          assignedTo: true,
+          createdAt: true,
+          dueDate: true,
+          completedDate: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50  // Fetch more to see what we have
+      });
+
+      console.log('✅ [DB Query] ALL Work Orders Found:', workOrders.length, 'records');
+      
+      // Get distinct statuses to see what values exist
+      const distinctStatuses = [...new Set(workOrders.map(w => w.status))];
+      console.log('📊 [DB Query] Distinct statuses in DB:', distinctStatuses);
+      
+      // Now filter if needed
+      let filteredOrders = workOrders;
+      if (includeStatuses && includeStatuses.length > 0) {
+        filteredOrders = workOrders.filter(wo => {
+          const woStatus = String(wo.status || '').trim().toLowerCase();
+          return includeStatuses.some(s => {
+            const filterStatus = String(s || '').trim().toLowerCase();
+            return woStatus === filterStatus || filterStatus.includes(woStatus) || woStatus.includes(filterStatus);
+          });
+        });
+        console.log('🔍 [DB Query] After filtering:', filteredOrders.length, 'records');
+      }
+
+      // Fetch active assets
+      const assets = await prisma.asset.findMany({
+        where: {
+          status: { $ne: 'DECOMMISSIONED' },
+          ...(companyId && { companyId })
+        },
+        select: {
+          _id: true,
+          name: true,
+          type: true,
+          location: true,
+          condition: true,
+          lastMaintenanceDate: true,
+        },
+        take: 20
+      });
+
+      // Fetch low stock spare parts
+      const spareParts = await prisma.sparePart.findMany({
+        where: {
+          quantity: { lt: 10 }, // Assuming 10 as a threshold if not specified
+          ...(companyId && { companyId })
+        },
+        select: {
+          id: true,
+          name: true,
+          quantity: true,
+          lowStockThreshold: true,
+          unitCost: true,
+        },
+        take: 10
+      });
+
+      // Fetch high-priority unresolved issues
+      const highPriorityIssues = await prisma.issue.findMany({
+        where: {
+          priority: 'HIGH',
+          status: { $ne: 'COMPLETED' },
+          ...(companyId && { companyId })
+        },
+        select: {
+          _id: true,
+          title: true,
+          status: true,
+          createdAt: true,
+        },
+        take: 5
+      });
+
+      // Fetch technician availability
+      const technicians = await prisma.internalTechnician.findMany({
+        where: {
+          status: 'ACTIVE',
+          ...(companyId && { companyId })
+        },
+        select: {
+          _id: true,
+          firstName: true,
+          lastName: true,
+          specializations: true,
+          currentWorkload: true,
+        },
+        take: 10
+      });
+
+      await prisma.$disconnect();
+
+      return {
+        workOrders: filteredOrders || [],
+        assets: assets || [],
+        spareParts: spareParts || [],
+        highPriorityIssues: highPriorityIssues || [],
+        technicians: technicians || [],
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error("Error fetching maintenance context:", error.message);
+      return {
+        workOrders: [],
+        assets: [],
+        spareParts: [],
+        highPriorityIssues: [],
+        technicians: [],
+        timestamp: new Date().toISOString(),
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Build system prompt with injected live data
+   */
+  buildSystemPromptWithContext(userRole = 'technician', liveData = {}) {
+    const rolePrompts = {
+      technician: `You are KAT, an intelligent maintenance assistant helping a field technician.
+Your role is to provide practical guidance on maintenance tasks, troubleshooting, and safety.
+Only answer questions about maintenance operations, equipment faults, work orders, spare parts, and safety.`,
+
+      manager: `You are KAT, an intelligent maintenance assistant helping a facility manager.
+Your role is to provide strategic guidance on scheduling, resource allocation, and performance optimization.
+Answer questions about work order management, scheduling, inventory, team performance, and KPIs.`,
+
+      coordinator: `You are KAT, an intelligent maintenance assistant helping a maintenance coordinator.
+Your role is to help with dispatch, scheduling, and coordination tasks.`
+    };
+
+    const basePrompt = rolePrompts[userRole] || rolePrompts.technician;
+
+    const contextString = `
+
+=== LIVE MAINTENANCE DATABASE CONTEXT (as of ${liveData.timestamp || new Date().toISOString()}) ===
+
+OPEN WORK ORDERS (${liveData.workOrders?.length || 0}):
+${(liveData.workOrders || []).map(w => 
+  `- [${w.priority}] ${w.title} | Asset: ${w.assetName} | Status: ${w.status} | Assigned: ${w.assignedTo || 'Unassigned'} | Due: ${w.dueDate ? new Date(w.dueDate).toLocaleDateString() : 'N/A'}`
+).join('\n') || '- None'}
+
+ACTIVE ASSETS (${liveData.assets?.length || 0}):
+${(liveData.assets || []).slice(0, 10).map(a =>
+  `- ${a.name} (${a.type}) | Location: ${a.location} | Condition: ${a.condition} | Last Maintenance: ${a.lastMaintenanceDate ? new Date(a.lastMaintenanceDate).toLocaleDateString() : 'Never'}`
+).join('\n') || '- None'}
+
+LOW STOCK SPARE PARTS (${liveData.spareParts?.length || 0}):
+${(liveData.spareParts || []).map(p =>
+  `- ${p.name} | In Stock: ${p.quantity}/${p.minimumQuantity} | Unit Cost: $${p.unitCost || 0}`
+).join('\n') || '- None'}
+
+HIGH-PRIORITY UNRESOLVED ISSUES (${liveData.highPriorityIssues?.length || 0}):
+${(liveData.highPriorityIssues || []).map(i =>
+  `- ${i.title} | Status: ${i.status} | Created: ${new Date(i.createdAt).toLocaleDateString()}`
+).join('\n') || '- None'}
+
+AVAILABLE TECHNICIANS (${liveData.technicians?.length || 0}):
+${(liveData.technicians || []).map(t =>
+  `- ${t.firstName} ${t.lastName} | Skills: ${(t.specializations || []).join(', ') || 'General'} | Workload: ${t.currentWorkload || 0} tasks`
+).join('\n') || '- None'}
+
+=== END OF LIVE DATA ===
+
+INSTRUCTIONS:
+1. Use the live data above to provide accurate, context-aware answers
+2. When asked "what to fix first", prioritize HIGH-priority issues
+3. When assigning work, consider technician skills and current workload
+4. Always mention if spare parts are low in stock
+5. Be conversational but precise
+6. If data is empty or unclear, acknowledge the limitation
+7. Keep responses concise and actionable`;
+
+    return basePrompt + contextString;
   }
 
   predictMaintenance(assetData = {}) {
@@ -197,28 +413,126 @@ class AIService {
     return "general_question";
   }
 
+  /**
+   * Fuzzy match function - handles typos and variations
+   * Returns true if the keyword is similar enough to any status
+   */
+  fuzzyMatch(text, matchAgainst) {
+    const t = normalizeText(text);
+    const m = normalizeText(matchAgainst);
+    
+    // Exact match
+    if (t === m) return true;
+    
+    // Contains match
+    if (m.includes(t) || t.includes(m)) return true;
+    
+    // Levenshtein-like: check if 80% of characters match
+    const maxLen = Math.max(t.length, m.length);
+    const minLen = Math.min(t.length, m.length);
+    if (minLen / maxLen >= 0.8) return true;
+    
+    return false;
+  }
+
   extractEntities(query) {
     const q = normalizeText(query);
+    
+    // Status mappings with semantic variations
+    const statusMappings = {
+      'COMPLETED': ['completed', 'finished', 'done', 'closed', 'resolved', 'finish', 'complete', 'finish up'],
+      'OPEN': ['pending', 'waiting', 'new', 'open', 'unassigned', 'openned'],
+      'PENDING': ['pending', 'waiting', 'upcoming', 'pend'],
+      'IN_PROGRESS': ['in progress', 'inprogress', 'in-progress', 'ongoing', 'working', 'active', 'progress', 'in work', 'inwork'],
+      'ON_HOLD': ['hold', 'on hold', 'suspended', 'paused', 'pause', 'hold up'],
+      'CANCELLED': ['cancelled', 'canceled', 'rejected', 'denied', 'cancel', 'reject'],
+    };
+    
+    // Extract status keywords - returns an array of applicable statuses
+    const statuses = [];
+    
+    // Check each status mapping
+    for (const [status, keywords] of Object.entries(statusMappings)) {
+      for (const keyword of keywords) {
+        if (this.fuzzyMatch(q, keyword)) {
+          statuses.push(status);
+          break; // Found this status, move to next status
+        }
+      }
+    }
+    
+    // Check for priority-based statuses (urgent = OPEN + IN_PROGRESS)
+    if (this.fuzzyMatch(q, 'urgent') || this.fuzzyMatch(q, 'high priority')) {
+      if (!statuses.includes('OPEN')) statuses.push('OPEN');
+      if (!statuses.includes('IN_PROGRESS')) statuses.push('IN_PROGRESS');
+    }
+    
     return {
-      status: /\bpending\b/.test(q) ? 'OPEN' : /\bcompleted\b/.test(q) ? 'COMPLETED' : /\burgent\b|\bhigh priority\b/.test(q) ? 'URGENT' : null,
-      propertyName: q.match(/\bin\s+([a-zA-Z0-9\s]+)\b/)?.[1] || null
+      statuses: statuses.length > 0 ? [...new Set(statuses)] : null,  // Return unique statuses or null for all
+      propertyName: q.match(/\bin\s+([a-zA-Z0-9\s]+)\b/)?.[1] || null,
+      priority: (this.fuzzyMatch(q, 'high priority') || this.fuzzyMatch(q, 'urgent')) ? 'HIGH' 
+                : this.fuzzyMatch(q, 'low priority') ? 'LOW' : null
     };
   }
 
-  async chat(question = '', history = [], analyticsSummary = null) {
+  async chat(question = '', history = [], analyticsSummary = null, userRole = 'technician', companyId = null) {
     await this.init();
     const q = normalizeText(question);
 
-    // Fallback logic if Gemini is not configured
+    // Fallback to rule-based if neither Claude nor Gemini is available
     const fallback = () => this.ruleBasedChat(question, analyticsSummary);
 
-    if (!this.model) return fallback();
-
     try {
-      const intent = this.detectIntent(q);
+      // Extract entities to determine data filtering (especially status)
       const entities = this.extractEntities(q);
+      console.log('🔍 [AI] Extracted Entities:', { question, entities });
+      
+      // Fetch live data from MongoDB with smart status filtering
+      const liveData = await this.getMaintenanceContext(companyId, entities.statuses);
+      console.log('📊 [AI] Live Data Fetched:', {
+        workOrdersCount: liveData.workOrders?.length || 0,
+        assetsCount: liveData.assets?.length || 0,
+        techniciansCount: liveData.technicians?.length || 0,
+        spareParts: liveData.spareParts?.length || 0,
+        statuses: entities.statuses,
+        sample: liveData.workOrders?.[0] // Log first work order as sample
+      });
 
-      const prompt = `
+      // If Claude is available, use it with injected context
+      if (this.claudeClient) {
+        const systemPrompt = this.buildSystemPromptWithContext(userRole, liveData);
+
+        const messages = [
+          ...history.map(m => ({
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content: m.content
+          })),
+          { role: 'user', content: question }
+        ];
+
+        try {
+          console.log('🤖 [Claude] Sending request with', liveData.workOrders?.length || 0, 'work orders');
+          const response = await this.claudeClient.messages.create({
+            model: 'claude-3-5-sonnet-20241022',
+            max_tokens: 1024,
+            system: systemPrompt,
+            messages: messages
+          });
+
+          const result = response.content[0].type === 'text' ? response.content[0].text : 'Unable to generate response';
+          console.log('✅ [Claude] Response generated successfully');
+          return result;
+        } catch (error) {
+          console.error("❌ [Claude] API Error:", error.message);
+          // Fall through to Gemini or rule-based
+        }
+      }
+
+      // Fall back to Gemini if Claude is not available but Gemini is
+      if (this.model) {
+        const intent = this.detectIntent(q);
+
+        const prompt = `
 You are KAT, an intelligent maintenance AI assistant for the FixNest platform.
 Your goal is to provide clear, data-driven answers to maintenance queries.
 
@@ -226,13 +540,16 @@ User Question: "${question}"
 Detected Intent: ${intent}
 Extracted Entities: ${JSON.stringify(entities)}
 
-SYSTEM DATA CONTEXT (Current Company Analytics):
+LIVE MAINTENANCE DATA:
+${JSON.stringify(liveData, null, 2)}
+
+HISTORICAL ANALYTICS:
 ${JSON.stringify(analyticsSummary, null, 2)}
 
 INSTRUCTIONS:
-1. Use the system data to answer the question specifically.
+1. Use both live and historical data to answer the question specifically.
 2. Be professional, direct, and helpful.
-3. If the user asks for "what to fix first", prioritize SLA breaches and High Priority issues mentioned in the data.
+3. If the user asks for "what to fix first", prioritize HIGH-priority issues from live data.
 4. If you don't have enough data to answer specifically, explain what is missing.
 5. Keep your response concise (max 3-4 paragraphs).
 
@@ -241,11 +558,15 @@ ${history.map(m => `${m.role === 'user' ? 'User' : 'KAT'}: ${m.content}`).join('
 
 Response:`;
 
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      return response.text().trim();
+        const result = await this.model.generateContent(prompt);
+        const response = await result.response;
+        return response.text().trim();
+      }
+
+      // Fall back to rule-based
+      return fallback();
     } catch (error) {
-      console.error("Gemini Chat Error:", error);
+      console.error("Chat Error:", error.message);
       return fallback();
     }
   }

@@ -357,6 +357,31 @@ templates.operationalSummaryReport = (data) => {
 // Email service methods will be exported below via module.exports = { ... }
 
 module.exports = {
+  /**
+   * Generic sendEmail method - flexible for any email need
+   */
+  async sendEmail({ to, subject, html, text } = {}) {
+    try {
+      if (!to) throw new Error('Recipient email (to) is required');
+      if (!subject) throw new Error('Email subject is required');
+      if (!html && !text) throw new Error('Email body (html or text) is required');
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to,
+        subject,
+        html: html || undefined,
+        text: text || undefined,
+      });
+
+      console.log(`✅ Email sent to ${to}`);
+      return { success: true, message: `Email sent to ${to}` };
+    } catch (error) {
+      console.error('Error sending email:', error.message);
+      throw error;
+    }
+  },
+
   async sendMeterTriggerCreatedNotification({ companyName, trigger, meter, actor }) {
     try {
       const recipients = await this.getAdminManagerEmails(companyName);

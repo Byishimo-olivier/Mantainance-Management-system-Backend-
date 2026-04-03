@@ -999,8 +999,12 @@ class AIController {
                 }
             }
 
-            // Call the AI Service (Gemini pipeline) with whatever context we gathered
-            const response = await aiService.chat(message, sanitizedHistory, analyticsSummary);
+            // Get user context for personalized AI response
+            const userRole = req.user?.role || 'technician';
+            const companyId = req.user?.companyId || null;
+
+            // Call the AI Service (Claude > Gemini pipeline) with full context
+            const response = await aiService.chat(message, sanitizedHistory, analyticsSummary, userRole, companyId);
             res.json({ response });
         } catch (error) {
             console.error("AI Controller Error (Chat Overall):", error);

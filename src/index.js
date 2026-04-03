@@ -36,6 +36,8 @@ const auditLogRoutes = require('./modules/auditLog/auditLog.routes');
 const systemSettingsRoutes = require('./modules/systemSettings/systemSettings.routes');
 const requestSettingsRoutes = require('./modules/requestSettings/requestSettings.routes');
 const analyticsPreferenceRoutes = require('./modules/analyticsPreference/analyticsPreference.routes');
+const dailyReportRoutes = require('./modules/reports/dailyReport.routes');
+const dailyReportService = require('./modules/reports/dailyReport.service');
 const systemSettingsService = require('./modules/systemSettings/systemSettings.service');
 const paymentService = require('./modules/subscription/payment.service');
 const { startMonthlyReportScheduler } = require('./modules/report/monthlyReport.service');
@@ -92,6 +94,10 @@ mongoose.connect(process.env.DATABASE_URL)
 
 mongoose.connection.once('open', () => {
   startMonthlyReportScheduler();
+  const { PrismaClient } = require('@prisma/client');
+  const prisma = new PrismaClient();
+  dailyReportService.setPrismaClient(prisma);
+  dailyReportService.initializeScheduler();
   ensureSuperadmin().catch((err) => {
     console.error('[bootstrap] Failed to ensure superadmin:', err);
   });
@@ -175,6 +181,7 @@ app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
 app.use('/api/request-settings', requestSettingsRoutes);
 app.use('/api/analytics-preferences', analyticsPreferenceRoutes);
+app.use('/api/reports', dailyReportRoutes);
 
 const PORT = process.env.PORT || 5000;
 
