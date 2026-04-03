@@ -945,12 +945,10 @@ class AIController {
                 return res.status(400).json({ message: "Message is required" });
             }
 
-            const companyName = await resolveCompanyName(req);
-            if (!companyName) {
-                return res.status(401).json({ message: "Login is required so I can answer from your company's maintenance data." });
-            }
-
-            const sanitizedHistory = (Array.isArray(history) ? history : [])
+            // Resolve company name to see if we can provide personalized data
+            const companyName = await resolveCompanyName(req).catch(() => null);
+            
+            let sanitizedHistory = (Array.isArray(history) ? history : [])
                 .filter((entry) => entry && typeof entry.content === 'string' && entry.content.trim().length > 0)
                 .map((entry) => ({
                     role: entry.role === 'user' ? 'user' : 'model',
@@ -958,40 +956,58 @@ class AIController {
                 }))
                 .filter((entry, index) => !(index === 0 && entry.role !== 'user'));
 
-            const scopedData = await getCompanyScopedData(companyName);
-            const { issues, properties, assets, technicians, companyUsers, userIds, propertyIds } = scopedData;
+            let analyticsSummary = null;
+            let scopedData = null;
 
-            const requestedEntity = detectTableEntity(message);
-            if (requestedEntity) {
-                const tableResponse = await buildTableResponse(requestedEntity, {
-                    issues,
-                    properties,
-                    assets,
-                    technicians,
-                    companyUsers,
-                    companyName,
-                    userIds,
-                    propertyIds,
-                });
-                if (tableResponse) {
-                    return res.json({ response: tableResponse });
+            // Only attempt data retrieval if we have a company context (logged-in user)
+            if (companyName) {
+                try {
+                    scopedData = await getCompanyScopedData(companyName);
+                    if (scopedData) {
+                        const { issues, properties, assets, technicians, companyUsers, userIds, propertyIds } = scopedData;
+
+                        // Check for table entity request first (UI efficiency)
+                        const requestedEntity = detectTableEntity(message);
+                        if (requestedEntity) {
+                            const tableResponse = await buildTableResponse(requestedEntity, {
+                                issues,
+                                properties,
+                                assets,
+                                technicians,
+                                companyUsers,
+                                companyName,
+                                userIds,
+                                propertyIds,
+                            });
+                            if (tableResponse) {
+                                return res.json({ response: tableResponse });
+                            }
+                        }
+
+                        // Build the analytics context for Gemini
+                        analyticsSummary = buildMaintenanceAnalytics({
+                            issues,
+                            properties,
+                            assets,
+                            technicians,
+                            companyUsers,
+                            companyName
+                        });
+                    }
+                } catch (dataErr) {
+                    console.error("AI Controller: Skipping specialized context due to error", dataErr.message);
                 }
             }
 
-            const analyticsSummary = buildMaintenanceAnalytics({
-                issues,
-                properties,
-                assets,
-                technicians,
-                companyUsers,
-                companyName
-            });
-
+            // Call the AI Service (Gemini pipeline) with whatever context we gathered
             const response = await aiService.chat(message, sanitizedHistory, analyticsSummary);
             res.json({ response });
         } catch (error) {
-            console.error("AI Controller Error (Chat):", error);
-            res.status(500).json({ message: error.message });
+            console.error("AI Controller Error (Chat Overall):", error);
+            res.status(500).json({ 
+                message: "I encountered an error while processing your request. Please try again.",
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            });
         }
     }
 }

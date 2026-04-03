@@ -1,6 +1,6 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 const userRoutes = require('./modules/user/user.routes.js');
 const authRoutes = require('./modules/auth/auth.routes.js');
@@ -41,8 +41,6 @@ const paymentService = require('./modules/subscription/payment.service');
 const { startMonthlyReportScheduler } = require('./modules/report/monthlyReport.service');
 const { ensureSuperadmin } = require('./bootstrap/superadmin');
 const { auditRequests } = require('./middleware/audit');
-
-dotenv.config();
 
 const app = express();
 
