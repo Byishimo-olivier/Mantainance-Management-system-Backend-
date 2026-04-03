@@ -1,6 +1,10 @@
 const express = require('express');
 const {
   registerUser,
+  activateAccount,
+  completeActivation,
+  resendActivationEmail,
+  adminActivateUser,
   getPublicRequestContext,
   listUsers,
   listClientsAndRequestors,
@@ -23,6 +27,13 @@ router.post('/register', upload.fields([
   { name: 'branchEvidenceTwoFile', maxCount: 1 },
   { name: 'branchImages', maxCount: 10 }
 ]), registerUser);
+
+// Activation endpoints
+router.get('/activate/:token', activateAccount);
+router.post('/complete-activation', completeActivation);
+router.post('/resend-activation', resendActivationEmail);
+router.post('/admin/activate', authenticate, authorizeRoles('superadmin', 'admin'), adminActivateUser);
+
 router.get('/public-request-link/:companySlug', getPublicRequestContext);
 // List users in the same company (companyName is taken from the JWT)
 router.get('/', authenticate, authorizeRoles('admin', 'manager', 'client'), listUsers);

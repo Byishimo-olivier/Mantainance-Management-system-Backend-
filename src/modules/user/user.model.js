@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['superadmin', 'admin', 'manager', 'technician', 'client', 'requestor', 'staff'], required: true },
   accessLevel: { type: String, enum: ['full', 'limited'], default: 'full' },
   status: { type: String, default: 'active' },
+  isActive: { type: Boolean, default: true }, // Account activation status (users active by default)
+  activationToken: { type: String }, // Token for activation link
+  activationTokenExpires: { type: Date }, // Token expiration (24 hours)
+  paymentPendingActivation: { type: Boolean, default: false }, // Waiting for payment before activation
   createdAt: { type: Date, default: Date.now },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date }

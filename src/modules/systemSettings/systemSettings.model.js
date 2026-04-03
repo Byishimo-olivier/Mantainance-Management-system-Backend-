@@ -30,7 +30,7 @@ const systemSettingsSchema = new mongoose.Schema({
     appName: { type: String, default: 'MMS' },
     supportEmail: { type: String, default: '' },
     maintenanceMode: { type: Boolean, default: false },
-    subscriptionCurrency: { type: String, default: 'RWF' },
+    subscriptionCurrency: { type: String, default: 'USD' },
   },
 }, { timestamps: true });
 

@@ -262,6 +262,35 @@ const login = async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
+  // Check if account is activated (only block if explicitly required payment)
+  if (!isTechnician && user.paymentPendingActivation === true && !user.isActive) {
+    await auditService.logEvent({
+      actorId: String(userId),
+      actorName: user.name,
+      actorEmail: user.email,
+      actorRole: role,
+      companyName,
+      action: 'auth.login_blocked_payment_pending',
+      entityType: 'auth',
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: 403,
+      success: false,
+      severity: 'warning',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: { reason: 'payment_pending', paymentPending: true }
+    });
+    
+    return res.status(403).json({ 
+      error: 'Payment required to activate account',
+      status: 'payment_pending',
+      message: 'Your account is pending payment. Please check your email for payment instructions.',
+      email: user.email,
+      requiresPayment: true
+    });
+  }
+
   // Optional company gate: if client passes companyName, ensure it matches stored record
   if (requestedCompany && companyName && requestedCompany.trim().toLowerCase() !== companyName.trim().toLowerCase()) {
     await handleFailedLogin({

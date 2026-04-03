@@ -1,0 +1,46 @@
+{
+  "clientName": "Thunder Client",
+  "dateExported": "2026-04-03T00:00:00.000Z",
+  "version": "1.1",
+  "folders": [],
+  "requests": [
+    {
+      "colId": "admin-activate-user",
+      "containerId": "",
+      "dateExported": "2026-04-03T00:00:00.000Z",
+      "dateModified": "2026-04-03T00:00:00.000Z",
+      "description": "Admin endpoint to directly activate an existing user (requires admin/superadmin auth)",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "key": "Authorization",
+          "value": "Bearer YOUR_AUTH_TOKEN_HERE",
+          "description": "Replace with your admin/superadmin JWT token from login"
+        }
+      ],
+      "method": "POST",
+      "modified": "2026-04-03T00:00:00.000Z",
+      "name": "Admin - Activate User",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/users/admin/activate",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "params": [
+          {
+            "key": "email",
+            "value": "byishimoolivier39@gmail.com",
+            "description": "Email of the user to activate"
+          }
+        ]
+      }
+    }
+  ]
+}

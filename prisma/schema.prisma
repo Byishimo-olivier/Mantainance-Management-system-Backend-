@@ -13,7 +13,7 @@ model Company {
   size                String?             // small, medium, large, enterprise
   
   // Subscription info
-  subscription        Subscription?       // Company-level subscription
+  subscriptions       Subscription[]      // All subscriptions for this company
   subscriptionStatus  String              @default("inactive") // inactive, trial, active, cancelled, suspended
   subscriptionPlan    String?             // basic, premium, professional, enterprise
   subscriptionStartDate DateTime?
@@ -339,8 +339,8 @@ model Subscription {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   
   // Company-level subscription (not individual user)
-  companyId        String   @unique @db.ObjectId
-  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId        String?  @db.ObjectId
+  company          Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
   
   // Subscription details
   propertyId       String?  @db.ObjectId

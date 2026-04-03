@@ -340,6 +340,43 @@ exports.processPesaPalCallback = async (callbackData) => {
     // If payment successful, update subscription and create invoice
     if (paymentStatus === 'completed') {
       await updateSubscriptionAfterPayment(payment.subscriptionId);
+
+      // ACTIVATE USER ACCOUNT if payment is for account activation
+      const User = require('../user/user.model.js');
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: payment.subscriptionId },
+      });
+
+      if (subscription && subscription.companyId) {
+        try {
+          // Find user with this company ID who is pending activation
+          const userToActivate = await User.findOne({
+            $or: [
+              { companyName: subscription.companyId },
+              { _id: subscription.companyId }
+            ],
+            paymentPendingActivation: true,
+            isActive: false
+          });
+
+          if (userToActivate) {
+            await User.findByIdAndUpdate(
+              userToActivate._id,
+              {
+                isActive: true,
+                paymentPendingActivation: false,
+                activationToken: null,
+                activationTokenExpires: null
+              },
+              { new: true }
+            );
+            console.log(`✅ User account activated for company: ${userToActivate.companyName}`);
+          }
+        } catch (err) {
+          console.error('Failed to activate user account after payment:', err.message);
+          // Don't fail the payment processing if activation fails
+        }
+      }
     }
 
     return updatedPayment;

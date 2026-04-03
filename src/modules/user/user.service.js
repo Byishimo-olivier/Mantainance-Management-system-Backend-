@@ -11,6 +11,7 @@ const slugifyCompanyName = (value) => String(value || '')
 const createUser = async (userData, options = {}) => {
   if (!userData || !userData.password) throw new Error('Password is required');
   const allowExistingCompany = options.allowExistingCompany === true;
+  const requirePaymentBeforeActivation = options.requirePaymentBeforeActivation === true;
 
   const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 10;
   const hashedPassword = await bcrypt.hash(userData.password, saltRounds);
@@ -75,6 +76,14 @@ const createUser = async (userData, options = {}) => {
     }
   }
 
+  // Generate activation token if payment is required
+  let activationToken = null;
+  let activationTokenExpires = null;
+  if (requirePaymentBeforeActivation) {
+    activationToken = require('crypto').randomBytes(32).toString('hex');
+    activationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  }
+
   const user = new User({
     ...userData,
     email: normalizedEmail,
@@ -90,13 +99,21 @@ const createUser = async (userData, options = {}) => {
     branchImages: companyType === 'branch' ? branchImages : [],
     password: hashedPassword,
     role,
-    accessLevel
+    accessLevel,
+    isActive: !requirePaymentBeforeActivation, // Set to false if payment required
+    activationToken: activationToken,
+    activationTokenExpires: activationTokenExpires,
+    paymentPendingActivation: requirePaymentBeforeActivation
   });
 
   const saved = await user.save();
   const userObj = saved.toObject ? saved.toObject() : saved;
   if (userObj && userObj.password) delete userObj.password;
-  return userObj;
+  if (userObj && userObj.activationToken) delete userObj.activationToken; // Don't return token in response
+  return {
+    ...userObj,
+    _activationToken: activationToken // Return only for email sending
+  };
 };
 
 const findUserByEmail = async (email) => {

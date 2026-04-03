@@ -1,0 +1,40 @@
+{
+  "clientName": "Thunder Client",
+  "dateExported": "2026-04-03T00:00:00.000Z",
+  "version": "1.1",
+  "folders": [],
+  "requests": [
+    {
+      "colId": "resend-activation",
+      "containerId": "",
+      "dateExported": "2026-04-03T00:00:00.000Z",
+      "dateModified": "2026-04-03T00:00:00.000Z",
+      "description": "Resend activation email to account",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "method": "POST",
+      "modified": "2026-04-03T00:00:00.000Z",
+      "name": "Resend Activation Email",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/users/resend-activation",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "params": [
+          {
+            "key": "email",
+            "value": "byishimoolivier39@gmail.com"
+          }
+        ]
+      }
+    }
+  ]
+}

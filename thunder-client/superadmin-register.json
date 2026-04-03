@@ -1,10 +1,15 @@
 {
   "name": "System Super Admin",
-  "email": "superadmin-test@example.com",
-  "phone": "+250788000000",
-  "password": "SuperAdmin@123",
+  "email": "sinbing8@gmail.com",
+  "phone": "+250788000001",
+  "password": "123456",
   "role": "SUPERADMIN",
   "accessLevel": "full",
-  "companyName": "SYSTEM-THUNDER-TEST",
+  "companyName": "Mbambi Group",
   "companyType": "main"
 }
+
+
+
+
+

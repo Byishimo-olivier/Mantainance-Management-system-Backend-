@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { createUser, findUserByEmail, getAllUsers, getUsersByRoles, findCompanyBySlug, slugifyCompanyName } = require('./user.service.js');
+const emailService = require('../emailService/email.service.js');
 const UserInvite = require('./userInvite.model.js');
 const User = require('./user.model.js');
 
@@ -57,10 +58,232 @@ exports.registerUser = async (req, res) => {
       payload.branchImages = req.files.branchImages.map((file) => `/uploads/${file.filename}`);
     }
 
-    const user = await createUser(payload);
-    res.status(201).json(user);
+    // Auto-activate user on signup (no payment required)
+    const user = await createUser(payload, { requirePaymentBeforeActivation: false });
+    
+    // Send welcome email to new user
+    if (user.email) {
+      try {
+        await emailService.sendAccountWelcomeEmail({
+          to: user.email,
+          name: user.name || user.companyName,
+          email: user.email,
+          companyName: user.companyName,
+          role: user.role
+        });
+      } catch (err) {
+        console.error('Failed to send welcome email:', err.message);
+        // Don't fail the registration if email fails
+      }
+    }
+
+    // Return success message
+    res.status(201).json({
+      message: 'Account created successfully! Your account is active and ready to use. Check your email for a welcome message.',
+      email: user.email,
+      status: 'account_created',
+      user: {
+        _id: user._id,
+        id: String(user._id),
+        name: user.name,
+        email: user.email,
+        companyName: user.companyName,
+        role: user.role,
+        isActive: user.isActive
+      }
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+};
+
+exports.activateAccount = async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    if (!token) {
+      return res.status(400).json({ error: 'Activation token is required' });
+    }
+
+    // Find user with matching activation token and ensure it hasn't expired
+    const user = await User.findOne({
+      activationToken: token,
+      activationTokenExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        error: 'Invalid or expired activation token. Please sign up again to receive a new activation link.' 
+      });
+    }
+
+    // Return activation details for frontend to proceed with payment
+    const SettingsModel = require('../settings/settings.model');
+    let settings = { pricing: {} };
+    try {
+      settings = await SettingsModel.findOne({}) || { pricing: {} };
+    } catch (e) {
+      console.warn('Could not load settings for pricing');
+    }
+
+    const plan = user.plan || 'basic';
+    const billingCycle = user.billingCycle || 'monthly';
+    const planPrice = settings.pricing?.[plan]?.[billingCycle];
+
+    res.status(200).json({
+      message: 'Activation token verified. Ready to proceed with payment.',
+      status: 'token_verified',
+      userId: user._id,
+      email: user.email,
+      plan: plan,
+      billingCycle: billingCycle,
+      price: planPrice?.price || 'Contact Admin',
+      currency: planPrice?.currency || 'USD',
+      activationToken: token
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error verifying activation token: ' + err.message });
+  }
+};
+
+exports.completeActivation = async (req, res) => {
+  try {
+    const { activationToken, userId } = req.body;
+
+    if (!activationToken || !userId) {
+      return res.status(400).json({ error: 'Activation token and user ID are required' });
+    }
+
+    // Find and activate the user
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        isActive: true,
+        paymentPendingActivation: false,
+        activationToken: null,
+        activationTokenExpires: null
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.status(200).json({
+      message: 'Account activated successfully! You can now log in.',
+      status: 'activated',
+      email: user.email
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error activating account: ' + err.message });
+  }
+};
+
+/**
+ * Resend activation email to an unactivated account
+ * POST /api/users/resend-activation
+ * Body: { email: string }
+ */
+exports.resendActivationEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: 'Valid email address is required' });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.isActive) {
+      return res.status(400).json({ error: 'This account is already activated' });
+    }
+
+    // Generate new activation token (24 hours validity)
+    const activationToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // Update user with new token
+    await User.findByIdAndUpdate(user._id, {
+      activationToken,
+      activationTokenExpires: tokenExpires
+    });
+
+    // Generate activation link
+    const activationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/activate/${activationToken}`;
+
+    // Send activation email
+    await emailService.sendActivationEmail({
+      to: user.email,
+      userName: user.name || user.companyName,
+      activationLink,
+      plan: 'Basic', // Default plan
+      price: '0', // Will be set during payment
+      billingCycle: 'monthly'
+    });
+
+    res.status(200).json({
+      message: 'Activation email has been resent successfully',
+      email: user.email,
+      status: 'email_sent'
+    });
+  } catch (err) {
+    console.error('Error resending activation email:', err.message);
+    res.status(500).json({ error: 'Error resending activation email: ' + err.message });
+  }
+};
+
+/**
+ * Admin endpoint to directly activate a user (for development/testing)
+ * POST /api/users/admin/activate
+ * Body: { email: string }
+ * Auth: Requires superadmin or admin role
+ */
+exports.adminActivateUser = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: 'Valid email address is required' });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found with email: ' + email });
+    }
+
+    if (user.isActive) {
+      return res.status(400).json({ error: 'This account is already activated' });
+    }
+
+    // Activate the user directly
+    const updatedUser = await User.findByIdAndUpdate(
+      user._id,
+      {
+        isActive: true,
+        paymentPendingActivation: false,
+        activationToken: null,
+        activationTokenExpires: null
+      },
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: 'User account activated successfully by admin',
+      email: updatedUser.email,
+      name: updatedUser.name,
+      status: 'activated'
+    });
+  } catch (err) {
+    console.error('Error activating user:', err.message);
+    res.status(500).json({ error: 'Error activating user: ' + err.message });
   }
 };
 

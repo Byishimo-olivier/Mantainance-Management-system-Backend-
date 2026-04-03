@@ -235,6 +235,43 @@ const templates = {
       </div>
     `
   }),
+  accountWelcome: (data) => ({
+    subject: `Welcome to MMS - Your Account is Ready!`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111827;">
+        <h2 style="color: #2563eb;">Welcome to the Maintenance Management System</h2>
+        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <p>Hi ${data.name || 'there'},</p>
+          <p>Thank you for signing up with us! Your account has been created and is ready to use.</p>
+          
+          <h3 style="color: #1f2937; margin-top: 20px;">Your Account Details</h3>
+          <div style="background: #e0e7ff; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #2563eb;">
+            <p style="margin: 8px 0;"><strong>Email:</strong> ${data.email}</p>
+            ${data.companyName ? `<p style="margin: 8px 0;"><strong>Company:</strong> ${data.companyName}</p>` : ''}
+            ${data.role ? `<p style="margin: 8px 0;"><strong>Role:</strong> ${data.role}</p>` : ''}
+          </div>
+
+          <h3 style="color: #1f2937; margin-top: 20px;">What's Next?</h3>
+          <ol style="line-height: 1.8; color: #374151;">
+            <li><strong>Log in</strong> to your dashboard using your email and password</li>
+            <li><strong>Complete your profile</strong> with additional information if needed</li>
+            <li><strong>Start managing maintenance</strong> requests and issues</li>
+          </ol>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/login" style="background: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+              Go to Dashboard
+            </a>
+          </div>
+        </div>
+
+        <p style="color: #6b7280; font-size: 14px; margin-top: 20px;">
+          <strong>Need help?</strong> Check our <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/help" style="color: #2563eb;">Help Center</a> or contact our support team.
+        </p>
+      </div>
+    `
+  }),
+
   technicianWelcome: (data) => ({
     subject: `Welcome to MMS: Your Technician Account is Ready`,
     html: `
@@ -510,6 +547,42 @@ module.exports = {
     } catch (err) {
       console.error('Error sending technician invite email:', err);
       throw err;
+    }
+  },
+
+  async sendAccountWelcomeEmail({ to, name, email, companyName, role }) {
+    try {
+      if (!to) throw new Error('Recipient email is required');
+
+      const roleLabel = {
+        superadmin: 'Super Admin',
+        admin: 'Administrator',
+        manager: 'Administrator',
+        technician: 'Technician',
+        client: 'Client',
+        requestor: 'Requester',
+        staff: 'Staff'
+      }[role] || role;
+
+      const template = templates.accountWelcome({
+        name: name || companyName || 'there',
+        email,
+        companyName,
+        role: roleLabel
+      });
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to,
+        subject: template.subject,
+        html: template.html,
+      });
+
+      console.log(`✅ Welcome email sent to ${to}`);
+      return { success: true, message: `Welcome email sent to ${to}` };
+    } catch (error) {
+      console.error('Error sending welcome email:', error.message);
+      throw error;
     }
   },
 
@@ -998,6 +1071,74 @@ module.exports = {
       });
     } catch (error) {
       console.error('Error sending account locked notice:', error);
+    }
+  },
+
+  /**
+   * Send account activation email with payment instructions
+   * Required: to (email), userName, activationLink, plan, price, billingCycle
+   */
+  async sendActivationEmail({ to, userName, activationLink, plan, price, billingCycle }) {
+    try {
+      if (!to) throw new Error('Recipient email is required');
+      if (!activationLink) throw new Error('Activation link is required');
+
+      const subject = `Activate Your Account & Complete Payment`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111827;">
+          <h2 style="color: #2563eb;">Welcome! Activate Your Account</h2>
+          <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p>Hi ${userName || 'there'},</p>
+            <p>Thank you for signing up with us! To activate your account and access the Maintenance Management System, you need to complete the following steps:</p>
+            
+            <h3 style="color: #1f2937; margin-top: 20px;">Your Subscription Plan</h3>
+            <div style="background: #e0e7ff; padding: 15px; border-radius: 6px; margin: 15px 0;border-left: 4px solid #2563eb;">
+              <p style="margin: 8px 0;"><strong>Plan:</strong> ${plan}</p>
+              <p style="margin: 8px 0;"><strong>Price:</strong> ${price}</p>
+              <p style="margin: 8px 0;"><strong>Billing Cycle:</strong> ${billingCycle}</p>
+            </div>
+
+            <h3 style="color: #1f2937; margin-top: 20px;">Next Steps</h3>
+            <ol style="line-height: 1.8;">
+              <li><strong>Click the activation link below</strong> to begin the payment process</li>
+              <li><strong>Complete your payment</strong> using our secure payment gateway (PesaPal)</li>
+              <li><strong>Once payment is confirmed</strong>, your account will be fully activated</li>
+              <li><strong>Log in</strong> and start managing your maintenance</li>
+            </ol>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${activationLink}" style="background: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Activate Account & Pay Now
+              </a>
+            </div>
+
+            <p style="color: #6b7280; font-size: 14px;">
+              <strong>Important:</strong> This activation link will expire in 24 hours. If it expires, you can sign up again to receive a new activation link.
+            </p>
+          </div>
+
+          <div style="background: #fef3c7; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #f59e0b;">
+            <p style="margin: 0; color: #78350f;"><strong>💡 Tip:</strong> Have your company information ready. You'll need it during the payment process.</p>
+          </div>
+
+          <p style="color: #6b7280; font-size: 13px; margin-top: 30px;">
+            If you did not create this account or have any questions, please contact our support team immediately.
+          </p>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to,
+        subject,
+        html,
+      });
+
+      console.log(`✅ Activation email sent to ${to}`);
+      return { success: true, message: `Activation email sent to ${to}` };
+    } catch (error) {
+      console.error('Error sending activation email:', error.message);
+      throw error;
     }
   }
 }

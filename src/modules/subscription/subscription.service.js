@@ -29,13 +29,14 @@ exports.createSubscription = async (subscriptionData) => {
     const billingCycle = subscriptionData.billingCycle || 'monthly';
     const plan = subscriptionData.plan || 'basic';
     const propertyId = subscriptionData.metadata?.propertyId;
+    const companyId = subscriptionData.metadata?.companyId; // Extract company ID from metadata
 
     const amount = paymentService.calculateAmount(plan, billingCycle);
     const nextBillingDate = calculateNextBillingDate(billingCycle);
 
     const subscription = await prisma.subscription.create({
       data: {
-        clientId: subscriptionData.clientId, // Use the passed clientId (company or user)
+        companyId: companyId, // Link to company if available
         email: subscriptionData.email,
         plan,
         billingCycle,
@@ -51,7 +52,7 @@ exports.createSubscription = async (subscriptionData) => {
         propertyId,
         metadata: subscriptionData.metadata || {},
       },
-      include: { property: true },
+      include: { property: true, company: true },
     });
 
     return subscription;
@@ -119,12 +120,14 @@ exports.getAllSubscriptions = async (filters = {}) => {
   try {
     const subscriptions = await prisma.subscription.findMany({
       where: {
+        ...(filters.companyId && { companyId: filters.companyId }),
         ...(filters.status && { status: filters.status }),
         ...(filters.plan && { plan: filters.plan }),
         ...(filters.billingCycle && { billingCycle: filters.billingCycle }),
         ...(filters.paymentStatus && { paymentStatus: filters.paymentStatus }),
       },
       include: {
+        company: true,
         payments: { orderBy: { createdAt: 'desc' }, take: 5 },
         invoices: { orderBy: { createdAt: 'desc' }, take: 5 },
       },

@@ -55,6 +55,24 @@ const authenticate = (req, res, next) => {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = await hydrateAuthUser(decoded);
+      
+      // Check if user account is active (payment-activated)
+      if (req.user.userId) {
+        try {
+          const user = await User.findById(req.user.userId).select('isActive paymentPendingActivation');
+          if (user && !user.isActive) {
+            return res.status(403).json({ 
+              error: 'Account not activated',
+              status: 'account_not_activated',
+              message: 'Your account is pending activation. Please check your email for the activation link and complete payment.'
+            });
+          }
+        } catch (err) {
+          console.error('Error checking user activation status:', err);
+          // Continue even if check fails - don't block access on DB error
+        }
+      }
+      
       next();
     } catch (err) {
       res.status(401).json({ error: 'Invalid token' });
