@@ -63,8 +63,9 @@ exports.createSubscription = async (subscriptionData) => {
 // Get subscription by client ID
 exports.getSubscriptionByClientId = async (clientId) => {
   try {
+    // Note: clientId from route param, but Subscription model uses companyId
     const subscription = await prisma.subscription.findFirst({
-      where: { clientId },
+      where: { companyId: clientId },
       include: {
         payments: { orderBy: { createdAt: 'desc' } },
         invoices: { orderBy: { createdAt: 'desc' } },
