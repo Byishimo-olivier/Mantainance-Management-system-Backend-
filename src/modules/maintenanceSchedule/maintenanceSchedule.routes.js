@@ -11,7 +11,7 @@ const maintenanceUpload = upload.fields([
 
 router.post('/', authenticate, maintenanceUpload, controller.create);
 router.get('/technician/:id', authenticate, controller.getForTechnician);
-router.get('/', controller.getAll);
+router.get('/', authenticate, controller.getAll);
 router.get('/:id', controller.getById);
 router.post('/:id/dismiss', authenticate, controller.dismiss);
 router.post('/:id/snooze', authenticate, controller.snooze);

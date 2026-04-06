@@ -1,6 +1,6 @@
 const Part = require('./part.model');
 
-const buildPartPayload = (data = {}) => ({
+const buildPartPayload = (data = {}, companyName = '') => ({
   name: data.name,
   partNumber: data.partNumber || '',
   category: data.category || '',
@@ -18,6 +18,7 @@ const buildPartPayload = (data = {}) => ({
   minQtyThreshold: Number(data.minQtyThreshold || 0),
   maxQtyThreshold: Number(data.maxQtyThreshold || 0),
   assignedTo: Array.isArray(data.assignedTo) ? data.assignedTo : [],
+  companyName: data.companyName || companyName,
   inventoryLines: Array.isArray(data.inventoryLines) ? data.inventoryLines.map((line) => ({
     location: line.location || '',
     area: line.area || '',
@@ -32,7 +33,27 @@ const buildPartPayload = (data = {}) => ({
 module.exports = {
   async list(req, res) {
     try {
-      const items = await Part.find().sort({ createdAt: -1 });
+      let items = await Part.find().sort({ createdAt: -1 });
+      const user = req.user;
+      // If no user, return empty array for security
+      if (!user) {
+        console.warn('[Parts.list] No authenticated user. Returning empty array.');
+        return res.json([]);
+      }
+      // Check if user is admin/manager - they see all items
+      const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
+      if (!isAdmin) {
+        // Regular users only see items matching their company
+        if (!user.companyName) {
+          console.warn('[Parts.list] Regular user has no companyName. Returning empty array.');
+          return res.json([]);
+        }
+        const userCompanyName = String(user.companyName || '').toLowerCase().trim();
+        items = items.filter((item) => {
+          const itemCompany = String(item.companyName || item.company || '').toLowerCase().trim();
+          return itemCompany === userCompanyName;
+        });
+      }
       res.json(items || []);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -43,7 +64,8 @@ module.exports = {
     try {
       const data = req.body || {};
       if (!data.name) return res.status(400).json({ error: 'name is required' });
-      const created = await Part.create(buildPartPayload(data));
+      const companyName = req.user?.companyName || '';
+      const created = await Part.create(buildPartPayload(data, companyName));
       res.status(201).json(created);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -66,6 +88,7 @@ module.exports = {
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: 'items array is required' });
       }
+      const companyName = req.user?.companyName || '';
       const docs = items
         .filter(i => i && i.name)
         .map(i => ({
@@ -79,7 +102,8 @@ module.exports = {
           barcode: i.barcode || '',
           partNumber: i.partNumber || '',
           category: i.category || '',
-          description: i.description || ''
+          description: i.description || '',
+          companyName: i.companyName || companyName
         }));
       const created = await Part.insertMany(docs);
       res.status(201).json(created || []);
@@ -92,7 +116,8 @@ module.exports = {
     try {
       const data = req.body || {};
       if (!data.name) return res.status(400).json({ error: 'name is required' });
-      const updated = await Part.findByIdAndUpdate(req.params.id, buildPartPayload(data), { new: true, runValidators: true });
+      const companyName = req.user?.companyName || '';
+      const updated = await Part.findByIdAndUpdate(req.params.id, buildPartPayload(data, companyName), { new: true, runValidators: true });
       if (!updated) return res.status(404).json({ error: 'Not found' });
       res.json(updated);
     } catch (err) {

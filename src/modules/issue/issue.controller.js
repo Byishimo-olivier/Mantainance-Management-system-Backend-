@@ -819,11 +819,21 @@ exports.create = async (req, res) => {
     console.log('[CREATE ISSUE] Received data fields:', Object.keys(data).slice(0, 10));
 
     // Parse JSON fields sent as strings (tags, assignees)
-    if (typeof data.tags === 'string') data.tags = JSON.parse(data.tags);
-    if (typeof data.assignees === 'string') data.assignees = JSON.parse(data.assignees);
-    if (typeof data.checklist === 'string') data.checklist = JSON.parse(data.checklist);
-    if (typeof data.chat === 'string') data.chat = JSON.parse(data.chat);
-    if (typeof data.additionalResponsibleWorkers === 'string') data.additionalResponsibleWorkers = JSON.parse(data.additionalResponsibleWorkers);
+    if (typeof data.tags === 'string') {
+      try { data.tags = JSON.parse(data.tags); } catch (e) { data.tags = [data.tags]; }
+    }
+    if (typeof data.assignees === 'string') {
+      try { data.assignees = JSON.parse(data.assignees); } catch (e) { data.assignees = [data.assignees]; }
+    }
+    if (typeof data.checklist === 'string') {
+      try { data.checklist = JSON.parse(data.checklist); } catch (e) { /* keep as-is */ }
+    }
+    if (typeof data.chat === 'string') {
+      try { data.chat = JSON.parse(data.chat); } catch (e) { /* keep as-is */ }
+    }
+    if (typeof data.additionalResponsibleWorkers === 'string') {
+      try { data.additionalResponsibleWorkers = JSON.parse(data.additionalResponsibleWorkers); } catch (e) { data.additionalResponsibleWorkers = [data.additionalResponsibleWorkers]; }
+    }
     if (data.estimatedTime) data.estimatedTime = parseFloat(data.estimatedTime);
     if ('fixDeadline' in data) {
       const normalizedFixDeadline = normalizeDateInput(data.fixDeadline);

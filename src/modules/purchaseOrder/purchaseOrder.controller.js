@@ -45,7 +45,27 @@ const attachVendorInfo = async (doc) => {
 
 async function list(req, res) {
   try {
-    const orders = await PurchaseOrder.find().sort({ createdAt: -1 }).populate('vendorId').lean();
+    let orders = await PurchaseOrder.find().sort({ createdAt: -1 }).populate('vendorId').lean();
+    const user = req.user;
+    // If no user, return empty array for security
+    if (!user) {
+      console.warn('[PurchaseOrders.list] No authenticated user. Returning empty array.');
+      return res.json([]);
+    }
+    // Check if user is admin/manager - they see all items
+    const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
+    if (!isAdmin) {
+      // Regular users only see items matching their company
+      if (!user.companyName) {
+        console.warn('[PurchaseOrders.list] Regular user has no companyName. Returning empty array.');
+        return res.json([]);
+      }
+      const userCompanyName = String(user.companyName || '').toLowerCase().trim();
+      orders = orders.filter((order) => {
+        const orderCompany = String(order.companyName || order.company || '').toLowerCase().trim();
+        return orderCompany === userCompanyName;
+      });
+    }
     const enriched = orders.map(o => ({
       ...o,
       vendor: o.vendor || o.vendorId?.name || '',
@@ -80,6 +100,7 @@ async function create(req, res) {
       const v = await Vendor.findById(vendorId).lean();
       vendorName = v?.name || vendorName;
     }
+    const companyName = req.user?.companyName || '';
     const po = await PurchaseOrder.create({
       title: data.title || data.name || 'Purchase Order',
       poNumber: data.poNumber || data.number || generatePoNumber(),
@@ -109,6 +130,7 @@ async function create(req, res) {
         phone: data.shipping?.phone || ''
       },
       notes: data.notes || data.description || '',
+      companyName: data.companyName || companyName,
       createdBy: buildCreatedBy(req, data)
     });
     const enriched = await attachVendorInfo(po);
@@ -167,6 +189,8 @@ async function update(req, res) {
       phone: data.shipping?.phone ?? existing.shipping?.phone ?? ''
     };
     existing.notes = data.notes || data.description || existing.notes;
+    // Preserve companyName - don't allow clients to change it
+    existing.companyName = existing.companyName || req.user?.companyName || '';
     if (data.createdBy) existing.createdBy = data.createdBy;
 
     await existing.save();

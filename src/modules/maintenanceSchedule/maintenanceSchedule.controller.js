@@ -192,18 +192,30 @@ module.exports = {
     try {
       let schedules = await model.findAll();
       const user = req.user;
-      if (user && (user.role === 'admin' || user.role === 'manager' || user.role === 'client' || user.role === 'requestor')) {
-        if (user.companyName) {
-          const companyUserIds = await getCompanyUserIds(user.companyName);
-          const companyName = String(user.companyName).toLowerCase();
-          schedules = schedules.filter((s) => {
-            const scheduleUserId = String(s.userId || '');
-            const scheduleCompany = String(s.company || s.companyName || '').toLowerCase();
-            return companyUserIds.includes(scheduleUserId) || (scheduleCompany && scheduleCompany === companyName);
-          });
-        } else {
-          schedules = schedules.filter((s) => String(s.userId || '') === String(user.userId));
+      
+      // If no user, return empty array for security
+      if (!user) {
+        console.warn('[maintenanceSchedule.getAll] No authenticated user. Returning empty array.');
+        return res.json([]);
+      }
+      
+      // Check if user is admin/manager - they see all items
+      const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
+      if (!isAdmin) {
+        // Regular users only see items matching their company
+        if (!user.companyName) {
+          console.warn('[maintenanceSchedule.getAll] Regular user has no companyName. Returning empty array.');
+          return res.json([]);
         }
+        // Apply company-based filtering for regular users
+        const companyUserIds = await getCompanyUserIds(user.companyName);
+        const companyName = String(user.companyName).toLowerCase().trim();
+        schedules = schedules.filter((s) => {
+          const scheduleUserId = String(s.userId || '');
+          const scheduleCompany = String(s.company || s.companyName || '').toLowerCase().trim();
+          // Include if: created by someone in this company OR company name matches
+          return companyUserIds.includes(scheduleUserId) || (scheduleCompany && scheduleCompany === companyName);
+        });
       }
       // Persist overdue status for any schedule whose nextDate is past and not completed
       try {
