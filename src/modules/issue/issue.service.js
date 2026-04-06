@@ -580,13 +580,21 @@ module.exports = {
 
   create: async (data) => {
     const d = { ...data };
+    // Handle optional asset connection
     if (d.assetId) {
       d.asset = { connect: { id: d.assetId } };
       delete d.assetId;
+    } else {
+      // Asset is optional - don't connect if not provided
+      if (Object.prototype.hasOwnProperty.call(d, 'asset')) delete d.asset;
     }
+    // Handle optional property connection
     if (d.propertyId) {
       d.property = { connect: { id: d.propertyId } };
       delete d.propertyId;
+    } else {
+      // Property is optional - don't connect if not provided
+      if (Object.prototype.hasOwnProperty.call(d, 'property')) delete d.property;
     }
     // Ensure assignees JSON is provided (Prisma requires the field)
     try {
@@ -608,6 +616,10 @@ module.exports = {
       }
     } catch (e) {
       d.time = new Date().toISOString();
+    }
+    // Ensure `location` field has a default value if not provided (optional but Prisma requires it)
+    if (!Object.prototype.hasOwnProperty.call(d, 'location') || d.location === undefined || d.location === null || d.location === '') {
+      d.location = 'Not Specified';
     }
     // Extract files (Prisma Issue model doesn't have `files` field)
     const filesArray = Array.isArray(d.files) ? d.files : (d.files ? [d.files] : []);
