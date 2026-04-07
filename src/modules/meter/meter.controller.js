@@ -5,7 +5,7 @@ const emailService = require('../emailService/email.service');
 
 exports.getAll = async (req, res) => {
   try {
-    const meters = await service.findAll();
+    const meters = await service.findAll(req.user?.companyName || '');
     res.json(normalizeExtendedJSON(meters));
   } catch (err) {
     console.error('[meter.getAll]', err);
@@ -15,7 +15,7 @@ exports.getAll = async (req, res) => {
 
 exports.getById = async (req, res) => {
   try {
-    const m = await service.findById(req.params.id);
+    const m = await service.findById(req.params.id, req.user?.companyName || '');
     if (!m) return res.status(404).json({ error: 'Not found' });
     res.json(normalizeExtendedJSON(m));
   } catch (err) {
@@ -26,7 +26,10 @@ exports.getById = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const payload = req.body || {};
+    const payload = {
+      ...(req.body || {}),
+      companyName: req.user?.companyName || req.body?.companyName || ''
+    };
     const created = await service.create(payload);
     res.status(201).json(normalizeExtendedJSON(created));
   } catch (err) {
@@ -37,17 +40,18 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
-    const existing = await service.findById(req.params.id);
+    const companyName = req.user?.companyName || '';
+    const existing = await service.findById(req.params.id, companyName);
     if (!existing) return res.status(404).json({ error: 'Not found' });
 
-    const nextPayload = req.body || {};
+    const nextPayload = { ...(req.body || {}), companyName: companyName || existing?.companyName || '' };
     const previousTriggerIds = new Set(
       (Array.isArray(existing.triggers) ? existing.triggers : [])
         .map((trigger) => String(trigger?.id || trigger?._id || ''))
         .filter(Boolean)
     );
 
-    const updated = await service.update(req.params.id, nextPayload);
+    const updated = await service.update(req.params.id, nextPayload, companyName);
 
     const incomingTriggers = Array.isArray(nextPayload.triggers) ? nextPayload.triggers : [];
     const createdTriggers = incomingTriggers.filter((trigger) => {
@@ -89,7 +93,7 @@ exports.update = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    const result = await service.delete(req.params.id);
+    const result = await service.delete(req.params.id, req.user?.companyName || '');
     res.json(result);
   } catch (err) {
     console.error('[meter.delete]', err);

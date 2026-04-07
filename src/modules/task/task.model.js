@@ -15,8 +15,10 @@ const taskSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     dueDate: { type: Date },
     priority: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
-    status: { type: String, enum: ['upcoming', 'overdue', 'completed'], default: 'upcoming' },
+    status: { type: String, enum: ['upcoming', 'in-progress', 'overdue', 'completed'], default: 'upcoming' },
     color: { type: String, default: '#3B82F6' }, // hex color code
+    workOrderId: { type: String, default: '' },
+    workOrderTitle: { type: String, default: '' },
     collaborators: [
       {
         userId: { type: String },
@@ -25,6 +27,7 @@ const taskSchema = new mongoose.Schema(
         avatar: { type: String }
       }
     ],
+    chat: { type: [mongoose.Schema.Types.Mixed], default: [] },
     checklist: [checklistItemSchema],
     userId: { type: String, required: true }, // Creator's ID
     companyName: { type: String, required: true }, // Company isolation

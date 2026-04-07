@@ -28,6 +28,26 @@ const PESAPAL_CALLBACK_URL =
   process.env.PESAPAL_CALLBACK_URL ||
   'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/pesapal-callback';
 
+const MTN_COLLECTION_BASE_URL =
+  process.env.MTN_COLLECTION_BASE_URL ||
+  'https://sandbox.momodeveloper.mtn.co.rw/collection/v1_0';
+const MTN_COLLECTION_TOKEN = process.env.MTN_COLLECTION_TOKEN || '';
+const MTN_API_USER = process.env.MTN_API_USER || '';
+const MTN_API_KEY =
+  process.env.MTN_API_KEY ||
+  process.env['MTN-Secret-Key'] ||
+  process.env['Secrete-Key'] ||
+  '';
+const MTN_SUBSCRIPTION_KEY =
+  process.env.MTN_SUBSCRIPTION_KEY ||
+  process.env['MTN-Primary-key'] ||
+  process.env['Primary-key'] ||
+  '';
+const MTN_TARGET_ENVIRONMENT = process.env.MTN_TARGET_ENVIRONMENT || 'sandbox';
+const MTN_CALLBACK_URL =
+  process.env.MTN_CALLBACK_URL ||
+  'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/mobile-money-callback';
+
 // PesaPal V3 API Endpoints (relative to base URL)
 const PESAPAL_ENDPOINTS = {
   AUTH: '/Auth/RequestToken',
@@ -1157,23 +1177,107 @@ async function initiateAirtelMoneyPayment(paymentData) {
 async function initiateMTNMoneyPayment(paymentData) {
   try {
     const { amount, phoneNumber, paymentId, currency } = paymentData;
+    const accessToken = await getMtnCollectionAccessToken();
 
-    const formattedPhone = formatPhoneNumber(phoneNumber, 'UG');
+    const formattedPhone = formatPhoneNumber(phoneNumber, 'RW').replace(/^\+/, '');
+    const referenceId = crypto.randomUUID();
+    const externalId = String(paymentId);
+    const payload = {
+      amount: String(amount),
+      currency: String(currency || 'RWF').toUpperCase(),
+      externalId,
+      payer: {
+        partyIdType: 'MSISDN',
+        partyId: formattedPhone,
+      },
+      payerMessage: `Payment for subscription ${externalId}`,
+      payeeNote: `Subscription payment ${externalId}`,
+    };
+
+    console.log('[MTN requesttopay] Sending request', {
+      baseUrl: MTN_COLLECTION_BASE_URL,
+      targetEnvironment: MTN_TARGET_ENVIRONMENT,
+      callbackUrl: MTN_CALLBACK_URL,
+      referenceId,
+      externalId,
+      payload,
+    });
+
+    const response = await axios.post(
+      `${MTN_COLLECTION_BASE_URL}/requesttopay`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Callback-Url': MTN_CALLBACK_URL,
+          'X-Reference-Id': referenceId,
+          'X-Target-Environment': MTN_TARGET_ENVIRONMENT,
+          ...(MTN_SUBSCRIPTION_KEY ? { 'Ocp-Apim-Subscription-Key': MTN_SUBSCRIPTION_KEY } : {}),
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
 
     return {
       mobileProvider: 'MTN Money',
       phoneNumber: formattedPhone,
       amount,
-      currency,
-      ussdCode: '*165#',
-      instructionMessage: `Send ${amount} ${currency} to {shortcode}`,
+      currency: payload.currency,
       referenceCode: paymentId,
-      status: 'awaiting_payment',
+      requestToPayReferenceId: referenceId,
+      externalId,
+      status: response.status === 202 ? 'pending' : 'awaiting_payment',
+      instructionMessage: 'Approve the payment prompt on the customer phone to complete the transaction.',
+      callbackUrl: MTN_CALLBACK_URL,
+      targetEnvironment: MTN_TARGET_ENVIRONMENT,
       initiatedAt: new Date().toISOString(),
     };
   } catch (error) {
-    throw new Error(`MTN Money payment initiation failed: ${error.message}`);
+    const status = error?.response?.status;
+    const responseBody = error?.response?.data;
+    const details = responseBody ? ` | MTN response: ${JSON.stringify(responseBody)}` : '';
+    if (status === 401) {
+      throw new Error(
+        `MTN Money payment initiation failed (401): Invalid Rwanda MTN subscription credentials for ${MTN_COLLECTION_BASE_URL}. ` +
+        `You need .co.rw Collection credentials (subscription key, API user, API key).${details}`
+      );
+    }
+    throw new Error(`MTN Money payment initiation failed${status ? ` (${status})` : ''}: ${error.message}${details}`);
   }
+}
+
+async function getMtnCollectionAccessToken() {
+  if (MTN_COLLECTION_TOKEN) {
+    return MTN_COLLECTION_TOKEN;
+  }
+
+  if (!MTN_API_USER || !MTN_API_KEY || !MTN_SUBSCRIPTION_KEY) {
+    throw new Error(
+      'MTN configuration missing. Set MTN_COLLECTION_TOKEN or configure MTN_API_USER, MTN_API_KEY, and MTN_SUBSCRIPTION_KEY.'
+    );
+  }
+
+  const auth = Buffer.from(`${MTN_API_USER}:${MTN_API_KEY}`).toString('base64');
+  const tokenUrl = MTN_COLLECTION_BASE_URL.replace(/\/v1_0$/, '') + '/token/';
+  const response = await axios.post(
+    tokenUrl,
+    {},
+    {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Ocp-Apim-Subscription-Key': MTN_SUBSCRIPTION_KEY,
+      },
+      timeout: 30000,
+    }
+  );
+
+  const accessToken = response?.data?.access_token;
+  if (!accessToken) {
+    throw new Error('MTN token response did not include access_token');
+  }
+
+  return accessToken;
 }
 
 // Orange Money payment initiation

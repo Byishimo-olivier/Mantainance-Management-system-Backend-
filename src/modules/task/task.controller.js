@@ -1,4 +1,53 @@
 const Task = require('./task.model');
+const issueService = require('../issue/issue.service');
+
+const TASK_STATUSES = ['upcoming', 'in-progress', 'overdue', 'completed'];
+
+const toTaskChecklistItem = (task = {}) => ({
+  id: task._id?.toString?.() || task.id || '',
+  linkedTaskId: task._id?.toString?.() || task.id || '',
+  title: task.title || '',
+  text: task.title || '',
+  description: task.description || '',
+  completed: task.status === 'completed',
+  status: task.status || 'upcoming',
+  priority: task.priority || 'medium',
+  dueDate: task.dueDate || null,
+  color: task.color || '#3B82F6',
+  source: 'task'
+});
+
+const syncTaskWithWorkOrder = async (task) => {
+  const workOrderId = String(task?.workOrderId || '').trim();
+  if (!workOrderId) return;
+
+  const issue = await issueService.getById(workOrderId);
+  if (!issue) return;
+
+  const nextItem = toTaskChecklistItem(task);
+  const baseChecklist = Array.isArray(issue.checklist) ? [...issue.checklist] : [];
+  const nextChecklist = baseChecklist.some((entry) => String(entry?.linkedTaskId || entry?.id || '') === nextItem.linkedTaskId)
+    ? baseChecklist.map((entry) => String(entry?.linkedTaskId || entry?.id || '') === nextItem.linkedTaskId ? { ...entry, ...nextItem } : entry)
+    : [...baseChecklist, nextItem];
+
+  await issueService.update(workOrderId, { checklist: nextChecklist });
+};
+
+const removeTaskFromWorkOrder = async (workOrderId, taskId) => {
+  const normalizedWorkOrderId = String(workOrderId || '').trim();
+  const normalizedTaskId = String(taskId || '').trim();
+  if (!normalizedWorkOrderId || !normalizedTaskId) return;
+
+  const issue = await issueService.getById(normalizedWorkOrderId);
+  if (!issue) return;
+
+  const baseChecklist = Array.isArray(issue.checklist) ? issue.checklist : [];
+  const nextChecklist = baseChecklist.filter(
+    (entry) => String(entry?.linkedTaskId || entry?.id || '') !== normalizedTaskId
+  );
+
+  await issueService.update(normalizedWorkOrderId, { checklist: nextChecklist });
+};
 
 const buildTaskPayload = (data = {}, companyName = '') => ({
   title: data.title,
@@ -7,12 +56,15 @@ const buildTaskPayload = (data = {}, companyName = '') => ({
   priority: data.priority || 'medium',
   status: data.status || 'upcoming',
   color: data.color || '#3B82F6',
+  workOrderId: data.workOrderId || '',
+  workOrderTitle: data.workOrderTitle || '',
   collaborators: Array.isArray(data.collaborators) ? data.collaborators.map(c => ({
     userId: c.userId,
     name: c.name || '',
     email: c.email || '',
     avatar: c.avatar || ''
   })) : [],
+  chat: Array.isArray(data.chat) ? data.chat : [],
   checklist: Array.isArray(data.checklist) ? data.checklist.map(item => ({
     id: item.id || new (require('mongoose')).Types.ObjectId().toString(),
     title: item.title,
@@ -83,6 +135,7 @@ module.exports = {
       payload.createdBy = createdBy;
 
       const created = await Task.create(payload);
+      await syncTaskWithWorkOrder(created);
       res.status(201).json(created);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -93,6 +146,8 @@ module.exports = {
     try {
       const data = req.body || {};
       if (!data.title) return res.status(400).json({ error: 'title is required' });
+      const existing = await Task.findById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Not found' });
 
       const companyName = req.user?.companyName || '';
       const updated = await Task.findByIdAndUpdate(
@@ -101,7 +156,11 @@ module.exports = {
         { new: true, runValidators: true }
       );
 
-      if (!updated) return res.status(404).json({ error: 'Not found' });
+      if (String(existing.workOrderId || '') && String(existing.workOrderId || '') !== String(updated.workOrderId || '')) {
+        await removeTaskFromWorkOrder(existing.workOrderId, existing._id?.toString?.() || existing.id);
+      }
+
+      await syncTaskWithWorkOrder(updated);
       res.json(updated);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -111,7 +170,7 @@ module.exports = {
   async updateStatus(req, res) {
     try {
       const { status } = req.body;
-      if (!['upcoming', 'overdue', 'completed'].includes(status)) {
+      if (!TASK_STATUSES.includes(status)) {
         return res.status(400).json({ error: 'Invalid status' });
       }
 
@@ -122,6 +181,7 @@ module.exports = {
       );
 
       if (!updated) return res.status(404).json({ error: 'Not found' });
+      await syncTaskWithWorkOrder(updated);
       res.json(updated);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -184,6 +244,7 @@ module.exports = {
     try {
       const deleted = await Task.findByIdAndDelete(req.params.id);
       if (!deleted) return res.status(404).json({ error: 'Not found' });
+      await removeTaskFromWorkOrder(deleted.workOrderId, deleted._id?.toString?.() || deleted.id);
       res.json({ success: true });
     } catch (err) {
       res.status(400).json({ error: err.message });

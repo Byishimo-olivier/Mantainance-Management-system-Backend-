@@ -15,7 +15,8 @@
     "install-parsers": "npm install xlsx pdf-parse mammoth tesseract.js csv-parse --save-optional",
     "seed:properties": "node scripts/seed-properties.js",
     "patch-data": "node scripts/patch-legacy-data.js",
-    "repair-data": "node scripts/repair-data-mongoose.js"
+    "repair-data": "node scripts/repair-data-mongoose.js",
+    "setup:mtn-collection": "node scripts/setup-mtn-collection.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
