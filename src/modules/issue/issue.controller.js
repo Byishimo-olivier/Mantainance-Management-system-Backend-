@@ -238,6 +238,125 @@ function buildAssigneePayload(entry = {}, fallbackRole = '') {
   };
 }
 
+function issueLooksPreventive(issue = {}) {
+  const tagsLower = (Array.isArray(issue.tags) ? issue.tags : []).map((tag) => {
+    if (!tag) return '';
+    if (typeof tag === 'string') return String(tag).toLowerCase();
+    if (typeof tag === 'object' && tag.label) return String(tag.label).toLowerCase();
+    return String(tag).toLowerCase();
+  });
+  const issueType = String(issue.issueType || issue.type || issue.category || '').toLowerCase();
+  const looksPreventiveWord = (value) => String(value || '').toLowerCase().includes('prevent');
+  const fingerprint = [
+    issue.title,
+    issue.description,
+    issue.issueType,
+    issue.type,
+    issue.category,
+    issue.submissionType,
+    issue.preventiveMaintenanceName,
+    issue.scheduleName,
+    issue.pmName,
+    ...tagsLower,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  return (
+    Boolean(issue.isPreventive) ||
+    tagsLower.some((tag) => looksPreventiveWord(tag)) ||
+    looksPreventiveWord(issueType) ||
+    looksPreventiveWord(fingerprint)
+  );
+}
+
+async function ensurePreventiveScheduleForApprovedIssue(issue = {}, actor = null) {
+  if (!issueLooksPreventive(issue)) return null;
+
+  const issueId = String(issue.id || issue._id || '').trim();
+  if (!issueId) return null;
+
+  try {
+    const mongoose = require('mongoose');
+    const maintenanceScheduleModel = require('../maintenanceSchedule/maintenanceSchedule.model');
+    const db = mongoose.connection?.db;
+    if (!db) return null;
+
+    const objectIdCandidates = [issueId];
+    if (/^[a-f\d]{24}$/i.test(issueId)) {
+      try {
+        objectIdCandidates.push(new mongoose.Types.ObjectId(issueId));
+      } catch (err) {
+        // Ignore cast failures and keep the string candidate.
+      }
+    }
+
+    const existingSchedule = await db.collection('MaintenanceSchedule').findOne({
+      $or: [
+        { sourceIssueId: { $in: objectIdCandidates } },
+        { requestIssueId: { $in: objectIdCandidates } },
+      ],
+    });
+    if (existingSchedule) return existingSchedule;
+
+    const dueDate = normalizeDateInput(issue.fixDeadline)
+      || normalizeDateInput(issue.nextDate)
+      || normalizeDateInput(issue.dueDate)
+      || normalizeDateInput(issue.createdAt)
+      || new Date();
+
+    const yyyy = dueDate.getFullYear();
+    const mm = String(dueDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(dueDate.getDate()).padStart(2, '0');
+    const hh = String(dueDate.getHours()).padStart(2, '0');
+    const min = String(dueDate.getMinutes()).padStart(2, '0');
+
+    const createdSchedule = await maintenanceScheduleModel.create({
+      name: issue.title || issue.name || 'Preventive Maintenance Request',
+      description: issue.description || 'Generated from an approved preventive request.',
+      workOrderTitle: issue.title || issue.name || 'Preventive Maintenance Request',
+      workOrderDescription: issue.description || 'Generated from an approved preventive request.',
+      category: issue.category || issue.issueType || 'preventive',
+      priority: issue.priority || 'MEDIUM',
+      status: 'Pending',
+      date: `${yyyy}-${mm}-${dd}`,
+      time: `${hh}:${min}`,
+      nextDate: dueDate,
+      location: issue.location || issue.address || '',
+      propertyId: issue.propertyId || null,
+      assetId: issue.assetId || null,
+      assetName: issue.assetName || '',
+      assignedTo: issue.assignedTo || '',
+      assignees: Array.isArray(issue.assignees) ? issue.assignees : [],
+      team: issue.team || '',
+      checklist: Array.isArray(issue.checklist) ? issue.checklist : [],
+      estimatedTime: issue.estimatedTime || '',
+      signature: Boolean(issue.signature),
+      sourceIssueId: issueId,
+      requestIssueId: issueId,
+      source: 'approved-request',
+      createFirstWorkOrder: false,
+      tasks: [],
+      tags: ['preventive', 'request'],
+      assetsRows: [{
+        id: `issue-${issueId}`,
+        assetId: issue.assetId || '',
+        locationId: issue.propertyId || '',
+        startDate: `${yyyy}-${mm}-${dd}`,
+        endDate: '',
+        timezone: '(UTC+02:00) Africa/Kigali',
+        assignee: issue.assignedTo || '',
+      }],
+      company: issue.companyName || actor?.companyName || null,
+      companyName: issue.companyName || actor?.companyName || null,
+      userId: issue.userId || actor?.userId || null,
+    });
+
+    return createdSchedule;
+  } catch (err) {
+    console.error('[issue.controller] Failed to create PM schedule from approved issue:', err);
+    return null;
+  }
+}
+
 // Technician submits BEFORE evidence (address, before image, fix time)
 exports.uploadBeforeEvidence = [
   upload.single('beforeImage'),
@@ -956,7 +1075,7 @@ exports.create = async (req, res) => {
         return String(t).toLowerCase();
       });
       const issueType = String(data.issueType || data.type || data.category || '').toLowerCase();
-      const isPreventive = tagsLower.includes('preventive') || issueType === 'preventive' || title.includes('preventive');
+      const isPreventive = tagsLower.some((tag) => String(tag).includes('prevent')) || issueType.includes('prevent') || title.includes('prevent');
       if (isPreventive) {
         // ensure tags array
         if (!Array.isArray(data.tags)) data.tags = [];
@@ -1320,7 +1439,7 @@ exports.update = async (req, res) => {
       return String(t).toLowerCase();
     });
     const issueType = String(merged.issueType || merged.type || merged.category || '').toLowerCase();
-    const isPreventive = tagsLower.includes('preventive') || issueType === 'preventive' || title.includes('preventive');
+    const isPreventive = tagsLower.some((tag) => String(tag).includes('prevent')) || issueType.includes('prevent') || title.includes('prevent');
     if (isPreventive) {
       // ensure tags on incoming update include 'preventive'
       if (!Array.isArray(incoming.tags)) incoming.tags = Array.isArray(oldIssue.tags) ? [...oldIssue.tags] : [];
@@ -1335,6 +1454,9 @@ exports.update = async (req, res) => {
   }
 
   const updated = await service.update(req.params.id, incoming);
+  if (String(updated?.status || '').toUpperCase() === 'APPROVED' || updated?.approved) {
+    await ensurePreventiveScheduleForApprovedIssue(updated, req.user);
+  }
 
   if (Array.isArray(incoming.chat)) {
     await notifyMentionedUsers({
@@ -1717,6 +1839,7 @@ exports.approveIssue = async (req, res) => {
       }
     });
     const updated = await service.update(id, approvalPayload);
+    await ensurePreventiveScheduleForApprovedIssue(updated, req.user);
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[issue.controller.js:approveIssue]', err);

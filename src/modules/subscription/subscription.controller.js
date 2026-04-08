@@ -468,7 +468,7 @@ exports.getSubscriptionProperty = async (req, res) => {
  */
 exports.getCompanySubscriptionStatus = async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?.userId || req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized - User ID not found' });

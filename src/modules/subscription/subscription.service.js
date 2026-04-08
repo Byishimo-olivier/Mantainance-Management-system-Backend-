@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const paymentService = require('./payment.service');
 const prisma = new PrismaClient();
 
+const normalizeCompanyString = (value) => String(value || '').trim().toLowerCase();
+
 // Credentials for authorization
 const CLIENT_ID = process.env.SUBSCRIPTION_CLIENT_ID || 'ee00cab6-155a-11f1-a1f5-deadd43720af';
 const SECRET_ID = process.env.SUBSCRIPTION_SECRET_ID || '630eecbbb285bd9d5760f299a7231c9eda39a3ee5e6b4b0d3255bfef95601890afd80709';
@@ -64,15 +66,28 @@ exports.createSubscription = async (subscriptionData) => {
 // Get subscription by client ID
 exports.getSubscriptionByClientId = async (clientId) => {
   try {
-    // Note: clientId from route param, but Subscription model uses companyId
-    const subscription = await prisma.subscription.findFirst({
-      where: { companyId: clientId },
+    const subscriptions = await prisma.subscription.findMany({
+      where: {
+        OR: [
+          { companyId: clientId },
+          { company: { name: clientId } },
+        ],
+      },
       include: {
         payments: { orderBy: { createdAt: 'desc' } },
         invoices: { orderBy: { createdAt: 'desc' } },
         property: true,
+        company: true,
       },
+      orderBy: { createdAt: 'desc' },
     });
+
+    const normalizedClientId = normalizeCompanyString(clientId);
+    const subscription = subscriptions.find((entry) => (
+      String(entry?.companyId || '') === String(clientId || '') ||
+      normalizeCompanyString(entry?.company?.name) === normalizedClientId ||
+      normalizeCompanyString(entry?.metadata?.companyName) === normalizedClientId
+    )) || null;
 
     // always recalc amount on read in case pricing constants changed
     if (subscription) {

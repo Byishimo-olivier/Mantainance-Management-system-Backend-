@@ -1,5 +1,8 @@
 const { PrismaClient } = require('@prisma/client');
+const User = require('../user/user.model.js');
 const prisma = new PrismaClient();
+
+const normalizeCompanyString = (value) => String(value || '').trim().toLowerCase();
 
 /**
  * Get company subscription status for a user
@@ -7,12 +10,42 @@ const prisma = new PrismaClient();
  */
 exports.getCompanySubscription = async (userId) => {
   try {
+    const mongoUser = await User.findById(userId).select('companyName email').lean().catch(() => null);
+    const normalizedCompanyName = String(mongoUser?.companyName || '').trim();
+    const normalizedEmail = String(mongoUser?.email || '').trim().toLowerCase();
+
+    if (normalizedCompanyName) {
+      const subscriptionCandidates = await prisma.subscription.findMany({
+        where: {
+          OR: [
+            { company: { name: normalizedCompanyName } },
+            ...(normalizedEmail ? [{ email: normalizedEmail }] : []),
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { company: true },
+      });
+
+      const companyNameSubscription = subscriptionCandidates.find((subscription) => {
+        const companyNameMatch = normalizeCompanyString(subscription?.company?.name) === normalizeCompanyString(normalizedCompanyName);
+        const metadataCompanyMatch = normalizeCompanyString(subscription?.metadata?.companyName) === normalizeCompanyString(normalizedCompanyName);
+        const emailMatch = normalizedEmail && String(subscription?.email || '').trim().toLowerCase() === normalizedEmail;
+        return companyNameMatch || metadataCompanyMatch || emailMatch;
+      });
+
+      if (companyNameSubscription) {
+        return companyNameSubscription;
+      }
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
         company: {
           include: {
-            subscription: true
+            subscriptions: {
+              orderBy: { createdAt: 'desc' }
+            }
           }
         }
       }
@@ -22,7 +55,19 @@ exports.getCompanySubscription = async (userId) => {
       return null; // User not part of any company
     }
 
-    return user.company.subscription || null;
+    const subscriptions = Array.isArray(user.company.subscriptions) ? user.company.subscriptions : [];
+    if (!subscriptions.length) return null;
+
+    const now = new Date();
+    const activeSubscription = subscriptions.find((subscription) => {
+      const status = String(subscription?.status || '').toLowerCase();
+      if (status !== 'active') return false;
+      if (!subscription?.endDate) return true;
+      const endDate = new Date(subscription.endDate);
+      return !Number.isNaN(endDate.getTime()) && endDate > now;
+    });
+
+    return activeSubscription || subscriptions[0] || null;
   } catch (error) {
     throw new Error(`Failed to get company subscription: ${error.message}`);
   }
@@ -38,9 +83,10 @@ exports.hasActiveSubscription = async (userId) => {
     if (!subscription) return false;
     
     const now = new Date();
-    const isActive = 
-      subscription.status === 'active' &&
-      subscription.endDate === null || new Date(subscription.endDate) > now;
+    const hasValidEndDate = !subscription.endDate || new Date(subscription.endDate) > now;
+    const isActive =
+      String(subscription.status || '').toLowerCase() === 'active' &&
+      hasValidEndDate;
     
     return isActive;
   } catch (error) {
@@ -54,6 +100,25 @@ exports.hasActiveSubscription = async (userId) => {
  */
 exports.getCompanyTeamMembers = async (userId) => {
   try {
+    const mongoUser = await User.findById(userId).select('companyName').lean().catch(() => null);
+    const normalizedCompanyName = String(mongoUser?.companyName || '').trim();
+    if (normalizedCompanyName) {
+      const members = await User.find({ companyName: normalizedCompanyName })
+        .select('_id name email phone role isCompanyAdmin createdAt companyName')
+        .lean();
+
+      return members.map((member) => ({
+        id: String(member._id),
+        name: member.name,
+        email: member.email,
+        phone: member.phone,
+        role: member.role,
+        isCompanyAdmin: !!member.isCompanyAdmin,
+        createdAt: member.createdAt,
+        companyName: member.companyName,
+      }));
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -191,6 +256,7 @@ exports.getUserSubscriptionStatus = async (userId) => {
     const hasActive = await exports.hasActiveSubscription(userId);
     const subscription = await exports.getCompanySubscription(userId);
     const teamMembers = await exports.getCompanyTeamMembers(userId);
+    const mongoUser = await User.findById(userId).select('companyName').lean().catch(() => null);
     
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -215,7 +281,14 @@ exports.getUserSubscriptionStatus = async (userId) => {
         maxUsers: user.company.maxUsers,
         subscriptionStatus: user.company.subscriptionStatus,
         subscriptionPlan: user.company.subscriptionPlan
-      } : null,
+      } : (mongoUser?.companyName ? {
+        id: null,
+        name: mongoUser.companyName,
+        totalUsers: teamMembers.length,
+        maxUsers: null,
+        subscriptionStatus: subscription?.status || 'inactive',
+        subscriptionPlan: subscription?.plan || null,
+      } : null),
       teamMembers: teamMembers,
       isCompanyAdmin: user?.isCompanyAdmin || false
     };
