@@ -4,6 +4,7 @@ const paymentService = require('./payment.service');
 const prisma = new PrismaClient();
 
 const normalizeCompanyString = (value) => String(value || '').trim().toLowerCase();
+const looksLikeObjectId = (value) => /^[a-fA-F0-9]{24}$/.test(String(value || '').trim());
 
 // Credentials for authorization
 const CLIENT_ID = process.env.SUBSCRIPTION_CLIENT_ID || 'ee00cab6-155a-11f1-a1f5-deadd43720af';
@@ -66,11 +67,12 @@ exports.createSubscription = async (subscriptionData) => {
 // Get subscription by client ID
 exports.getSubscriptionByClientId = async (clientId) => {
   try {
-    const subscriptions = await prisma.subscription.findMany({
+    const queryId = String(clientId || '').trim();
+    const directMatches = await prisma.subscription.findMany({
       where: {
         OR: [
-          { companyId: clientId },
-          { company: { name: clientId } },
+          ...(looksLikeObjectId(queryId) ? [{ companyId: queryId }] : []),
+          { company: { name: queryId } },
         ],
       },
       include: {
@@ -82,9 +84,27 @@ exports.getSubscriptionByClientId = async (clientId) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    const normalizedClientId = normalizeCompanyString(clientId);
+    let subscriptions = directMatches;
+
+    // Some subscriptions are stored without a linked Prisma company row and only
+    // carry the company name in metadata. When lookup is by company name, fetch a
+    // recent window and match in JS so those company subscriptions are still found.
+    if (!subscriptions.length && queryId) {
+      subscriptions = await prisma.subscription.findMany({
+        include: {
+          payments: { orderBy: { createdAt: 'desc' } },
+          invoices: { orderBy: { createdAt: 'desc' } },
+          property: true,
+          company: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      });
+    }
+
+    const normalizedClientId = normalizeCompanyString(queryId);
     const subscription = subscriptions.find((entry) => (
-      String(entry?.companyId || '') === String(clientId || '') ||
+      String(entry?.companyId || '') === queryId ||
       normalizeCompanyString(entry?.company?.name) === normalizedClientId ||
       normalizeCompanyString(entry?.metadata?.companyName) === normalizedClientId
     )) || null;

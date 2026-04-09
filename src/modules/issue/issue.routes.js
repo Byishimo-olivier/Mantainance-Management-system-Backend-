@@ -38,6 +38,7 @@ router.get('/:id/costs', authenticate, ctrl.getCosts);
 router.post('/:id/costs', authenticate, ctrl.addCost);
 router.get('/:id/parts', authenticate, ctrl.getParts);
 router.post('/:id/parts', authenticate, ctrl.addPart);
+router.post('/:id/parts/reconcile', authenticate, ctrl.reconcileParts);
 router.get('/:id/labor', authenticate, ctrl.getLabor);
 router.post('/:id/labor', authenticate, ctrl.addLabor);
 router.get('/:id/provider-portal', authenticate, ctrl.getProviderPortal);

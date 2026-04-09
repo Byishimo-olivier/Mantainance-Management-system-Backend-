@@ -1707,12 +1707,28 @@ exports.addPart = async (req, res) => {
       cost: Number(body.cost) || 0,
       quantity: Number(body.quantity) || 1,
       location: body.location ? String(body.location) : '',
+      notes: body.notes ? String(body.notes) : '',
       source: body.source || 'remote'
     };
     const saved = await service.addPart(id, payload);
     res.status(201).json(saved);
   } catch (err) {
     console.error('[issue.controller.js:addPart]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.reconcileParts = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (entries.length === 0) {
+      return res.status(400).json({ error: 'No parts provided' });
+    }
+    const saved = await service.reconcileParts(id, entries);
+    res.json(saved);
+  } catch (err) {
+    console.error('[issue.controller.js:reconcileParts]', err);
     res.status(500).json({ error: err.message });
   }
 };

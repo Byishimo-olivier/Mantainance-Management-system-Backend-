@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const ItemSchema = new mongoose.Schema(
   {
@@ -17,16 +18,24 @@ const generatePoNumber = () => {
   return `PO-${stamp}-${Math.floor(Math.random() * 90000 + 10000)}`;
 };
 
+const generatePublicToken = () => crypto.randomBytes(20).toString('hex');
+
 const PurchaseOrderSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
+    companyName: { type: String, default: '', index: true },
     poNumber: { type: String, unique: true, trim: true, default: generatePoNumber },
+    publicToken: { type: String, unique: true, trim: true, default: generatePublicToken, index: true },
     status: { type: String, default: 'Draft' }, // Draft, Submitted, Approved, Received
     items: { type: [ItemSchema], default: [] },
     totalCost: { type: Number, default: 0 },
     currency: { type: String, default: 'USD' },
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
     vendor: { type: String, default: '' }, // denormalized vendor name
+    materialRequestId: { type: String, default: '', index: true },
+    issueId: { type: String, default: '', index: true },
+    workOrderId: { type: String, default: '', index: true },
+    source: { type: String, default: '' },
     expectedDate: { type: Date },
     purchaseDate: { type: Date },
     shippingMethod: { type: String, default: '' },
@@ -47,6 +56,9 @@ const PurchaseOrderSchema = new mongoose.Schema(
       phone: { type: String, default: '' }
     },
     notes: { type: String, default: '' },
+    vendorResponse: { type: String, default: '' },
+    vendorResponseAt: { type: Date },
+    vendorResponseNote: { type: String, default: '' },
     createdBy: {
       id: { type: String },
       role: { type: String },
@@ -64,11 +76,13 @@ const computeTotal = (items = []) =>
 PurchaseOrderSchema.pre('validate', function () {
   this.totalCost = computeTotal(this.items || []);
   if (!this.poNumber) this.poNumber = generatePoNumber();
+  if (!this.publicToken) this.publicToken = generatePublicToken();
   if (!this.title) this.title = 'Purchase Order';
 });
 
 module.exports = {
   PurchaseOrder: mongoose.model('PurchaseOrder', PurchaseOrderSchema),
   computeTotal,
-  generatePoNumber
+  generatePoNumber,
+  generatePublicToken
 };

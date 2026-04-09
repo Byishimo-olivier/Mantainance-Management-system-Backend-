@@ -5,6 +5,7 @@ const PartSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     partNumber: { type: String, default: '' },
     category: { type: String, default: '' },
+    companyName: { type: String, default: '', index: true },
     tags: [{ type: String }],
     description: { type: String, default: '' },
     status: { type: String, default: 'STOCK_IN' },

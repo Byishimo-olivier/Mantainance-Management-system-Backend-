@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const VendorSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
+    companyName: { type: String, default: '', index: true },
     address: { type: String, default: '' },
     phone: { type: String, default: '' },
     contactName: { type: String, default: '' },

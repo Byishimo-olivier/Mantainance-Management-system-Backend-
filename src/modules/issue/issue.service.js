@@ -794,6 +794,54 @@ module.exports = {
     );
     return payload;
   },
+  reconcileParts: async (id, entries = []) => {
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database connection not ready');
+    const { ObjectId } = require('mongodb');
+    const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+    const issue = await db.collection('Issue').findOne({ _id: objectId }, { projection: { parts: 1 } });
+    const existingParts = Array.isArray(issue?.parts) ? [...issue.parts] : [];
+    const normalized = (value) => String(value || '').trim().toLowerCase();
+
+    for (const entry of entries) {
+      const targetName = normalized(entry?.name);
+      const requestedIndex = existingParts.findIndex((part) => (
+        normalized(part?.name || part?.title || part?.materialId) === targetName
+        && ['requested', 'pending', 'awaiting approval'].includes(normalized(part?.status))
+      ));
+
+      const payload = {
+        id: entry?.id || `part-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: entry?.name || 'Part',
+        status: entry?.status || 'Approved',
+        cost: Number(entry?.cost) || 0,
+        quantity: Number(entry?.quantity) || 1,
+        location: entry?.location || '',
+        notes: entry?.notes || '',
+        source: entry?.source || 'approved',
+        inventoryPartId: entry?.inventoryPartId || null,
+        createdAt: entry?.createdAt || new Date().toISOString(),
+        approvedAt: entry?.approvedAt || new Date().toISOString()
+      };
+
+      if (requestedIndex >= 0) {
+        existingParts[requestedIndex] = {
+          ...existingParts[requestedIndex],
+          ...payload,
+          id: existingParts[requestedIndex]?.id || payload.id
+        };
+      } else {
+        existingParts.push(payload);
+      }
+    }
+
+    await db.collection('Issue').updateOne(
+      { _id: objectId },
+      { $set: { parts: existingParts, updatedAt: new Date() } }
+    );
+
+    return existingParts;
+  },
   getLabor: async (id) => {
     const db = mongoose.connection.db;
     if (!db) throw new Error('Database connection not ready');
