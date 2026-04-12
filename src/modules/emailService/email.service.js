@@ -870,6 +870,7 @@ module.exports = {
   async sendMaintenanceReminder(schedule, recipients) {
     try {
       const subject = `Maintenance Reminder: ${schedule.name}`;
+      const reminderLeadMinutes = Number(schedule.reminderLeadMinutes || 60);
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2563eb;">Maintenance Reminder</h2>
@@ -877,6 +878,8 @@ module.exports = {
             <h3>${schedule.name}</h3>
             <p>${schedule.description || ''}</p>
             <p><strong>Next scheduled:</strong> ${schedule.nextDate ? new Date(schedule.nextDate).toLocaleString() : 'TBD'}</p>
+            <p><strong>Reminder lead time:</strong> ${reminderLeadMinutes} minute(s) before the scheduled time</p>
+            <p><strong>Work order:</strong> ${schedule.workOrderTitle || schedule.name || 'Preventive Maintenance'}</p>
             <p><strong>Frequency:</strong> ${schedule.frequency || 'N/A'} ${schedule.interval ? `every ${schedule.interval}` : ''}</p>
           </div>
           <p>Please ensure the routine maintenance task is performed on time.</p>

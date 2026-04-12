@@ -120,6 +120,14 @@ const webhookSchema = new mongoose.Schema({
   active: { type: Boolean, default: true },
 }, { timestamps: true });
 
+const dailyEmailSummarySchema = new mongoose.Schema({
+  adminDailySummary: { type: Boolean, default: true },
+  technicianDailySummary: { type: Boolean, default: true },
+  sendTime: { type: String, default: '07:00' },
+  lastSentOn: { type: String, default: '' },
+  lastSentAt: { type: Date, default: null },
+}, { _id: false });
+
 const requestSettingsSchema = new mongoose.Schema({
   companyName: { type: String, required: true, unique: true, trim: true },
   general: {
@@ -213,6 +221,10 @@ const requestSettingsSchema = new mongoose.Schema({
   },
   meters: {
     categories: { type: [meterCategorySchema], default: [] },
+  },
+  dailyEmailSummary: {
+    type: dailyEmailSummarySchema,
+    default: () => ({}),
   },
   tags: {
     items: { type: [tagSchema], default: [] },

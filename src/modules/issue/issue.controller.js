@@ -519,6 +519,23 @@ exports.assignToTech = async (req, res) => {
   const { id } = req.params; // issue id
   const { techId, priority, dueDate, status } = req.body; // technician user id
   if (!techId) return res.status(400).json({ error: 'techId is required' });
+  if (req.user && (req.user.role === 'technician' || req.user.role === 'internal')) {
+    const currentUserId = normalizeId(req.user.userId || req.user.id || req.user._id);
+    const requestedTechId = normalizeId(techId);
+    if (!currentUserId || !requestedTechId || currentUserId !== requestedTechId) {
+      return res.status(403).json({ error: 'Technicians can only assign issues to themselves' });
+    }
+
+    const issue = await service.getById(id);
+    if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+    const companyMatches = !req.user.companyName
+      || !issue.companyName
+      || String(req.user.companyName).trim().toLowerCase() === String(issue.companyName || '').trim().toLowerCase();
+    if (!companyMatches) {
+      return res.status(403).json({ error: 'You can only assign issues from your own company' });
+    }
+  }
   // Fetch technician info from users table
   const userService = require('../user/user.service');
   const tech = await userService.findUserById(techId);

@@ -16,6 +16,7 @@ const assetRoutes = require('./modules/asset/asset.routes');
 const internalTechnicianRoutes = require('./modules/internalTechnician/internalTechnician.routes');
 const maintenanceTemplateRoutes = require('./modules/maintenanceTemplate/maintenanceTemplate.routes');
 const maintenanceScheduleRoutes = require('./modules/maintenanceSchedule/maintenanceSchedule.routes');
+const maintenanceReminderService = require('./modules/maintenanceSchedule/maintenanceReminder.service');
 const emailRoutes = require('./modules/emailService/email.routes');
 const materialRequestRoutes = require('./modules/materialRequest/materialRequest.routes');
 const aiRoutes = require('./modules/ai/ai.routes');
@@ -96,6 +97,7 @@ mongoose.connect(process.env.DATABASE_URL)
 
 mongoose.connection.once('open', () => {
   startMonthlyReportScheduler();
+  maintenanceReminderService.start();
   const { PrismaClient } = require('@prisma/client');
   const prisma = new PrismaClient();
   dailyReportService.setPrismaClient(prisma);

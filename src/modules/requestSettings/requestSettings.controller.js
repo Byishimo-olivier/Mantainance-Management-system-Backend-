@@ -169,6 +169,14 @@ const defaultMeterSettings = {
   categories: [],
 };
 
+const defaultDailyEmailSummarySettings = {
+  adminDailySummary: true,
+  technicianDailySummary: true,
+  sendTime: '07:00',
+  lastSentOn: '',
+  lastSentAt: null,
+};
+
 const defaultTagSettings = {
   items: [],
 };
@@ -414,6 +422,10 @@ const sanitizeSettings = (doc) => ({
         }))
       : [],
   },
+  dailyEmailSummary: {
+    ...defaultDailyEmailSummarySettings,
+    ...(doc?.dailyEmailSummary || {}),
+  },
   tags: {
     items: Array.isArray(doc?.tags?.items)
       ? doc.tags.items.map((tag) => ({
@@ -448,6 +460,10 @@ const ensureSettings = async (companyName) => {
   }
   settings.purchaseOrders = settings.purchaseOrders || { ...defaultPurchaseOrderSettings };
   settings.meters = settings.meters || { ...defaultMeterSettings };
+  settings.dailyEmailSummary = {
+    ...defaultDailyEmailSummarySettings,
+    ...(settings.dailyEmailSummary || {}),
+  };
   settings.tags = settings.tags || { ...defaultTagSettings };
   return settings;
 };
@@ -577,6 +593,31 @@ exports.updateGeneralSettings = async (req, res) => {
     };
     await settings.save();
     return res.json({ general: settings.general });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+exports.updateDailyEmailSummary = async (req, res) => {
+  try {
+    const companyName = getCompanyName(req);
+    if (!companyName) return res.status(400).json({ error: 'Company not found on user token.' });
+    const settings = await ensureWorkOrderCategoryDefaults(await ensureSettings(companyName));
+    const requestedSendTime = String(req.body?.sendTime || defaultDailyEmailSummarySettings.sendTime).trim();
+    const normalizedSendTime = /^\d{2}:\d{2}$/.test(requestedSendTime)
+      ? requestedSendTime
+      : defaultDailyEmailSummarySettings.sendTime;
+
+    settings.dailyEmailSummary = {
+      ...defaultDailyEmailSummarySettings,
+      ...(settings.dailyEmailSummary || {}),
+      adminDailySummary: req.body?.adminDailySummary !== false,
+      technicianDailySummary: req.body?.technicianDailySummary !== false,
+      sendTime: normalizedSendTime,
+    };
+
+    await settings.save();
+    return res.json({ dailyEmailSummary: sanitizeSettings(settings).dailyEmailSummary });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

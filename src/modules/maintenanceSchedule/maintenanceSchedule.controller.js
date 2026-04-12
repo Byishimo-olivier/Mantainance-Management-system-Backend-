@@ -1,11 +1,20 @@
 const model = require('./maintenanceSchedule.model');
 
+const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const getCompanyUserIds = async (companyName) => {
   if (!companyName) return [];
   try {
     const userService = require('../user/user.service');
-    const users = await userService.getAllUsers({ companyName });
-    return users.map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
+    const normalized = String(companyName || '').trim();
+    const regex = new RegExp(`^${escapeRegExp(normalized)}$`, 'i');
+    let users = await userService.getAllUsers({ companyName: regex });
+    if (!users || users.length === 0) {
+      const targetSlug = userService.slugifyCompanyName(normalized);
+      const allUsers = await userService.getAllUsers({});
+      users = (allUsers || []).filter((u) => userService.slugifyCompanyName(u.companyName) === targetSlug);
+    }
+    return (users || []).map((u) => String(u.id || u._id || u.userId || '')).filter(Boolean);
   } catch (err) {
     console.error('[maintenanceSchedule.controller] Failed to resolve company users:', err);
     return [];
@@ -37,6 +46,133 @@ function normalizeExtendedJSON(value) {
   return value;
 }
 
+function normalizeScheduleAssignments(data) {
+  if (!data || typeof data !== 'object') return data;
+
+  const rows = Array.isArray(data.assetsRows) ? data.assetsRows : [];
+  const normalizedRows = rows.map((row) => (row && typeof row === 'object' ? { ...row } : row));
+
+  const collected = [];
+  const pushAssignee = (rawValue, meta = {}) => {
+    if (!rawValue && rawValue !== 0) return;
+
+    if (Array.isArray(rawValue)) {
+      rawValue.forEach((entry) => pushAssignee(entry, meta));
+      return;
+    }
+
+    if (typeof rawValue === 'object') {
+      const idValue = rawValue.id || rawValue._id || rawValue.userId || rawValue.value || '';
+      const nameValue = rawValue.name || rawValue.fullName || rawValue.label || meta.name || '';
+      if (idValue || nameValue) {
+        collected.push({
+          id: idValue ? String(idValue).trim() : '',
+          name: nameValue ? String(nameValue).trim() : '',
+          email: rawValue.email ? String(rawValue.email).trim() : '',
+          role: rawValue.role ? String(rawValue.role).trim() : '',
+        });
+      }
+      return;
+    }
+
+    const normalized = String(rawValue).trim();
+    if (!normalized) return;
+    const looksLikeId = /^[a-fA-F0-9]{24}$/.test(normalized) || /^[a-fA-F0-9-]{32,36}$/.test(normalized);
+    collected.push({
+      id: looksLikeId ? normalized : '',
+      name: meta.name ? String(meta.name).trim() : (looksLikeId ? '' : normalized),
+      email: meta.email ? String(meta.email).trim() : '',
+      role: meta.role ? String(meta.role).trim() : '',
+    });
+  };
+
+  normalizedRows.forEach((row) => {
+    if (!row || typeof row !== 'object') return;
+    const assigneeValue = row.assignee || row.assignedTo || row.technicianId || row.userId;
+    const assigneeName = row.assigneeName || row.assignedToName || row.technicianName || '';
+    pushAssignee(assigneeValue, { name: assigneeName });
+  });
+
+  pushAssignee(data.assignedTo, { name: data.assignedToName, email: data.assignedToEmail });
+  pushAssignee(data.technicianId, { name: data.technicianName });
+  pushAssignee(data.technicianUserId, { name: data.technicianName });
+  pushAssignee(data.assignees);
+
+  const uniqueAssignments = [];
+  const seen = new Set();
+  collected.forEach((entry) => {
+    const id = String(entry?.id || '').trim();
+    const name = String(entry?.name || '').trim();
+    const email = String(entry?.email || '').trim();
+    const key = [id.toLowerCase(), name.toLowerCase(), email.toLowerCase()].join('|');
+    if (!key.replace(/\|/g, '')) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniqueAssignments.push({
+      ...(id ? { id } : {}),
+      ...(name ? { name } : {}),
+      ...(email ? { email } : {}),
+      ...(entry?.role ? { role: entry.role } : {}),
+    });
+  });
+
+  const primary = uniqueAssignments[0] || null;
+  const employeeIds = uniqueAssignments
+    .map((entry) => entry.id || entry.email || entry.name)
+    .filter(Boolean);
+
+  if (primary?.id) {
+    data.assignedTo = primary.id;
+    data.technicianUserId = primary.id;
+  } else if (primary?.name) {
+    data.assignedTo = primary.name;
+    data.technicianUserId = primary.name;
+  } else {
+    delete data.assignedTo;
+    delete data.technicianUserId;
+  }
+
+  if (primary?.name) {
+    data.assignedToName = primary.name;
+    data.technicianName = primary.name;
+  } else {
+    delete data.assignedToName;
+  }
+
+  if (primary?.email) {
+    data.assignedToEmail = primary.email;
+  } else {
+    delete data.assignedToEmail;
+  }
+
+  if (uniqueAssignments.length > 0) {
+    data.assignees = uniqueAssignments;
+    data.employees = employeeIds.join(',');
+  } else {
+    data.assignees = [];
+    data.employees = '';
+  }
+
+  data.assetsRows = normalizedRows.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const rowAssignee = row.assignee || row.assignedTo || row.technicianId || row.userId || '';
+    const rowName = row.assigneeName || row.assignedToName || row.technicianName || '';
+    const nextRow = { ...row };
+    if (rowAssignee) {
+      nextRow.assignee = String(rowAssignee).trim();
+      nextRow.assignedTo = String(rowAssignee).trim();
+      nextRow.technicianId = String(rowAssignee).trim();
+    }
+    if (rowName) {
+      nextRow.assigneeName = String(rowName).trim();
+      nextRow.assignedToName = String(rowName).trim();
+    }
+    return nextRow;
+  });
+
+  return data;
+}
+
 module.exports = {
   async create(req, res) {
     try {
@@ -59,6 +195,7 @@ module.exports = {
       data.meterRule = parseMaybeJson(data.meterRule, data.meterRule || null);
       data.combinedRule = parseMaybeJson(data.combinedRule, data.combinedRule || null);
       data.attachments = parseMaybeJson(data.attachments, data.attachments || null);
+      normalizeScheduleAssignments(data);
 
       const uploadedPhotos = Array.isArray(req.files?.photos)
         ? req.files.photos.map((file) => ({
@@ -89,6 +226,10 @@ module.exports = {
           photos: uploadedPhotos,
           files: uploadedFiles,
         };
+        if (uploadedPhotos[0]?.url) {
+          data.photo = uploadedPhotos[0].url;
+          data.image = uploadedPhotos[0].url;
+        }
       }
       // Accept all new fields from the form
       // If date/time fields are present, combine into nextDate (preserve local time)
@@ -199,22 +340,21 @@ module.exports = {
         return res.json([]);
       }
       
-      // Check if user is admin/manager - they see all items
-      const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
-      if (!isAdmin) {
-        // Regular users only see items matching their company
-        if (!user.companyName) {
+      const role = String(user.role || '').toLowerCase();
+      const isSuperAdmin = ['superadmin', 'super_admin', 'root'].includes(role);
+      if (!isSuperAdmin) {
+        const rawCompanyName = String(user.companyName || user.company || '').trim();
+        const companyName = rawCompanyName.toLowerCase();
+        if (!companyName) {
           console.warn('[maintenanceSchedule.getAll] Regular user has no companyName. Returning empty array.');
           return res.json([]);
         }
-        // Apply company-based filtering for regular users
-        const companyUserIds = await getCompanyUserIds(user.companyName);
-        const companyName = String(user.companyName).toLowerCase().trim();
+        const companyUserIds = await getCompanyUserIds(rawCompanyName);
         schedules = schedules.filter((s) => {
           const scheduleUserId = String(s.userId || '');
           const scheduleCompany = String(s.company || s.companyName || '').toLowerCase().trim();
-          // Include if: created by someone in this company OR company name matches
-          return companyUserIds.includes(scheduleUserId) || (scheduleCompany && scheduleCompany === companyName);
+          if (scheduleCompany && scheduleCompany !== companyName) return false;
+          return companyUserIds.includes(scheduleUserId) || scheduleCompany === companyName;
         });
       }
       // Persist overdue status for any schedule whose nextDate is past and not completed
@@ -353,31 +493,160 @@ module.exports = {
 
   async getForTechnician(req, res) {
     try {
-      const technicianUserId = req.params.id;
-      const techModel = require('../internalTechnician/internalTechnician.model');
-      // Find the internal technician record for this user
-      const techs = await techModel.findAll({ userId: technicianUserId });
-
-      if (!techs || techs.length === 0) {
+      const rawParam = String(req.params.id || '').trim();
+      const user = req.user || {};
+      const fallbackUserId = String(user.userId || user.id || user._id || '').trim();
+      const technicianUserId = (!rawParam || rawParam === 'me' || rawParam === 'undefined' || rawParam === 'null')
+        ? fallbackUserId
+        : rawParam;
+      if (!technicianUserId) {
         return res.json([]);
       }
-
-      const techId = techs[0].id || techs[0]._id;
+      const rawCompanyName = String(user.companyName || user.company || '').trim();
+      const companyName = rawCompanyName.toLowerCase();
+      const companyUserIds = rawCompanyName ? await getCompanyUserIds(rawCompanyName) : [];
+      const userEmail = String(user.email || '').toLowerCase().trim();
+      const userName = String(user.name || user.fullName || user.userName || '').toLowerCase().trim();
+      const techModel = require('../internalTechnician/internalTechnician.model');
+      // Find the internal technician record for this user
+      let techs = await techModel.findAll({ userId: technicianUserId });
+      let techId = techs && techs.length > 0 ? (techs[0].id || techs[0]._id) : null;
+      if (!techId && userEmail) {
+        try {
+          techs = await techModel.findAll({ email: userEmail });
+          techId = techs && techs.length > 0 ? (techs[0].id || techs[0]._id) : null;
+        } catch (err) {
+          // ignore
+        }
+      }
+      if (!techId) {
+        try {
+          const mongoose = require('mongoose');
+          const { ObjectId } = require('mongodb');
+          const col = mongoose.connection?.db?.collection('InternalTechnician');
+          if (col) {
+            const idValue = /^[a-fA-F0-9]{24}$/.test(technicianUserId) ? new ObjectId(technicianUserId) : technicianUserId;
+            const rawTech = await col.findOne({
+              $or: [
+                { userId: idValue },
+                { userId: String(technicianUserId) },
+                ...(userEmail ? [{ email: userEmail }] : []),
+              ],
+            });
+            techId = rawTech ? String(rawTech._id || rawTech.id) : null;
+          }
+        } catch (err) {
+          // ignore
+        }
+      }
 
       const allSchedules = await model.findAll();
 
+      const matchesCompany = (s) => {
+        if (!companyName) return true;
+        const scheduleCompany = String(s.company || s.companyName || '').toLowerCase().trim();
+        if (scheduleCompany) return scheduleCompany === companyName;
+        const scheduleUserId = String(s.userId || '');
+        return companyUserIds.includes(scheduleUserId);
+      };
+
+      const collectIdentityValues = (value) => {
+        if (!value) return [];
+        if (Array.isArray(value)) {
+          return value.flatMap((entry) => collectIdentityValues(entry));
+        }
+        if (typeof value === 'object') {
+          return [
+            value.id,
+            value._id,
+            value.userId,
+            value.email,
+            value.name,
+            value.fullName,
+            value.userName,
+          ].filter(Boolean);
+        }
+        return [value];
+      };
+
+      const matchesTechIdentity = (value) => {
+        const values = collectIdentityValues(value);
+        return values.some((entry) => {
+          if (!entry) return false;
+          const asString = String(entry);
+          if (String(technicianUserId) === asString) return true;
+          if (techId && String(techId) === asString) return true;
+          return false;
+        });
+      };
+
+      const matchesTechString = (value) => {
+        const values = collectIdentityValues(value);
+        return values.some((entry) => {
+          if (!entry) return false;
+          const asString = String(entry).toLowerCase().trim();
+          if (userEmail && asString === userEmail) return true;
+          if (userName && asString === userName) return true;
+          return false;
+        });
+      };
+
+      const matchesAssigneeLabel = (s) => {
+        const fields = [
+          s.assignedToName,
+          s.technicianName,
+          s.assigneeName,
+          s.assignedToEmail,
+          s.assigneeEmail,
+          s.assignedTo,
+        ]
+          .filter(Boolean)
+          .map((value) => String(value).toLowerCase().trim());
+        if (userEmail && fields.includes(userEmail)) return true;
+        if (userName && fields.includes(userName)) return true;
+        return false;
+      };
+
       const filtered = allSchedules.filter(s => {
         if (!s) return false;
+        if (!matchesCompany(s)) return false;
+        const userIdMatches = [
+          s.userId,
+          s.assignedTo,
+          s.technicianUserId,
+          s.createdBy,
+        ].some((value) => matchesTechIdentity(value));
+        if (userIdMatches) {
+          return true;
+        }
+
+        if (Array.isArray(s.assignees) && s.assignees.some((entry) => {
+          const entryId = entry?.id || entry?._id || entry?.userId || entry?.value || entry;
+          return matchesTechIdentity(entryId) || matchesTechString(entry);
+        })) {
+          return true;
+        }
+
+        if (Array.isArray(s.assetsRows) && s.assetsRows.some((row) => {
+          const rowAssignee = row?.assignee || row?.assignedTo || row?.technicianId || row?.userId;
+          return matchesTechIdentity(rowAssignee) || matchesTechString(rowAssignee);
+        })) {
+          return true;
+        }
+        if (matchesAssigneeLabel(s)) {
+          return true;
+        }
+
         // Match by technicianId
         const sTechId = s.technicianId ? String(s.technicianId) : null;
-        if (sTechId === String(techId)) {
+        if (techId && sTechId === String(techId)) {
           return true;
         }
 
         // Match in employees string (comma-separated IDs)
         if (s.employees) {
           const ids = String(s.employees).split(',').map(x => x.trim()).filter(Boolean);
-          if (ids.includes(String(techId))) {
+          if ((techId && ids.includes(String(techId))) || ids.includes(String(technicianUserId)) || (userEmail && ids.includes(userEmail))) {
             return true;
           }
         }
@@ -409,6 +678,14 @@ module.exports = {
     try {
       const data = { ...req.body };
       console.log('[Schedule Update] ID:', req.params.id, 'Data:', JSON.stringify(data, null, 2));
+      if (typeof data.assetsRows === 'string') {
+        try {
+          data.assetsRows = JSON.parse(data.assetsRows);
+        } catch (err) {
+          // keep original value if parsing fails
+        }
+      }
+      normalizeScheduleAssignments(data);
       // Accept date/time fields for updates as well
       if (data.date) {
         if (data.time) {

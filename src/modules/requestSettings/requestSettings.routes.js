@@ -10,6 +10,7 @@ router.use(authorizeRoles('admin', 'manager', 'client'));
 
 router.get('/', ctrl.getRequestSettings);
 router.put('/general', ctrl.updateGeneralSettings);
+router.put('/daily-email-summary', ctrl.updateDailyEmailSummary);
 router.put('/api', ctrl.updateApiSettings);
 router.put('/authentication', ctrl.updateAuthenticationSettings);
 router.put('/internal', ctrl.updateInternalRequests);

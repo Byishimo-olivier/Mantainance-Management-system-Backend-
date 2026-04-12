@@ -1,11 +1,108 @@
 const nodeCron = require('node-cron');
 const emailService = require('../emailService/email.service');
 const MongooseUser = require('../user/user.model');
+const RequestSettings = require('../requestSettings/requestSettings.model');
 
 class DailyReportService {
   constructor() {
     this.isScheduled = false;
     this.prisma = null;
+  }
+
+  normalizeRole(role) {
+    return String(role || '').trim().toLowerCase();
+  }
+
+  isAdministratorRole(role) {
+    return ['admin', 'manager', 'coordinator', 'client'].includes(this.normalizeRole(role));
+  }
+
+  isTechnicianRole(role) {
+    return this.normalizeRole(role) === 'technician';
+  }
+
+  dedupeRecipients(people = []) {
+    const map = new Map();
+    (people || []).forEach((person) => {
+      const email = String(person?.email || '').trim().toLowerCase();
+      if (!email) return;
+      if (!map.has(email)) {
+        map.set(email, person);
+      }
+    });
+    return Array.from(map.values());
+  }
+
+  getDefaultDailyEmailSummary() {
+    return {
+      adminDailySummary: true,
+      technicianDailySummary: true,
+      sendTime: '07:00',
+      lastSentOn: '',
+      lastSentAt: null,
+    };
+  }
+
+  parseUtcOffsetFromTimeZoneLabel(label) {
+    const match = String(label || '').match(/([+-]\d{2}:\d{2})/);
+    return match ? match[1] : '+00:00';
+  }
+
+  getOffsetMinutes(offset) {
+    const match = String(offset || '').match(/^([+-])(\d{2}):(\d{2})$/);
+    if (!match) return 0;
+    const sign = match[1] === '-' ? -1 : 1;
+    return sign * ((Number(match[2]) * 60) + Number(match[3]));
+  }
+
+  getDatePartsForOffset(date = new Date(), offset = '+00:00') {
+    const shifted = new Date(date.getTime() + (this.getOffsetMinutes(offset) * 60 * 1000));
+    const year = shifted.getUTCFullYear();
+    const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(shifted.getUTCDate()).padStart(2, '0');
+    const hour = String(shifted.getUTCHours()).padStart(2, '0');
+    const minute = String(shifted.getUTCMinutes()).padStart(2, '0');
+    return {
+      dateKey: `${year}-${month}-${day}`,
+      hour,
+      minute,
+      totalMinutes: (Number(hour) * 60) + Number(minute),
+    };
+  }
+
+  getCompanyTimeConfig(settings = {}) {
+    const summary = {
+      ...this.getDefaultDailyEmailSummary(),
+      ...(settings?.dailyEmailSummary || {}),
+    };
+    const offset = this.parseUtcOffsetFromTimeZoneLabel(settings?.general?.timeZone);
+    return { summary, offset };
+  }
+
+  isWithinScheduledWindow(sendTime, currentParts) {
+    if (!/^\d{2}:\d{2}$/.test(String(sendTime || ''))) return false;
+    const [hourText, minuteText] = String(sendTime).split(':');
+    const targetMinutes = (Number(hourText) * 60) + Number(minuteText);
+    return currentParts.totalMinutes >= targetMinutes && currentParts.totalMinutes < (targetMinutes + 5);
+  }
+
+  async markDailySummarySent(companyName, dateKey) {
+    try {
+      await RequestSettings.updateOne(
+        { companyName },
+        {
+          $setOnInsert: {
+            companyName,
+          },
+          $set: {
+            'dailyEmailSummary.lastSentOn': dateKey,
+            'dailyEmailSummary.lastSentAt': new Date(),
+          },
+        }
+      , { upsert: true });
+    } catch (error) {
+      console.error(`Failed to record daily summary send for ${companyName}:`, error.message);
+    }
   }
 
   /**
@@ -32,7 +129,7 @@ class DailyReportService {
   }
 
   /**
-   * Initialize and schedule daily report - runs every 1 minute for testing
+   * Initialize and schedule daily report checks for each company.
    */
   async initializeScheduler() {
     if (this.isScheduled) {
@@ -40,25 +137,23 @@ class DailyReportService {
       return;
     }
 
-    // PRODUCTION: Daily at 9:00 PM (21:00)
-    nodeCron.schedule('0 21 * * *', async () => {
-      console.log('📊 [Daily Report] Starting scheduled daily reports...');
+    nodeCron.schedule('*/5 * * * *', async () => {
+      console.log('📊 [Daily Report] Checking company schedules...');
       try {
-        await this.sendDailyReports();
+        await this.sendDailyReports(false);
       } catch (error) {
         console.error('❌ [Daily Report] Error in scheduled task:', error.message);
       }
     });
 
     this.isScheduled = true;
-    console.log('✅ [Daily Report] Scheduler initialized - Reports will be sent daily at 9:00 PM');
-    console.log('⚠️  [Daily Report] Remember to change cron to "0 6 * * *" for production (6 AM UTC daily)');
+    console.log('✅ [Daily Report] Scheduler initialized - company schedules are checked every 5 minutes');
   }
 
   /**
    * Send daily reports to all admins and technicians
    */
-  async sendDailyReports() {
+  async sendDailyReports(forceAll = false) {
     const prisma = await this.ensurePrisma();
     if (!prisma) {
       console.error('❌ [Daily Report] Prisma client not initialized and failed fallback');
@@ -66,10 +161,29 @@ class DailyReportService {
     }
 
     try {
-      let companies = [];
+      const companies = [];
+      const companyNames = await MongooseUser.distinct('companyName', {
+        companyName: { $nin: [null, ''] },
+      });
+      console.log(`📈 [Daily Report] Found ${companyNames.length} unique company names from signed-up users`);
+
+      for (const companyName of companyNames) {
+        const users = await MongooseUser.find({ companyName }).select('id email name role');
+        companies.push({
+          id: companyName,
+          name: companyName,
+          email: null,
+          users: users.map((u) => ({
+            id: u.id,
+            email: u.email,
+            name: u.name,
+            role: u.role,
+          })),
+        });
+      }
 
       // Check if company model exists in client
-      if (this.prisma.company) {
+      if (false && this.prisma.company) {
         // Preferred method: Use Company model
         companies = await this.prisma.company.findMany({
           select: {
@@ -114,12 +228,33 @@ class DailyReportService {
       }
 
       console.log(`📈 [Daily Report] Found ${companies.length} companies to process`);
+      let dueCompanies = 0;
+      let sentCompanies = 0;
 
       for (const company of companies) {
-        await this.sendCompanyReports(company);
+        const settings = await RequestSettings.findOne({ companyName: company.name }).lean();
+        const { summary, offset } = this.getCompanyTimeConfig(settings);
+        const currentParts = this.getDatePartsForOffset(new Date(), offset);
+        const shouldSendNow = forceAll
+          || (
+            (summary.adminDailySummary || summary.technicianDailySummary)
+            && summary.lastSentOn !== currentParts.dateKey
+            && this.isWithinScheduledWindow(summary.sendTime, currentParts)
+          );
+
+        if (!shouldSendNow) {
+          continue;
+        }
+
+        dueCompanies += 1;
+        const sent = await this.sendCompanyReportsWithSettings(company, summary);
+        if (sent) {
+          sentCompanies += 1;
+          await this.markDailySummarySent(company.name, currentParts.dateKey);
+        }
       }
 
-      console.log('✅ [Daily Report] Daily reports sent successfully');
+      console.log(`✅ [Daily Report] Schedule check complete. Due now: ${dueCompanies}, sent: ${sentCompanies}`);
     } catch (error) {
       console.error('❌ [Daily Report] Error sending daily reports:', error.message);
     }
@@ -128,16 +263,19 @@ class DailyReportService {
   /**
    * Send reports for a specific company to its admins and technicians
    */
-  async sendCompanyReports(company) {
+  async sendCompanyReports(company, dailyEmailSummary = this.getDefaultDailyEmailSummary()) {
     try {
-      const { id: companyId, name: companyName, email: companyEmail, users } = company;
+      const { name: companyName, users = [] } = company;
 
       // Get metrics for this company
-      const metrics = await this.getCompanyMetrics(companyId);
+      const metrics = await this.getCompanyMetrics(companyName);
+      if (!metrics) {
+        console.warn(`⚠️ [Daily Report] No metrics generated for company ${companyName}`);
+        return;
+      }
 
-      // Send to admin/manager users
-      const adminUsers = users.filter(u => ['admin', 'manager', 'coordinator'].includes(u.role?.toLowerCase()));
-      
+      // Send to admin/manager/company-administrator users
+      const adminUsers = this.dedupeRecipients(users.filter((user) => this.isAdministratorRole(user.role)));
       for (const admin of adminUsers) {
         if (admin.email) {
           await this.sendAdminReport(admin, company, metrics);
@@ -145,8 +283,7 @@ class DailyReportService {
       }
 
       // Send to technicians
-      const technicians = users.filter(u => u.role?.toLowerCase() === 'technician');
-      
+      const technicians = this.dedupeRecipients(users.filter((user) => this.isTechnicianRole(user.role)));
       for (const technician of technicians) {
         if (technician.email) {
           await this.sendTechnicianReport(technician, company, metrics);
@@ -159,15 +296,52 @@ class DailyReportService {
     }
   }
 
+  async sendCompanyReportsWithSettings(company, dailyEmailSummary = this.getDefaultDailyEmailSummary()) {
+    try {
+      const { name: companyName, users = [] } = company;
+      const metrics = await this.getCompanyMetrics(companyName);
+      if (!metrics) {
+        console.warn(`Daily report metrics missing for company ${companyName}`);
+        return false;
+      }
+
+      let sentAny = false;
+
+      if (dailyEmailSummary.adminDailySummary) {
+        const adminUsers = this.dedupeRecipients(users.filter((user) => this.isAdministratorRole(user.role)));
+        for (const admin of adminUsers) {
+          if (!admin.email) continue;
+          await this.sendAdminReport(admin, company, metrics);
+          sentAny = true;
+        }
+      }
+
+      if (dailyEmailSummary.technicianDailySummary) {
+        const technicians = this.dedupeRecipients(users.filter((user) => this.isTechnicianRole(user.role)));
+        for (const technician of technicians) {
+          if (!technician.email) continue;
+          await this.sendTechnicianReport(technician, company, metrics);
+          sentAny = true;
+        }
+      }
+
+      return sentAny;
+    } catch (error) {
+      console.error(`Error sending configured reports for company ${company?.name || ''}:`, error.message);
+      return false;
+    }
+  }
+
   /**
    * Get company metrics for the last 24 hours
    */
   async getCompanyMetrics(companyIdOrName) {
     try {
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      
-      // Determine filter based on whether input is ObjectID or Name
-      const whereFilter = { companyName: companyIdOrName };
+      const companyName = String(companyIdOrName || '').trim();
+      const whereFilter = { companyName };
+      const companyUsers = await MongooseUser.find({ companyName }).select('id role status email name');
+      const companyUserIds = companyUsers.map((user) => String(user.id || user._id || '')).filter(Boolean);
       
       // Work order stats
       const totalWorkOrders = await this.prisma.issue.count({
@@ -197,23 +371,29 @@ class DailyReportService {
         },
       });
 
+      const assetCompanyFilter = companyUserIds.length
+        ? {
+            OR: [
+              { userId: { in: companyUserIds } },
+              { property: { userId: { in: companyUserIds } } },
+              { property: { clientId: { in: companyUserIds } } },
+            ],
+          }
+        : { userId: { in: [] } };
+
       // Asset stats
       const totalAssets = await this.prisma.asset.count({
-        where: { property: { clientId: { not: null } } }, // Asset metrics via property relation 
+        where: assetCompanyFilter,
       });
 
       const assetsNeedingMaintenance = await this.prisma.asset.count({
         where: {
-          property: { clientId: { not: null } },
+          ...assetCompanyFilter,
           status: { in: ['needs_maintenance', 'poor', 'faulty'] },
         },
       });
 
-      const activeTechnicians = await this.prisma.internalTechnician.count({
-        where: {
-          status: 'ACTIVE',
-        },
-      });
+      const activeTechnicians = companyUsers.filter((user) => this.isTechnicianRole(user.role) && String(user.status || 'active').toLowerCase() !== 'inactive').length;
 
       // Get top performers (technicians with most completed tasks today)
       const topTechnicians = await this.prisma.issue.groupBy({
@@ -246,12 +426,14 @@ class DailyReportService {
           priority: true,
           fixDeadline: true, // Changed from dueDate to fixDeadline
           assignedTo: true,
+          createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
         take: 10,
       });
 
       return {
+        companyName,
         totalWorkOrders,
         completedToday,
         openWorkOrders,
@@ -261,6 +443,7 @@ class DailyReportService {
         activeTechnicians,
         topTechnicians,
         highPriorityIssues,
+        administratorsCount: companyUsers.filter((user) => this.isAdministratorRole(user.role)).length,
         generatedAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -276,6 +459,11 @@ class DailyReportService {
     try {
       const { name, email } = admin;
       const { name: companyName } = company;
+      const hadAnyActivity = metrics.completedToday > 0
+        || metrics.openWorkOrders > 0
+        || metrics.overdueWorkOrders > 0
+        || metrics.assetsNeedingMaintenance > 0
+        || (metrics.highPriorityIssues?.length || 0) > 0;
 
       const htmlContent = `
         <!DOCTYPE html>
@@ -319,6 +507,7 @@ class DailyReportService {
               <p>Hi ${name},</p>
               
               <p>Here's your daily maintenance summary for <strong>${new Date().toLocaleDateString()}</strong></p>
+              ${hadAnyActivity ? '' : `<div class="alert">No new maintenance activity was recorded for your company today, but this report confirms the system is active.</div>`}
 
               <!-- Key Metrics -->
               <div class="metric-grid">
@@ -402,6 +591,10 @@ class DailyReportService {
                     <td>${metrics.activeTechnicians}</td>
                   </tr>
                   <tr>
+                    <td><strong>Administrators</strong></td>
+                    <td>${metrics.administratorsCount || 0}</td>
+                  </tr>
+                  <tr>
                     <td><strong>Completion Rate Today</strong></td>
                     <td>${metrics.totalWorkOrders > 0 ? Math.round((metrics.completedToday / metrics.totalWorkOrders) * 100) : 0}%</td>
                   </tr>
@@ -455,6 +648,7 @@ class DailyReportService {
           priority: true,
           fixDeadline: true,
           assetName: true,
+          updatedAt: true,
         },
         orderBy: { createdAt: 'desc' },
         take: 20,
@@ -466,6 +660,7 @@ class DailyReportService {
 
       const pending = myWorkOrders.filter(wo => wo.status !== 'COMPLETED').length;
       const urgent = myWorkOrders.filter(wo => wo.priority === 'HIGH' && wo.status !== 'COMPLETED').length;
+      const hadAnyActivity = completedToday > 0 || pending > 0 || urgent > 0;
 
       const htmlContent = `
         <!DOCTYPE html>
@@ -506,6 +701,7 @@ class DailyReportService {
               <p>Hi ${name},</p>
               
               <p>Here's your work summary for today - <strong>${new Date().toLocaleDateString()}</strong></p>
+              ${hadAnyActivity ? '' : `<div class="alert">No work orders were assigned or updated for you today, but your daily company summary is still being delivered.</div>`}
 
               <!-- Key Stats -->
               <div class="stat-box">
@@ -569,7 +765,7 @@ class DailyReportService {
    */
   async triggerReportsNow() {
     console.log('🚀 Manually triggering daily reports...');
-    await this.sendDailyReports();
+    await this.sendDailyReports(true);
   }
 }
 

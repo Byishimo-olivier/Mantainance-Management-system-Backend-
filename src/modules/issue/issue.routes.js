@@ -12,7 +12,7 @@ router.post('/:id/evidence/after', authenticate, authorizeRoles('technician'), c
 
 // Assign an issue to a technician (admin/manager only)
 // Allow clients to request assignment for their own issues as well
-router.post('/:id/assign', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.assignToTech);
+router.post('/:id/assign', authenticate, authorizeRoles('admin', 'manager', 'client', 'technician', 'internal'), ctrl.assignToTech);
 // Assign to internal property technician (allow property clients to request assignment)
 router.post('/:id/assign-internal', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.assignToInternal);
 // Manager/admin/client can approve or decline a request.
