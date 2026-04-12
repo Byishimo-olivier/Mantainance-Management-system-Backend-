@@ -40,6 +40,7 @@ const analyticsPreferenceRoutes = require('./modules/analyticsPreference/analyti
 const taskRoutes = require('./modules/task/task.routes');
 const dailyReportRoutes = require('./modules/reports/dailyReport.routes');
 const quoteRequestRoutes = require('./modules/quoteRequest/quoteRequest.routes');
+const contactMessageRoutes = require('./modules/contactMessage/contactMessage.routes');
 const dailyReportService = require('./modules/reports/dailyReport.service');
 const systemSettingsService = require('./modules/systemSettings/systemSettings.service');
 const paymentService = require('./modules/subscription/payment.service');
@@ -188,6 +189,7 @@ app.use('/api/request-settings', requestSettingsRoutes);
 app.use('/api/analytics-preferences', analyticsPreferenceRoutes);
 app.use('/api/reports', dailyReportRoutes);
 app.use('/api/quote-requests', quoteRequestRoutes);
+app.use('/', contactMessageRoutes);
 
 const PORT = process.env.PORT || 5000;
 
