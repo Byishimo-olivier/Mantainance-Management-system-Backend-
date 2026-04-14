@@ -485,3 +485,136 @@ exports.getCompanySubscriptionStatus = async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 };
+
+/**
+ * TRIAL-RELATED ENDPOINTS
+ */
+
+/**
+ * Get trial status for user's company
+ * Returns countdown, expiration status, etc
+ */
+exports.getTrialStatus = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const trialService = require('./trial.service');
+    const User = require('../user/user.model');
+    
+    // Find user from Mongoose
+    const user = await User.findById(userId).select('companyName companyId company').lean();
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get company ID from user
+    const companyId = user.company?._id?.toString() || user.companyId?.toString() || user.company?.id?.toString();
+    
+    if (!companyId) {
+      // Return default trial status if no company attached
+      return res.json({
+        message: 'No company associated with user',
+        data: {
+          isInTrial: false,
+          daysRemaining: 0,
+          trialExceeded: false,
+          subscriptionStatus: 'inactive',
+        },
+      });
+    }
+
+    const trialStatus = await trialService.getTrialStatus(companyId);
+
+    res.json({
+      message: 'Trial status retrieved successfully',
+      data: trialStatus,
+    });
+  } catch (error) {
+    console.error('Error getting trial status:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Initialize free trial for new company
+ * Called during company registration
+ */
+exports.initializeFreeTrial = async (req, res) => {
+  try {
+    const { companyId } = req.body;
+
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID is required' });
+    }
+
+    const trialService = require('./trial.service');
+    const trial = await trialService.initializeFreeTrial(companyId);
+
+    res.status(201).json({
+      message: 'Free trial initialized successfully',
+      data: normalizeExtendedJSON(trial),
+    });
+  } catch (error) {
+    console.error('Error initializing trial:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * Upgrade from trial to paid subscription
+ * Called when company makes the first payment
+ */
+exports.upgradeToPaid = async (req, res) => {
+  try {
+    const { companyId, plan, billingCycle } = req.body;
+
+    if (!companyId || !plan) {
+      return res.status(400).json({ error: 'Company ID and plan are required' });
+    }
+
+    const trialService = require('./trial.service');
+    const upgraded = await trialService.upgradeToPaid(
+      companyId,
+      plan,
+      billingCycle || 'monthly'
+    );
+
+    res.json({
+      message: 'Upgraded to paid subscription successfully',
+      data: normalizeExtendedJSON(upgraded),
+    });
+  } catch (error) {
+    console.error('Error upgrading to paid:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * Check if user can access features
+ * Returns true if in active trial or has paid subscription
+ */
+exports.canAccessFeatures = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const trialService = require('./trial.service');
+    const canAccess = await trialService.canAccessFeatures(userId);
+
+    res.json({
+      message: 'Feature access checked',
+      data: { canAccess },
+    });
+  } catch (error) {
+    console.error('Error checking feature access:', error);
+    res.status(500).json({ error: error.message });
+  }
+};

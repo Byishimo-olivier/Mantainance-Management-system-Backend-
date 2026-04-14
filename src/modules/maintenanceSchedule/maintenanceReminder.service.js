@@ -238,29 +238,39 @@ class MaintenanceReminderService {
   }
 
   async resolvePersonById(id) {
-    if (!id) return null;
+    if (!id || id === 'N/A' || id === '') return null;
 
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      const user = await User.findById(id).select('name email');
-      if (user?.email) return { id: String(user._id), name: user.name, email: user.email };
+    // Check if it's a valid MongoDB ObjectID format (24 hex characters)
+    const isValidObjectId = /^[0-9a-f]{24}$/i.test(id);
+    
+    if (isValidObjectId) {
+      // Try Mongoose collections first
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        const user = await User.findById(id).select('name email');
+        if (user?.email) return { id: String(user._id), name: user.name, email: user.email };
 
-      const internalCollection = mongoose.connection?.db?.collection('InternalTechnician');
-      if (internalCollection) {
-        const internalTech = await internalCollection.findOne({ _id: new mongoose.Types.ObjectId(id) });
-        if (internalTech?.email) {
-          return { id: String(internalTech._id), name: internalTech.name, email: internalTech.email };
+        const internalCollection = mongoose.connection?.db?.collection('InternalTechnician');
+        if (internalCollection) {
+          const internalTech = await internalCollection.findOne({ _id: new mongoose.Types.ObjectId(id) });
+          if (internalTech?.email) {
+            return { id: String(internalTech._id), name: internalTech.name, email: internalTech.email };
+          }
         }
       }
-    }
 
-    try {
-      const technician = await prisma.technician.findUnique({
-        where: { id },
-        select: { id: true, name: true, email: true },
-      });
-      if (technician?.email) return technician;
-    } catch (error) {
-      console.warn('[PM Reminder] Technician lookup failed for id', id, error?.message || error);
+      // Try Prisma for valid ObjectIDs
+      try {
+        const technician = await prisma.technician.findUnique({
+          where: { id },
+          select: { id: true, name: true, email: true },
+        });
+        if (technician?.email) return technician;
+      } catch (error) {
+        console.warn('[PM Reminder] Technician lookup failed for id', id, error?.message || error);
+      }
+    } else {
+      // Invalid format - log and skip
+      console.warn('[PM Reminder] Skipped invalid technician ID:', id);
     }
 
     return null;

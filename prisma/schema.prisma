@@ -14,10 +14,17 @@ model Company {
   
   // Subscription info
   subscriptions       Subscription[]      // All subscriptions for this company
-  subscriptionStatus  String              @default("inactive") // inactive, trial, active, cancelled, suspended
+  subscriptionStatus  String              @default("inactive") // inactive, trial, active, cancelled, suspended, trial_expired
   subscriptionPlan    String?             // basic, premium, professional, enterprise
   subscriptionStartDate DateTime?
   subscriptionEndDate DateTime?
+  
+  // Trial period tracking
+  onFreeTrial         Boolean             @default(true) // Is company on free trial
+  trialStartDate      DateTime?           // When trial started
+  trialEndDate        DateTime?           // When trial expires (5 days after trial start)
+  trialDaysRemaining  Int                 @default(5) // Days remaining in trial (max 5)
+  trialExceeded       Boolean             @default(false) // Has trial period expired
   
   // Team management
   users               User[]              // All users in this company
@@ -349,7 +356,7 @@ model Subscription {
   plan             String   // basic, premium, professional, enterprise
   billingCycle     String   @default("monthly") // weekly, monthly, yearly
   amount           Float    // Amount for current billing cycle
-  status           String   @default("active") // active, cancelled, paused, pending
+  status           String   @default("active") // active, cancelled, paused, pending, trial, trial_expired
   startDate        DateTime @default(now())
   endDate          DateTime?
   nextBillingDate  DateTime
@@ -359,6 +366,12 @@ model Subscription {
   paymentMethod    String? // pesapal, card, bank_transfer, etc
   paymentStatus    String @default("pending") // pending, paid, failed, refunded
   autoRenew        Boolean @default(true)
+  
+  // Trial period fields (5-day free trial)
+  isTrialPeriod    Boolean  @default(false) // Is this subscription in trial period
+  trialStartDate   DateTime? // When trial started
+  trialEndDate     DateTime? // When trial expires (5 days after trialStartDate)
+  trialDaysRemaining Int    @default(0) // Days left in trial
   
   // Relations
   invoices         Invoice[]

@@ -15,6 +15,14 @@ router.get('/public/pricing', ctrl.getPricing);
 // Payment routes
 router.use('/payments', paymentRoutes);
 
+// ============================================
+// TRIAL-RELATED ROUTES (MUST BE BEFORE /:id)
+// ============================================
+router.get('/trial/status', authenticate, ctrl.getTrialStatus);
+router.post('/trial/initialize', authenticate, ctrl.initializeFreeTrial);
+router.post('/trial/upgrade-to-paid', authenticate, ctrl.upgradeToPaid);
+router.get('/trial/can-access', authenticate, ctrl.canAccessFeatures);
+
 // Protected routes - require authentication
 router.use(authenticate);
 
