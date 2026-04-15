@@ -406,6 +406,16 @@ INSTRUCTIONS:
   detectIntent(query) {
     const q = normalizeText(query);
     
+    // How-to intents
+    if (/\bhow.*add|how.*create|where.*add|where.*create|how do i\b/.test(q)) {
+      if (/\bmeter\b/.test(q)) return "how_to_add_meter";
+      if (/\bwork\s?order\b/.test(q)) return "how_to_add_work_order";
+      if (/\brequest\b/.test(q)) return "how_to_add_request";
+      if (/\bpreventive|pm\b/.test(q)) return "how_to_add_pm";
+      if (/\basset|equipment|device\b/.test(q)) return "how_to_add_asset";
+      return "how_to_general";
+    }
+    
     // Priority/Action intents
     if (/\b(fix first|priority|urgent|critical|what.*fix|next.*do|should.*do)\b/.test(q)) return "get_priority";
     if (/\b(sla|breach|overdue|late)\b/.test(q)) return "get_sla_breaches";
@@ -595,8 +605,73 @@ Response:`;
     const recommendations = Array.isArray(summary.recommendations) ? summary.recommendations : [];
 
     // Greetings
-    if (isGreeting(q) && !isMaintenanceQuestion(q)) return 'Hello! I can help with maintenance trends, risky properties, technician performance, SLA breaches, and what to prioritize first.';
+    if (isGreeting(q) && !isMaintenanceQuestion(q)) return 'Hello! I can help with maintenance trends, risky properties, technician performance, SLA breaches, what to prioritize first, and how to use the system (add meters, create work orders, etc.).';
     if (isWellbeingQuestion(q) && !isMaintenanceQuestion(q)) return 'I am doing well and ready to help. Ask me about trends, recurring failures, or what to prioritize.';
+
+    // ========================
+    // HOW-TO / GUIDE QUESTIONS
+    // ========================
+    
+    // Pattern matchers for "how to" questions
+    const asksHowToAdd = (text) => /how.*add|how.*create|how.*submit|where.*add|where.*create|where to|how do i|can i/.test(text);
+    const mentionsMeters = (text) => /meter|meters/.test(text);
+    const mentionsRequests = (text) => /request|issue|complaint|report/.test(text);
+    const mentionsWorkOrder = (text) => /work\s?order|task|job/.test(text);
+    const mentionsPM = (text) => /preventive\s?maintenance|preventive|pm|scheduled|scheduled maintenance/.test(text);
+    const mentionsAsset = (text) => /asset|equipment|property|device|edge device|meter/.test(text);
+    const mentionsTechnician = (text) => /technician|tech|worker|staff|assign/.test(text);
+
+    // How-to responses
+    if (asksHowToAdd(q)) {
+      if (mentionsMeters(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `📊 How to Add a Meter:\n\n1. Go to the "Meters" tab in your dashboard\n2. Click "Add Meter" button\n3. Fill in meter details (name, location, type)\n4. Configure meter readings & alerts\n5. Save\n\nMeters help track consumption and identify anomalies. Click the button below to get started!`,
+          action: { label: 'Open Meters', type: 'openMetersTab' }
+        });
+      }
+      if (mentionsRequests(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `📝 How to Create a Request:\n\n1. Go to "Requests" section\n2. Click "Create New Request"\n3. Select property & description\n4. Add priority level & due date\n5. Assign to technician (optional)\n6. Submit\n\nYour request will be queued for assignment. Ready to create one? Click below!`,
+          action: { label: 'Open Request Form', type: 'openRequestForm' }
+        });
+      }
+      if (mentionsWorkOrder(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `📋 How to Create a Work Order:\n\n1. Go to "Work Orders" tab\n2. Click "Create Work Order"\n3. Select asset/location\n4. Enter issue description & priority\n5. Set due date\n6. Assign technician\n7. Save & track status\n\nWork orders are tracked in real-time. Let's create one!`,
+          action: { label: 'Create Work Order', type: 'openWorkOrderDetailsForm' }
+        });
+      }
+      if (mentionsPM(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `🔄 How to Create Preventive Maintenance:\n\n1. Go to "Maintenance" → "Preventive"\n2. Click "Create PM Schedule"\n3. Select asset/property\n4. Set frequency (weekly, monthly, quarterly, etc.)\n5. Choose maintenance tasks\n6. Assign technician\n7. Save\n\nPMs help prevent breakdowns. Create one now!`,
+          action: { label: 'Create Preventive', type: 'openCreatePm' }
+        });
+      }
+      if (mentionsAsset(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `🏢 How to Add an Asset:\n\n1. Go to "Assets" section\n2. Click "Add New Asset"\n3. Enter asset name, type, location\n4. Set condition & warranty info\n5. Attach documents (optional)\n6. Save\n\nAssets help track equipment. Ready to add one?`,
+          action: { label: 'Add Asset', type: 'openAddAsset' }
+        });
+      }
+      if (mentionsTechnician(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `👥 How to Assign a Technician:\n\n1. Open work order/request\n2. Click "Assign Technician"\n3. Filter by skill/availability\n4. Select technician from list\n5. Confirm assignment\n6. Technician gets notification\n\nConsider workload when assigning. Manage your team!`,
+          action: { label: 'Manage Team', type: 'openAddTechnician' }
+        });
+      }
+      // Generic how-to fallback
+      return JSON.stringify({
+        kind: 'action',
+        content: `📚 I can help you with:\n\n✓ How to add a meter\n✓ How to create a request\n✓ How to create a work order\n✓ How to set up preventive maintenance\n✓ How to add an asset\n✓ How to assign a technician\n\nWhich task would you like help with?`,
+        action: null
+      });
+    }
 
     if (!summary || !summary.metrics) {
       return 'I am FixNest AI. I can answer general maintenance questions, but I need you to log in to access your specific company data and analytics.';

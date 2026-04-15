@@ -1004,8 +1004,24 @@ class AIController {
             const companyId = req.user?.companyId || null;
 
             // Call the AI Service (Claude > Gemini pipeline) with full context
-            const response = await aiService.chat(message, sanitizedHistory, analyticsSummary, userRole, companyId);
-            res.json({ response });
+            const aiResponse = await aiService.chat(message, sanitizedHistory, analyticsSummary, userRole, companyId);
+            
+            // Check if response is a JSON action response
+            let parsedResponse = aiResponse;
+            try {
+              parsedResponse = JSON.parse(aiResponse);
+            } catch (e) {
+              // Not JSON, treat as plain text response
+              parsedResponse = aiResponse;
+            }
+            
+            // Return response (could be string or action object)
+            if (typeof parsedResponse === 'string') {
+              res.json({ response: parsedResponse });
+            } else {
+              // Action response with button/link
+              res.json({ response: parsedResponse });
+            }
         } catch (error) {
             console.error("AI Controller Error (Chat Overall):", error);
             res.status(500).json({ 
