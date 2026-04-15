@@ -405,11 +405,24 @@ INSTRUCTIONS:
 
   detectIntent(query) {
     const q = normalizeText(query);
-    if (/\b(issue|work ?order|request|incident)\b/.test(q)) return "get_issues";
-    if (/\b(property|location|building|site)\b/.test(q)) return "get_properties";
-    if (/\b(technician|tech|worker|team)\b/.test(q)) return "get_technicians";
-    if (/\b(asset|equipment|machine)\b/.test(q)) return "get_assets";
-    if (/\b(report|stats|analytics|metric)\b/.test(q)) return "get_reports";
+    
+    // Priority/Action intents
+    if (/\b(fix first|priority|urgent|critical|what.*fix|next.*do|should.*do)\b/.test(q)) return "get_priority";
+    if (/\b(sla|breach|overdue|late)\b/.test(q)) return "get_sla_breaches";
+    if (/\b(trend|pattern|recurring|repeated|common)\b/.test(q)) return "get_trends";
+    if (/\b(performance|fastest|best|efficiency)\b/.test(q)) return "get_performance";
+    
+    // Data lookup intents
+    if (/\b(issue|work\s?order|request|ticket|incident|task|job)\b/.test(q)) return "get_issues";
+    if (/\b(property|location|building|site|facility|asset)\b/.test(q)) return "get_properties";
+    if (/\b(technician|tech|worker|team|staff|person|people)\b/.test(q)) return "get_technicians";
+    if (/\b(equipment|machine|device|meter)\b/.test(q)) return "get_assets";
+    if (/\b(report|stats|analytics|metric|summary|status)\b/.test(q)) return "get_reports";
+    
+    // Counting/Summary intents
+    if (/\b(how many|count|total|number|quantity)\b/.test(q)) return "count_items";
+    if (/\b(status|progress|update|current|what.*happening)\b/.test(q)) return "get_status";
+    
     return "general_question";
   }
 
@@ -581,6 +594,7 @@ Response:`;
     const highestPriority = summary.highPriorityOpenIssues?.[0];
     const recommendations = Array.isArray(summary.recommendations) ? summary.recommendations : [];
 
+    // Greetings
     if (isGreeting(q) && !isMaintenanceQuestion(q)) return 'Hello! I can help with maintenance trends, risky properties, technician performance, SLA breaches, and what to prioritize first.';
     if (isWellbeingQuestion(q) && !isMaintenanceQuestion(q)) return 'I am doing well and ready to help. Ask me about trends, recurring failures, or what to prioritize.';
 
@@ -588,19 +602,83 @@ Response:`;
       return 'I am FixNest AI. I can answer general maintenance questions, but I need you to log in to access your specific company data and analytics.';
     }
 
-    const mentionsWorkOrders = (text) => /work ?order|issue|ticket|job/.test(text);
-    const asksHowMany = (text) => /how many|number of|count of|how much/.test(text);
-    const asksNotDone = (text) => /not done|not completed|unfinished|pending|open|remaining/.test(text);
+    // ========================
+    // IMPROVED QUESTION PATTERNS
+    // ========================
+    
+    // Helper functions for better pattern matching
+    const mentionsWorkOrders = (text) => /work\s?order|issue|ticket|request|task|job|maintenance\s?job/.test(text);
+    const asksHowMany = (text) => /how many|number of|count|total|how much|how much \w+|quantity/.test(text);
+    const asksAboutPriority = (text) => /priority|urgent|critical|important|first|next|should we fix|what to do/.test(text);
+    const asksAboutProperty = (text) => /property|asset|location|facility|building|unit|area/.test(text);
+    const asksAboutTechnician = (text) => /technician|tech|worker|team|staff|performance|fastest|best/.test(text);
+    const asksAboutTrends = (text) => /trend|pattern|recurring|repeated|common|frequent|most|rise|increase|decrease/.test(text);
+    const asksAboutStatus = (text) => /status|progress|update|done|completed|pending|open|ongoing|progress/.test(text);
+    const asksAboutSLA = (text) => /sla|breach|overdue|late|timeline/.test(text);
 
-    if (asksHowMany(q) && mentionsWorkOrders(q) && asksNotDone(q)) {
-      return `Direct answer: ${metrics.openIssues || 0} work orders are not done yet.\n\nKey evidence: ${metrics.totalIssues || 0} total issues, ${metrics.completedIssues || 0} completed.\n\nRecommended actions: ${recommendations[0] || 'Review high-priority work orders.'}`;
+    // Priority/What to fix first
+    if (asksAboutPriority(q)) {
+      if (highestPriority) {
+        return `🚨 FIX FIRST: ${highestPriority.title}\n\nPriority: ${highestPriority.priority}\nLocation: ${highestPriority.assetName || 'Not specified'}\nDescription: ${highestPriority.description || 'No details'}\n\nRecommendation: Assign this immediately.`;
+      }
+      if (recommendations.length > 0) {
+        return `Based on current data, I recommend:\n\n${recommendations.slice(0, 3).map((r, i) => `${i+1}. ${r}`).join('\n')}`;
+      }
+      return `Critical issues to address: ${metrics.slaBreaches || 0} SLA breaches detected. Open work orders: ${metrics.openIssues || 0}. Start with high-priority items.`;
     }
 
-    if (q.includes('which property') || q.includes('most incidents')) {
-      return `Direct answer: ${topProperty ? `${topProperty.property} has the most incidents.` : 'I cannot identify a top property from the current summary.'}`;
+    // How many open/pending/unfinished
+    if (asksHowMany(q) && mentionsWorkOrders(q)) {
+      const openCount = metrics.openIssues || 0;
+      const totalCount = metrics.totalIssues || 0;
+      return `📊 Work Order Summary:\n\n✅ Open Work Orders: ${openCount}\n📋 Total Work Orders: ${totalCount}\n✔️ Completed: ${metrics.completedIssues || 0}\n⏱️ SLA Breaches: ${metrics.slaBreaches || 0}\n\nAction: Review and prioritize open items.`;
     }
 
-    return `Here is your current status: ${metrics.totalIssues || 0} total issues, ${metrics.openIssues || 0} open, ${metrics.slaBreaches || 0} SLA breaches. What else would you like to know?`;
+    // Status overview
+    if (asksAboutStatus(q)) {
+      return `📈 Current Status:\n\n✅ Completed: ${metrics.completedIssues || 0}\n⏳ Open: ${metrics.openIssues || 0}\n📍 Total: ${metrics.totalIssues || 0}\n⚠️ SLA Breaches: ${metrics.slaBreaches || 0}\n\nNext Step: Focus on ${metrics.slaBreaches > 0 ? 'SLA breaches' : 'open work orders'}.`;
+    }
+
+    // Which property has most incidents
+    if (asksAboutProperty(q) && (asksAboutTrends(q) || q.includes('most'))) {
+      if (topProperty) {
+        return `🏢 Top Property by Incidents:\n\n${topProperty.property}: ${topProperty.count || 'Multiple'} incidents\n\nThis property needs attention. Check recurring failure patterns there.`;
+      }
+      return `I cannot identify a top property from the current summary. Check your property maintenance records.`;
+    }
+
+    // Recurring issues/Trends
+    if (asksAboutTrends(q) || q.includes('pattern')) {
+      if (topRecurring) {
+        return `🔄 Top Recurring Issue:\n\n${topRecurring.issue}: Occurs ${topRecurring.frequency || 'frequently'}\n\nRecommendation: Implement preventive maintenance for this issue type.\n\nAll recurring issues: ${recommendations.join(', ') || 'See dashboard'}`;
+      }
+      return `Trend Analysis: Review your frequent issues in the Trends section of the dashboard.`;
+    }
+
+    // Technician performance
+    if (asksAboutTechnician(q)) {
+      if (fastestTech) {
+        return `⚡ Top Technician Performance:\n\nAverage Resolution Time: ${formatHours(fastestTech.averageResolutionHours)}\n\nThis technician is your fastest. Consider using them for urgent issues.`;
+      }
+      return `📊 Technician Performance: Review individual technician metrics in the Team Performance section.`;
+    }
+
+    // SLA breaches
+    if (asksAboutSLA(q)) {
+      const breachCount = metrics.slaBreaches || 0;
+      if (breachCount > 0) {
+        return `⚠️ SLA ALERT!\n\n🔴 Current Breaches: ${breachCount}\n\nImmediate Action: Review breached items and reassign to fastest technicians.\nPreventive: Implement better scheduling to avoid future breaches.`;
+      }
+      return `✅ Great news! No SLA breaches detected. Keep up the good work!`;
+    }
+
+    // Generic improvements - better fallback
+    if (asksHowMany(q)) {
+      return `📊 Summary:\n\n📋 Total Issues: ${metrics.totalIssues || 0}\n⏳ Open: ${metrics.openIssues || 0}\n✅ Completed: ${metrics.completedIssues || 0}\n⚠️ SLA Breaches: ${metrics.slaBreaches || 0}\n\nWould you like details about a specific category?`;
+    }
+
+    // Smart fallback - provide useful info instead of generic message
+    return `📊 Dashboard Summary:\n\nTotal Issues: ${metrics.totalIssues || 0} | Open: ${metrics.openIssues || 0} | Completed: ${metrics.completedIssues || 0}\nSLA Breaches: ${metrics.slaBreaches || 0}\n\nI can help with:\n✉️ What to fix first?\n🏢 Which property has most incidents?\n⚡ Technician performance?\n🔄 Recurring issues?\n⚠️ SLA breaches?\n\nTry asking one of these questions!`;
   }
 }
 

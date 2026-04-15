@@ -1,9 +1,11 @@
 const User = require('../user/user.model.js');
+const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 const isDev = process.env.NODE_ENV !== 'production';
+const prisma = new PrismaClient();
 
 // Mirror the same transporter config that email.service.js uses successfully
 const createTransporter = () => {
@@ -37,11 +39,30 @@ const forgotPassword = async (req, res) => {
     return res.status(400).json({ error: 'Email is required.' });
   }
 
-  // ── Step 1: Find user ────────────────────────────────────────────────────────
+  // ── Step 1: Find user from Mongoose or Prisma ────────────────────────────────
   let user;
+  let isFromPrisma = false;
+  let userSource = null;
+  
   try {
     console.log('[PASSWORD RESET] Looking up user:', email);
+    
+    // Check Mongoose first
     user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (user) {
+      userSource = 'mongoose';
+      console.log('[PASSWORD RESET] User found in Mongoose');
+    } else {
+      // Check Prisma if not in Mongoose
+      user = await prisma.user.findFirst({ 
+        where: { email: email.toLowerCase().trim() } 
+      });
+      if (user) {
+        isFromPrisma = true;
+        userSource = 'prisma';
+        console.log('[PASSWORD RESET] User found in Prisma');
+      }
+    }
     console.log('[PASSWORD RESET] User found:', !!user);
   } catch (dbErr) {
     console.error('[PASSWORD RESET] DB lookup failed:', dbErr.message);
@@ -59,12 +80,27 @@ const forgotPassword = async (req, res) => {
   // ── Step 2: Generate and save token ─────────────────────────────────────────
   const rawToken = crypto.randomBytes(32).toString('hex');
   const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const expiryTime = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
   try {
-    console.log('[PASSWORD RESET] Saving token to DB for user:', user._id);
-    user.resetPasswordToken = hashedToken;
-    user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-    await user.save();
+    console.log('[PASSWORD RESET] Saving token to DB for user:', user.id || user._id);
+    
+    if (isFromPrisma) {
+      // Save to Prisma
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          resetPasswordToken: hashedToken,
+          resetPasswordExpires: expiryTime
+        }
+      });
+    } else {
+      // Save to Mongoose
+      user.resetPasswordToken = hashedToken;
+      user.resetPasswordExpires = expiryTime;
+      await user.save();
+    }
+    
     console.log('[PASSWORD RESET] Token saved successfully.');
   } catch (saveErr) {
     console.error('[PASSWORD RESET] DB save failed:', saveErr.message);
@@ -142,15 +178,41 @@ const resetPassword = async (req, res) => {
     // Hash the incoming raw token to compare with the stored hash
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
-    const user = await User.findOne({
+    // Check Mongoose first
+    let user = await User.findOne({
       resetPasswordToken: hashedToken,
       resetPasswordExpires: { $gt: new Date() },
     });
 
     if (!user) {
-      return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+      // Check Prisma if not in Mongoose
+      user = await prisma.user.findFirst({
+        where: {
+          resetPasswordToken: hashedToken,
+          resetPasswordExpires: { gt: new Date() }
+        }
+      });
+
+      if (!user) {
+        return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+      }
+
+      // Update password in Prisma
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          password: hashedPassword,
+          resetPasswordToken: null,
+          resetPasswordExpires: null
+        }
+      });
+
+      console.log('[PASSWORD RESET] Password reset successful for:', user.email);
+      return res.json({ message: 'Password reset successful. You can now log in with your new password.' });
     }
 
+    // Update password in Mongoose
     user.password = await bcrypt.hash(password, 10);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;

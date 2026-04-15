@@ -53,6 +53,27 @@ const getStatusLifecycleMessage = (status) => {
   return null;
 };
 
+const issueHasAssignment = (issue) => {
+  if (!issue || typeof issue !== 'object') return false;
+  if (issue.assignedTo && String(issue.assignedTo).trim()) return true;
+  if (Array.isArray(issue.assignees)) {
+    return issue.assignees.some((entry) => {
+      if (!entry) return false;
+      if (typeof entry === 'string') return !!String(entry).trim();
+      return !!String(entry.id || entry._id || entry.userId || entry.name || '').trim();
+    });
+  }
+  return false;
+};
+
+const getIssueRecordType = (issue) => {
+  const normalizedStatus = String(issue?.status || '').toUpperCase();
+  if (issue?.approved || normalizedStatus === 'APPROVED' || normalizedStatus.includes('PROGRESS') || normalizedStatus.includes('COMPLETE')) {
+    return 'Work Order';
+  }
+  return 'Request';
+};
+
 const resolveActorName = async (user, fallback = 'System') => {
   if (!user) return fallback;
   const direct = user.name || user.username || user.email;
@@ -1053,7 +1074,7 @@ exports.create = async (req, res) => {
       'address', 'beforeImage', 'afterImage', 'fixTime', 'fixDeadline', 'status', 'approved',
       'inspectorId', 'requestorId', 'companyName',
       'approvedAt', 'createdAt', 'updatedAt',
-      'category', 'assetName', 'team', 'additionalResponsibleWorkers', 'checklist', 'estimatedTime', 'signature', 'priority', 'frequency', 'chat'
+      'category', 'closeoutNotes', 'closeoutNote', 'closeout', 'assetName', 'team', 'additionalResponsibleWorkers', 'checklist', 'estimatedTime', 'signature', 'priority', 'frequency', 'chat'
     ];
     const filteredData = {};
     for (const field of validFields) {
@@ -1218,6 +1239,43 @@ exports.create = async (req, res) => {
     const created = await service.create(filteredData);
 
     console.log('[CREATE ISSUE] Issue created with id:', created?.id, 'userId:', created?.userId);
+
+    // Send email notification to admins/managers on request/issue creation
+    try {
+      if (created && created.companyName) {
+        await emailService.sendRequestCreatedNotification({
+          id: created.id,
+          title: created.title,
+          description: created.description,
+          location: created.location,
+          category: created.category || 'General',
+          priority: created.priority || 'Normal',
+          status: created.status || 'PENDING',
+          companyName: created.companyName,
+          name: created.name,
+          email: created.email,
+          phone: created.phone
+        });
+
+        if (!issueHasAssignment(created)) {
+          await emailService.sendUnassignedWorkAlert({
+            id: created.id,
+            title: created.title,
+            description: created.description,
+            location: created.location,
+            address: created.address,
+            companyName: created.companyName,
+            status: created.status || 'PENDING',
+            priority: created.priority,
+            category: created.category,
+            recordType: getIssueRecordType(created),
+            link: `/manager-dashboard?tab=manage-issue&id=${created.id || ''}`
+          });
+        }
+      }
+    } catch (emailErr) {
+      console.error('❌ Error sending request created notification:', emailErr);
+    }
 
     // Send email notification to admins/managers AND newly assigned internal tech
     try {
@@ -1409,6 +1467,12 @@ exports.update = async (req, res) => {
   const oldIssue = await service.getById(req.params.id);
   // Normalize tags in incoming body if provided
   const incoming = { ...req.body };
+  
+  // Normalize status to uppercase if provided
+  if (incoming.status && typeof incoming.status === 'string') {
+    incoming.status = incoming.status.toUpperCase();
+  }
+  
   if (typeof incoming.tags === 'string') {
     try { incoming.tags = JSON.parse(incoming.tags); } catch (e) { /* keep as-is */ }
   }
@@ -1488,7 +1552,28 @@ exports.update = async (req, res) => {
   try {
     const userService = require('../user/user.service');
 
-    // If status changed to approved/declined, notify client
+    // If status changed, send comprehensive status change notification to admin + client
+    if (oldIssue && oldIssue.status !== updated.status) {
+      await emailService.sendStatusChangeNotification(
+        {
+          id: updated.id,
+          title: updated.title,
+          description: updated.description,
+          location: updated.location || updated.address,
+          companyName: updated.companyName,
+          status: updated.status,
+          priority: updated.priority,
+          name: updated.name,
+          email: updated.email,
+          phone: updated.phone,
+          fixDeadline: updated.fixDeadline,
+          beforeImage: updated.beforeImage
+        },
+        oldIssue.status
+      );
+    }
+
+    // If status changed to approved/declined, notify client with specific message
     if (oldIssue && oldIssue.status !== updated.status) {
       if (updated.status === 'APPROVED' || updated.status === 'DECLINED') {
         const client = await userService.findUserById(updated.userId);
@@ -1544,6 +1629,26 @@ exports.update = async (req, res) => {
           afterImage: updated.afterImage || null
         }, technician, client);
       }
+    }
+
+    const becameUnassigned = issueHasAssignment(oldIssue) && !issueHasAssignment(updated);
+    const remainsUnassignedAfterRelevantUpdate = !issueHasAssignment(oldIssue) && !issueHasAssignment(updated)
+      && (Object.prototype.hasOwnProperty.call(incoming, 'assignedTo') || Object.prototype.hasOwnProperty.call(incoming, 'assignees'));
+
+    if (becameUnassigned || remainsUnassignedAfterRelevantUpdate) {
+      await emailService.sendUnassignedWorkAlert({
+        id: updated.id,
+        title: updated.title,
+        description: updated.description,
+        location: updated.location,
+        address: updated.address,
+        companyName: updated.companyName,
+        status: updated.status || oldIssue?.status || 'PENDING',
+        priority: updated.priority,
+        category: updated.category,
+        recordType: getIssueRecordType(updated),
+        link: `/manager-dashboard?tab=manage-issue&id=${updated.id || ''}`
+      });
     }
   } catch (emailError) {
     console.error('Error sending email notification:', emailError);

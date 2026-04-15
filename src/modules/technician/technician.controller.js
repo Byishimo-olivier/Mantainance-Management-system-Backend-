@@ -12,8 +12,17 @@ exports.invite = async (req, res) => {
     const { email, name, phone, expiresInHours } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
+    // Get companyName from authenticated user
+    const companyName = req.user?.companyName || req.user?.company || null;
+
     // Create technician record (status = Invited)
-    const tech = await service.create({ name: name || 'Invited Technician', email, phone, status: 'Invited' });
+    const tech = await service.create({ 
+      name: name || 'Invited Technician', 
+      email, 
+      phone, 
+      status: 'Invited',
+      companyName 
+    });
 
     // Create invite token record in Prisma
     const { PrismaClient } = require('@prisma/client');
@@ -67,7 +76,15 @@ exports.getById = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     const data = req.body;
-    const created = await service.create(data);
+    // Get companyName from request body or from authenticated user's company
+    const companyName = data.companyName || req.user?.companyName || req.user?.company || null;
+    
+    const payload = {
+      ...data,
+      companyName
+    };
+    
+    const created = await service.create(payload);
 
     // Send invitation or welcome email
     try {

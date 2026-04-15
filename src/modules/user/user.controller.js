@@ -439,9 +439,11 @@ exports.inviteUser = async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     if (!email || !isValidEmail(email)) return res.status(400).json({ error: 'Valid email is required' });
 
-    // If a user already exists, don't create another invite.
+    // Allow same email in different companies - only reject if in SAME company
     const existingUser = await findUserByEmail(email);
-    if (existingUser) return res.status(409).json({ error: 'User already exists with this email' });
+    if (existingUser && existingUser.companyName === companyName) {
+      return res.status(409).json({ error: 'User already exists with this email in your company' });
+    }
 
     const { role, accessLevel, label } = resolveInviteRole(req.body?.role, req.body?.accessLevel);
 
@@ -529,9 +531,22 @@ exports.acceptInvite = async (req, res) => {
     if (invite.used) return res.status(410).json({ error: 'Invite already used' });
     if (invite.expiresAt && invite.expiresAt.getTime() <= Date.now()) return res.status(410).json({ error: 'Invite expired' });
 
-    const email = invite.email;
-    const existingUser = await findUserByEmail(email);
-    if (existingUser) return res.status(409).json({ error: 'User already exists with this email' });
+    const email = invite.email.toLowerCase().trim();
+    const companyName = String(invite.companyName || '').trim();
+    const { PrismaClient } = require('@prisma/client');
+    const prisma = new PrismaClient();
+
+    // Check if user already exists in this company (by email)
+    const existingByEmail = await prisma.user.findFirst({
+      where: { 
+        email,
+        companyName 
+      }
+    });
+    
+    if (existingByEmail) {
+      return res.status(409).json({ error: 'User already exists with this email in your company' });
+    }
 
     const name = String(req.body?.name || '').trim();
     const phone = String(req.body?.phone || '').trim();
@@ -540,20 +555,37 @@ exports.acceptInvite = async (req, res) => {
     if (!phone) return res.status(400).json({ error: 'Phone is required' });
     if (!password) return res.status(400).json({ error: 'Password is required' });
 
-    const createdUser = await createUser(
-      {
+    // Check phone uniqueness in the same company
+    const existingByPhone = await prisma.user.findFirst({
+      where: { 
+        phone: phone.trim(),
+        companyName 
+      }
+    });
+    
+    if (existingByPhone) {
+      return res.status(409).json({ error: 'This phone number is already registered in your company' });
+    }
+
+    // Hash password
+    const bcrypt = require('bcryptjs');
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user in Prisma
+    const createdUser = await prisma.user.create({
+      data: {
         name,
         email,
-        phone,
-        password,
-        role: invite.role,
-        accessLevel: invite.accessLevel,
-        companyName: invite.companyName,
-        status: 'active'
-      },
-      { allowExistingCompany: true }
-    );
+        phone: phone.trim(),
+        password: hashedPassword,
+        role: invite.role || 'technician',
+        status: 'active',
+        companyName: companyName,
+        isCompanyAdmin: invite.role === 'manager' || invite.role === 'admin'
+      }
+    });
 
+    // Mark invite as used
     invite.used = true;
     invite.usedAt = new Date();
     await invite.save();

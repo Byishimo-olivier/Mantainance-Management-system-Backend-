@@ -168,14 +168,29 @@ const login = async (req, res) => {
     return res.status(423).json({ error: supportMessage });
   }
 
-  // 1. Check User collection (Clients, Managers, Admins)
+  // 1. Check Mongoose User collection (Clients, Managers, Admins)
   let user = await User.findOne({ email: normalizedEmail });
   let isTechnician = false;
   let techData = null;
+  let isFromPrisma = false;
 
+  // 2. If not found in Mongoose, check Prisma User (for superadmin created by bootstrap)
   if (!user) {
-    // 2. Check Technician collection (External Technicians)
-    techData = await prisma.technician.findUnique({ where: { email: normalizedEmail } });
+    const prismaUser = await prisma.user.findFirst({ 
+      where: { email: normalizedEmail } 
+    });
+    if (prismaUser) {
+      user = prismaUser;
+      isFromPrisma = true;
+    }
+  }
+
+  // 3. If still not found, check Technician collection (External Technicians)
+  if (!user) {
+    // Use findFirst instead of findUnique because email alone isn't unique (compound key with companyName)
+    techData = await prisma.technician.findFirst({ 
+      where: { email: normalizedEmail } 
+    });
     if (techData && techData.password) {
       user = techData;
       isTechnician = true;
@@ -192,9 +207,16 @@ const login = async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  const userId = isTechnician ? user.id : user._id;
+  const userId = isTechnician ? user.id : (isFromPrisma ? user.id : String(user._id));
   const role = isTechnician ? 'technician' : user.role;
-  const companyName = user.companyName || techData?.companyName || null;
+  // Get company name from user (works for both Mongoose and Prisma)
+  const companyName = isFromPrisma ? (user.companyName || null) : (user.companyName || null);
+  
+  // For Prisma users, also try to get companyId for later use if needed
+  let companyId = null;
+  if (isFromPrisma && user.companyId) {
+    companyId = user.companyId;
+  }
 
   const accountStatus = String(user.status || '').toLowerCase();
   if (accountStatus === 'locked') {

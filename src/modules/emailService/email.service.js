@@ -419,6 +419,12 @@ module.exports = {
     }
   },
 
+  buildActionUrl(path = '') {
+    const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const normalizedPath = String(path || '').startsWith('/') ? path : `/${String(path || '')}`;
+    return `${base}${normalizedPath}`;
+  },
+
   async sendMeterTriggerCreatedNotification({ companyName, trigger, meter, actor }) {
     try {
       const recipients = await this.getAdminManagerEmails(companyName);
@@ -787,15 +793,22 @@ module.exports = {
   // Helper function to get admin and manager emails
  async getAdminManagerEmails(companyName = null) {
    try {
-     const User = require('../user/user.model.js');
+     const { PrismaClient } = require('@prisma/client');
+     const prisma = new PrismaClient();
+     
      const filter = {
-       role: { $in: ['admin', 'manager'] },
+       role: { in: ['admin', 'manager'] },
        status: 'active'
      };
+     
      if (companyName) {
        filter.companyName = String(companyName).trim();
      }
-     const admins = await User.find(filter, { email: 1 });
+     
+     const admins = await prisma.user.findMany({
+       where: filter,
+       select: { email: true }
+     });
 
      return admins.map(admin => admin.email);
     } catch (error) {
@@ -1142,6 +1155,275 @@ module.exports = {
     } catch (error) {
       console.error('Error sending activation email:', error.message);
       throw error;
+    }
+  },
+
+  // ============================================================================
+  // NEW: Comprehensive Status Change Notifications for Requests/Work Orders/PM
+  // ============================================================================
+
+  // Send notification when request/work order/PM is CREATED
+  async sendRequestCreatedNotification(issueData) {
+    try {
+      const companyName = issueData.companyName;
+      if (!companyName) return;
+
+      // Get all admins and managers for this company
+      const adminEmails = await this.getAdminManagerEmails(companyName);
+      if (adminEmails.length === 0) return;
+
+      const statusColor = {
+        'PENDING': '#f59e0b',
+        'ASSIGNED': '#3b82f6',
+        'IN PROGRESS': '#2563eb',
+        'COMPLETED': '#059669',
+        'APPROVED': '#059669',
+        'DECLINED': '#dc2626'
+      };
+
+      const statusBgColor = {
+        'PENDING': '#fffbeb',
+        'ASSIGNED': '#eff6ff',
+        'IN PROGRESS': '#eff6ff',
+        'COMPLETED': '#f0fdf4',
+        'APPROVED': '#f0fdf4',
+        'DECLINED': '#fef2f2'
+      };
+
+      const template = {
+        subject: `🆕 New Request Created: ${issueData.title}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;color: #1f2937;">
+            <h2 style="color: #2563eb;border-bottom: 3px solid #2563eb;padding-bottom: 10px;">New Maintenance Request</h2>
+            
+            <div style="background: ${statusBgColor[issueData.status] || '#f9fafb'};padding: 20px;border-radius: 8px;margin: 20px 0;border-left: 4px solid ${statusColor[issueData.status] || '#ccc'};">
+              <h3 style="margin: 0 0 15px 0;color: #111827;">${issueData.title}</h3>
+              
+              <p><strong>Description:</strong> ${issueData.description || 'No description'}</p>
+              <p><strong>Location:</strong> ${issueData.location || 'Not specified'}</p>
+              <p><strong>Priority:</strong> <span style="color: ${statusColor[issueData.priority] || '#666'};font-weight: bold;">${issueData.priority || 'Normal'}</span></p>
+              <p><strong>Status:</strong> <span style="color: ${statusColor[issueData.status] || '#666'};font-weight: bold;">${issueData.status || 'PENDING'}</span></p>
+              <p><strong>Category:</strong> ${issueData.category || 'General'}</p>
+              <p><strong>Submitted by:</strong> ${issueData.name || 'Anonymous'}</p>
+              <p><strong>Contact:</strong> ${issueData.email || 'Not provided'} | ${issueData.phone || 'Not provided'}</p>
+              <p><strong>Created:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+
+            <p style="line-height: 1.6;margin: 20px 0;">
+              <strong>Action Required:</strong> Please review this request and assign it to an appropriate technician.
+            </p>
+
+            <div style="text-align: center;margin: 30px 0;">
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue&id=${issueData.id || ''}" style="background: #2563eb;color: white;padding: 12px 30px;text-decoration: none;border-radius: 6px;font-weight: bold;display: inline-block;">
+                Review Request
+              </a>
+            </div>
+
+            <p style="color: #6b7280;font-size: 12px;margin-top: 30px;">
+              Company: <strong>${companyName}</strong>
+            </p>
+          </div>
+        `
+      };
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: adminEmails.join(','),
+        subject: template.subject,
+        html: template.html
+      });
+
+      console.log(`✅ Request created notification sent to ${adminEmails.length} admin(s)`);
+    } catch (error) {
+      console.error('❌ Error sending request created notification:', error);
+    }
+  },
+
+  // Send notification when STATUS CHANGES (generic method for all status types)
+  async sendStatusChangeNotification(issueData, oldStatus) {
+    try {
+      const companyName = issueData.companyName;
+      if (!companyName) return;
+
+      const newStatus = issueData.status;
+      if (!newStatus || newStatus === oldStatus) return;
+
+      // Get admin emails
+      const adminEmails = await this.getAdminManagerEmails(companyName);
+      
+      // Get client email if available
+      const allRecipients = [...new Set(adminEmails)];
+      if (allRecipients.length === 0) return;
+
+      const statusMessages = {
+        'PENDING': 'Request is awaiting review',
+        'ASSIGNED': 'Request has been assigned to a technician',
+        'IN PROGRESS': 'Work has started on this request',
+        'COMPLETED': 'Work has been completed',
+        'APPROVED': 'Request has been approved',
+        'DECLINED': 'Request has been declined',
+        'REJECTED': 'Request has been rejected'
+      };
+
+      const statusColors = {
+        'PENDING': { bg: '#fffbeb', text: '#f59e0b' },
+        'ASSIGNED': { bg: '#eff6ff', text: '#3b82f6' },
+        'IN PROGRESS': { bg: '#eff6ff', text: '#2563eb' },
+        'COMPLETED': { bg: '#f0fdf4', text: '#059669' },
+        'APPROVED': { bg: '#f0fdf4', text: '#059669' },
+        'DECLINED': { bg: '#fef2f2', text: '#dc2626' },
+        'REJECTED': { bg: '#fef2f2', text: '#dc2626' }
+      };
+
+      const color = statusColors[newStatus] || { bg: '#f9fafb', text: '#6b7280' };
+
+      const template = {
+        subject: `📢 Status Update: ${issueData.title} - ${newStatus}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;color: #1f2937;">
+            <h2 style="color: #2563eb;border-bottom: 3px solid #2563eb;padding-bottom: 10px;">Maintenance Request Update</h2>
+            
+            <div style="background: ${color.bg};padding: 20px;border-radius: 8px;margin: 20px 0;border-left: 4px solid ${color.text};">
+              <h3 style="margin: 0 0 15px 0;color: #111827;">${issueData.title}</h3>
+              
+              <p><strong>Status Changed:</strong> <span style="color: ${color.text};font-weight: bold;font-size: 16px;">${oldStatus} → ${newStatus}</span></p>
+              <p><strong>Message:</strong> ${statusMessages[newStatus] || 'Status has been updated'}</p>
+              
+              <hr style="border: none;border-top: 1px solid #e5e7eb;margin: 15px 0;">
+              
+              <p><strong>Location:</strong> ${issueData.location || 'Not specified'}</p>
+              <p><strong>Priority:</strong> ${issueData.priority || 'Normal'}</p>
+              <p><strong>Updated:</strong> ${new Date().toLocaleString()}</p>
+              
+              ${issueData.fixDeadline ? `<p><strong>Deadline:</strong> ${new Date(issueData.fixDeadline).toLocaleString()}</p>` : ''}
+            </div>
+
+            <div style="text-align: center;margin: 30px 0;">
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue&id=${issueData.id || ''}" style="background: ${color.text};color: white;padding: 12px 30px;text-decoration: none;border-radius: 6px;font-weight: bold;display: inline-block;">
+                View Details
+              </a>
+            </div>
+
+            <p style="color: #6b7280;font-size: 12px;margin-top: 30px;">
+              Company: <strong>${companyName}</strong><br/>
+              Request ID: <strong>${issueData.id || 'N/A'}</strong>
+            </p>
+          </div>
+        `
+      };
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: allRecipients.join(','),
+        subject: template.subject,
+        html: template.html
+      });
+
+      console.log(`✅ Status change notification (${oldStatus} → ${newStatus}) sent to ${allRecipients.length} recipient(s)`);
+    } catch (error) {
+      console.error('❌ Error sending status change notification:', error);
+    }
+  },
+
+  async sendUnassignedWorkAlert(recordData = {}) {
+    try {
+      const companyName = String(recordData.companyName || '').trim();
+      if (!companyName) return;
+
+      const adminEmails = await this.getAdminManagerEmails(companyName);
+      if (adminEmails.length === 0) return;
+
+      const recordType = String(recordData.recordType || 'Work Item').trim();
+      const title = recordData.title || recordData.name || recordType;
+      const location = recordData.location || recordData.address || 'Not specified';
+      const subject = `Unassigned ${recordType}: ${title}`;
+      const actionUrl = this.buildActionUrl(recordData.link || '/manager-dashboard');
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; color: #1f2937;">
+          <h2 style="color: #dc2626; border-bottom: 3px solid #dc2626; padding-bottom: 10px;">Unassigned ${recordType}</h2>
+          <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc2626;">
+            <h3 style="margin: 0 0 15px 0;">${title}</h3>
+            <p><strong>Status:</strong> ${recordData.status || 'Pending'}</p>
+            <p><strong>Location:</strong> ${location}</p>
+            <p><strong>Priority:</strong> ${recordData.priority || 'Normal'}</p>
+            ${recordData.category ? `<p><strong>Category:</strong> ${recordData.category}</p>` : ''}
+            ${recordData.description ? `<p><strong>Description:</strong> ${recordData.description}</p>` : ''}
+            ${recordData.nextDate ? `<p><strong>Next Scheduled:</strong> ${new Date(recordData.nextDate).toLocaleString()}</p>` : ''}
+            <p><strong>Company:</strong> ${companyName}</p>
+          </div>
+          <p>This ${recordType.toLowerCase()} does not have an assignee yet. Please review and assign it.</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${actionUrl}" style="background: #dc2626; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Review and Assign</a>
+          </div>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: adminEmails.join(','),
+        subject,
+        html
+      });
+    } catch (error) {
+      console.error('Error sending unassigned work alert email:', error);
+    }
+  },
+
+  // Send notification for preventive maintenance schedule created
+  async sendPreventiveMaintenanceCreatedNotification(scheduleData) {
+    try {
+      const companyName = scheduleData.companyName;
+      if (!companyName) return;
+
+      const adminEmails = await this.getAdminManagerEmails(companyName);
+      if (adminEmails.length === 0) return;
+
+      const template = {
+        subject: `📅 Preventive Maintenance Schedule Created: ${scheduleData.title}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;color: #1f2937;">
+            <h2 style="color: #7c3aed;border-bottom: 3px solid #7c3aed;padding-bottom: 10px;">New Preventive Maintenance Schedule</h2>
+            
+            <div style="background: #f3e8ff;padding: 20px;border-radius: 8px;margin: 20px 0;border-left: 4px solid #7c3aed;">
+              <h3 style="margin: 0 0 15px 0;color: #111827;">${scheduleData.title}</h3>
+              
+              <p><strong>Description:</strong> ${scheduleData.description || 'Routine preventive maintenance'}</p>
+              <p><strong>Asset/Location:</strong> ${scheduleData.assetName || scheduleData.location || 'Not specified'}</p>
+              <p><strong>Frequency:</strong> <span style="font-weight: bold;color: #7c3aed;">${scheduleData.frequency || 'Monthly'}</span></p>
+              
+              ${scheduleData.nextScheduledDate ? `<p><strong>Next Scheduled:</strong> ${new Date(scheduleData.nextScheduledDate).toLocaleString()}</p>` : ''}
+              ${scheduleData.estimatedDuration ? `<p><strong>Estimated Duration:</strong> ${scheduleData.estimatedDuration} minutes</p>` : ''}
+              
+              <p><strong>Created:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+
+            <p style="line-height: 1.6;margin: 20px 0;">
+             This preventive maintenance schedule has been created and will automatically generate work orders at the specified frequency.
+            </p>
+
+            <div style="text-align: center;margin: 30px 0;">
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=pm-schedules" style="background: #7c3aed;color: white;padding: 12px 30px;text-decoration: none;border-radius: 6px;font-weight: bold;display: inline-block;">
+                View PM Schedules
+              </a>
+            </div>
+
+            <p style="color: #6b7280;font-size: 12px;margin-top: 30px;">
+              Company: <strong>${companyName}</strong>
+            </p>
+          </div>
+        `
+      };
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: adminEmails.join(','),
+        subject: template.subject,
+        html: template.html
+      });
+
+      console.log(`✅ PM created notification sent to ${adminEmails.length} admin(s)`);
+    } catch (error) {
+      console.error('❌ Error sending PM created notification:', error);
     }
   }
 }

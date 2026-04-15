@@ -91,6 +91,9 @@ const ISSUE_MUTABLE_FIELDS = new Set([
   'resubmittedAt',
   'resubmittedBy',
   'category',
+  'closeoutNotes',
+  'closeoutNote',
+  'closeout',
   'assetName',
   'team',
   'additionalResponsibleWorkers',
@@ -152,12 +155,18 @@ const summarizeIssueCosts = (issue = {}) => {
 };
 
 const COST_FIELD_NAMES = ['labor', 'laborEntries', 'parts', 'materials', 'lineItems', 'costs', 'additionalCosts'];
+const MONGO_ONLY_ISSUE_FIELDS = ['closeoutNotes', 'closeoutNote', 'closeout'];
 
 const mergeRawIssueCostFields = (issue = {}, rawIssue = null) => {
   if (!rawIssue) return issue;
   const merged = { ...issue };
   COST_FIELD_NAMES.forEach((field) => {
     if (merged[field] === undefined && rawIssue[field] !== undefined) {
+      merged[field] = rawIssue[field];
+    }
+  });
+  MONGO_ONLY_ISSUE_FIELDS.forEach((field) => {
+    if ((merged[field] === undefined || merged[field] === null || merged[field] === '') && rawIssue[field] !== undefined) {
       merged[field] = rawIssue[field];
     }
   });
@@ -178,7 +187,15 @@ const hydrateIssuesFromMongo = async (issues = []) => {
   if (!objectIds.length) return issues;
 
   const rawIssues = await db.collection('Issue')
-    .find({ _id: { $in: objectIds } }, { projection: COST_FIELD_NAMES.reduce((acc, field) => ({ ...acc, [field]: 1 }), {}) })
+    .find(
+      { _id: { $in: objectIds } },
+      {
+        projection: [...COST_FIELD_NAMES, ...MONGO_ONLY_ISSUE_FIELDS].reduce(
+          (acc, field) => ({ ...acc, [field]: 1 }),
+          {}
+        )
+      }
+    )
     .toArray();
   const rawMap = new Map(rawIssues.map((raw) => [String(raw._id), raw]));
   return issues.map((issue) => mergeRawIssueCostFields(issue, rawMap.get(String(issue?.id || issue?._id))));
@@ -642,8 +659,15 @@ module.exports = {
 
     return created;
   },
-  update: (id, data) => {
+  update: async (id, data) => {
     const d = sanitizeIssueUpdateData({ ...data });
+    const closeoutFields = {};
+    ['closeoutNotes', 'closeoutNote', 'closeout'].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(d, field)) {
+        closeoutFields[field] = d[field];
+        delete d[field];
+      }
+    });
     if ('id' in d) delete d.id;
     if (Object.prototype.hasOwnProperty.call(d, 'assetId')) {
       if (d.assetId === null) {
@@ -661,7 +685,31 @@ module.exports = {
       }
       delete d.propertyId;
     }
-    return prisma.issue.update({ where: { id }, data: d });
+    try {
+      const updated = await prisma.issue.update({ where: { id }, data: d });
+
+      if (Object.keys(closeoutFields).length > 0) {
+        try {
+          const db = mongoose.connection.db;
+          if (db) {
+            const { ObjectId } = require('mongodb');
+            const objectId = (typeof id === 'string' && ObjectId.isValid(id)) ? new ObjectId(id) : id;
+            await db.collection('Issue').updateOne(
+              { _id: objectId },
+              { $set: { ...closeoutFields, updatedAt: new Date() } }
+            );
+            Object.assign(updated, closeoutFields);
+          }
+        } catch (mongoErr) {
+          console.error('[issue.service.update] Failed to persist closeout fields to Mongo:', mongoErr);
+        }
+      }
+
+      return updated;
+    } catch (err) {
+      console.error('[issue.service.update] Prisma error:', err);
+      throw err;
+    }
   },
   getLinks: async (id) => {
     const db = mongoose.connection.db;

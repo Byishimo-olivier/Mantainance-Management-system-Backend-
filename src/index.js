@@ -96,7 +96,90 @@ mongoose.connect(process.env.DATABASE_URL)
   .then(() => console.log('MongoDB connected'))
   .catch((err) => console.error('MongoDB connection error:', err));
 
+// Function to repair user collection indexes for multi-company support
+async function repairUserIndexes() {
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return;
+    
+    const collection = db.collection('users');
+    const indexes = await collection.listIndexes().toArray();
+    const indexNames = indexes.map(idx => idx.name);
+    
+    let repaired = false;
+    
+    // Drop old global unique indexes if they exist
+    if (indexNames.includes('email_1')) {
+      console.log('[Index Repair] Dropping old email_1 index...');
+      await collection.dropIndex('email_1');
+      repaired = true;
+    }
+    
+    if (indexNames.includes('phone_1')) {
+      console.log('[Index Repair] Dropping old phone_1 index...');
+      await collection.dropIndex('phone_1');
+      repaired = true;
+    }
+    
+    // Drop old compound indexes that might not have sparse option
+    if (indexNames.includes('users_email_companyId_key')) {
+      const indexInfo = await collection.listIndexes().toArray().then(idx => 
+        idx.find(i => i.name === 'users_email_companyId_key')
+      );
+      if (!indexInfo?.sparse) {
+        console.log('[Index Repair] Dropping old users_email_companyId_key (non-sparse)...');
+        await collection.dropIndex('users_email_companyId_key');
+        repaired = true;
+      }
+    }
+    
+    if (indexNames.includes('users_phone_companyId_key')) {
+      const indexInfo = await collection.listIndexes().toArray().then(idx => 
+        idx.find(i => i.name === 'users_phone_companyId_key')
+      );
+      if (!indexInfo?.sparse) {
+        console.log('[Index Repair] Dropping old users_phone_companyId_key (non-sparse)...');
+        await collection.dropIndex('users_phone_companyId_key');
+        repaired = true;
+      }
+    }
+    
+    // Create new compound unique SPARSE indexes
+    // SPARSE means: null values are ignored, allowing multiple nulls
+    const newIndexes = (await collection.listIndexes().toArray()).map(idx => idx.name);
+    
+    if (!newIndexes.includes('users_email_companyId_key')) {
+      console.log('[Index Repair] Creating sparse compound index: {email: 1, companyId: 1}');
+      await collection.createIndex(
+        { email: 1, companyId: 1 },
+        { unique: true, sparse: true, name: 'users_email_companyId_key' }
+      );
+      repaired = true;
+    }
+    
+    if (!newIndexes.includes('users_phone_companyId_key')) {
+      console.log('[Index Repair] Creating sparse compound index: {phone: 1, companyId: 1}');
+      await collection.createIndex(
+        { phone: 1, companyId: 1 },
+        { unique: true, sparse: true, name: 'users_phone_companyId_key' }
+      );
+      repaired = true;
+    }
+    
+    if (repaired) {
+      console.log('[Index Repair] ✓ User collection indexes repaired successfully (sparse mode enabled)');
+    }
+  } catch (err) {
+    console.error('[Index Repair] Error repairing indexes:', err.message);
+  }
+}
+
 mongoose.connection.once('open', () => {
+  // Repair user indexes for multi-company support
+  repairUserIndexes().catch((err) => {
+    console.error('[bootstrap] Failed to repair user indexes:', err);
+  });
+  
   startMonthlyReportScheduler();
   maintenanceReminderService.start();
   const { PrismaClient } = require('@prisma/client');

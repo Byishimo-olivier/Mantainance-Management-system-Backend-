@@ -27,7 +27,8 @@ module.exports = {
       completed: data.completed !== undefined ? Number(data.completed) : 0,
       status: data.status || 'Active',
       type: 'EXTERNAL',
-      password: hashedPassword
+      password: hashedPassword,
+      companyName: data.companyName || null
     };
     try {
       const created = await prisma.technician.create({ data: payload });
@@ -35,6 +36,10 @@ module.exports = {
     } catch (err) {
       // Convert Prisma unique constraint errors into friendlier messages
       if (err && err.code === 'P2002' && err.meta && err.meta.target) {
+        // Check if it's the compound unique constraint on email+companyName
+        if (err.meta.target.includes('email') && err.meta.target.includes('companyName')) {
+          throw new Error('A technician with this email already exists in this company.');
+        }
         throw new Error(`A technician with that ${err.meta.target.join(', ')} already exists.`);
       }
       throw err;

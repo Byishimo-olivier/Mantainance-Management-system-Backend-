@@ -1,4 +1,5 @@
 const model = require('./maintenanceSchedule.model');
+const emailService = require('../emailService/email.service');
 
 const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -173,6 +174,25 @@ function normalizeScheduleAssignments(data) {
   return data;
 }
 
+function scheduleHasAssignment(schedule) {
+  if (!schedule || typeof schedule !== 'object') return false;
+  if (schedule.assignedTo && String(schedule.assignedTo).trim()) return true;
+  if (Array.isArray(schedule.assignees)) {
+    return schedule.assignees.some((entry) => {
+      if (!entry) return false;
+      if (typeof entry === 'string') return !!String(entry).trim();
+      return !!String(entry.id || entry._id || entry.userId || entry.name || '').trim();
+    });
+  }
+  if (Array.isArray(schedule.assetsRows)) {
+    return schedule.assetsRows.some((row) => {
+      if (!row || typeof row !== 'object') return false;
+      return !!String(row.assignee || row.assignedTo || row.technicianId || row.userId || '').trim();
+    });
+  }
+  return false;
+}
+
 module.exports = {
   async create(req, res) {
     try {
@@ -321,6 +341,37 @@ module.exports = {
         } catch (woErr) {
           console.error('[Schedule Create] Failed to create initial work order', woErr);
         }
+      }
+
+      try {
+        await emailService.sendPreventiveMaintenanceCreatedNotification({
+          id: schedule.id || schedule._id,
+          title: schedule.workOrderTitle || schedule.name || 'Preventive Maintenance',
+          description: schedule.workOrderDescription || schedule.description || '',
+          location: schedule.location || '',
+          assetName: schedule.assetName || schedule.asset || '',
+          frequency: schedule.frequency || '',
+          nextScheduledDate: schedule.nextDate,
+          estimatedDuration: schedule.estimatedDuration || schedule.duration || '',
+          companyName: schedule.companyName || schedule.company || ''
+        });
+
+        if (!scheduleHasAssignment(schedule)) {
+          await emailService.sendUnassignedWorkAlert({
+            id: schedule.id || schedule._id,
+            title: schedule.workOrderTitle || schedule.name || 'Preventive Maintenance',
+            description: schedule.workOrderDescription || schedule.description || '',
+            location: schedule.location || '',
+            status: schedule.status || 'Pending',
+            priority: schedule.priority || 'Normal',
+            companyName: schedule.companyName || schedule.company || '',
+            nextDate: schedule.nextDate,
+            recordType: 'Preventive Maintenance',
+            link: `/manager-dashboard?tab=pm-schedules&id=${schedule.id || schedule._id || ''}`
+          });
+        }
+      } catch (emailErr) {
+        console.error('[Schedule Create] Failed to send PM email notifications', emailErr);
       }
 
       res.status(201).json(normalizeExtendedJSON(schedule));
@@ -676,6 +727,9 @@ module.exports = {
   },
   async update(req, res) {
     try {
+      const existing = await model.getById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+
       const data = { ...req.body };
       console.log('[Schedule Update] ID:', req.params.id, 'Data:', JSON.stringify(data, null, 2));
       if (typeof data.assetsRows === 'string') {
@@ -697,6 +751,32 @@ module.exports = {
         data.nextDate = new Date(data.nextDate);
       }
       const schedule = await model.update(req.params.id, data);
+
+      try {
+        const becameUnassigned = scheduleHasAssignment(existing) && !scheduleHasAssignment(schedule);
+        const remainsUnassignedAfterRelevantUpdate = !scheduleHasAssignment(existing) && !scheduleHasAssignment(schedule)
+          && (Object.prototype.hasOwnProperty.call(data, 'assignedTo')
+            || Object.prototype.hasOwnProperty.call(data, 'assignees')
+            || Object.prototype.hasOwnProperty.call(data, 'assetsRows'));
+
+        if (becameUnassigned || remainsUnassignedAfterRelevantUpdate) {
+          await emailService.sendUnassignedWorkAlert({
+            id: schedule.id || schedule._id,
+            title: schedule.workOrderTitle || schedule.name || 'Preventive Maintenance',
+            description: schedule.workOrderDescription || schedule.description || '',
+            location: schedule.location || '',
+            status: schedule.status || 'Pending',
+            priority: schedule.priority || 'Normal',
+            companyName: schedule.companyName || schedule.company || '',
+            nextDate: schedule.nextDate,
+            recordType: 'Preventive Maintenance',
+            link: `/manager-dashboard?tab=pm-schedules&id=${schedule.id || schedule._id || ''}`
+          });
+        }
+      } catch (emailErr) {
+        console.error('[Schedule Update] Failed to send unassigned PM email', emailErr);
+      }
+
       res.json(normalizeExtendedJSON(schedule));
     } catch (err) {
       console.error('[maintenanceSchedule.controller.js:update] ERROR:', err);

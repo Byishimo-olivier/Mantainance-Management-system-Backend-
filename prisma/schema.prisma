@@ -250,13 +250,14 @@ datasource db {
 model User {
   id                   String                @id @default(auto()) @map("_id") @db.ObjectId
   name                 String
-  phone                String                @unique
-  email                String                @unique
+  phone                String
+  email                String
   password             String
   role                 Role
   status               String
   
-  // Company association
+  // Company association - use companyName for multi-tenant instead of companyId
+  companyName          String?
   companyId            String?               @db.ObjectId
   company              Company?              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   isCompanyAdmin       Boolean               @default(false) // Can manage team members
@@ -267,6 +268,9 @@ model User {
   internalTechnicians  InternalTechnician[]
   maintenanceSchedules MaintenanceSchedule[]
 
+  // Indexes for multi-company support using companyName
+  @@index([email, companyName])
+  @@index([phone, companyName])
   @@map("users")
 }
 
@@ -419,7 +423,7 @@ model Invoice {
 model Technician {
   id             String   @id @default(auto()) @map("_id") @db.ObjectId
   name           String
-  email          String   @unique
+  email          String
   phone          String
   specialization String[]
   rating         Float    @default(0)
@@ -427,6 +431,9 @@ model Technician {
   status         String   @default("Active")
   type           String   @default("EXTERNAL")
   password       String?
+  companyName    String?
+  
+  @@unique([email, companyName])
 }
 
 model Issue {
