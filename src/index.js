@@ -57,6 +57,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   process.env.FRONTEND_URL,
+  'https://www.fixnest.rw',
   'https://mms-frontend.vercel.app',
 ].filter(Boolean);
 
@@ -70,7 +71,8 @@ app.use(cors({
     const isAllowed = allowedOrigins.includes(origin) ||
       (process.env.NODE_ENV !== 'production') ||
       origin.endsWith('.vercel.app') ||
-      origin.endsWith('.now.sh');
+      origin.endsWith('.now.sh') ||
+      origin.endsWith('.rw');
 
     if (isAllowed) {
       callback(null, true);
