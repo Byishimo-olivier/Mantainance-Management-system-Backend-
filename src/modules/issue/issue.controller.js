@@ -1,6 +1,7 @@
 const upload = require('../../middleware/upload');
 const emailService = require('../emailService/email.service');
 const notificationService = require('../notification/notification.service');
+const smsService = require('../sms/sms.service');
 
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
@@ -51,6 +52,68 @@ const getStatusLifecycleMessage = (status) => {
   if (normalized === 'IN PROGRESS') return 'Work started.';
   if (normalized === 'COMPLETED' || normalized === 'COMPLETE' || normalized === 'FINISHED') return 'Work completed.';
   return null;
+};
+
+const compactForSms = (value, max = 120) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+};
+
+const formatIssueSmsContext = (issue) => {
+  const title = compactForSms(issue?.title || 'Maintenance request', 70);
+  const location = compactForSms(issue?.location || issue?.address || '', 45);
+  return location ? `"${title}" at ${location}` : `"${title}"`;
+};
+
+const collectPhoneNumbers = (values = []) => Array.from(new Set(
+  (Array.isArray(values) ? values : [values])
+    .map((value) => {
+      if (!value) return '';
+      if (typeof value === 'string') return value;
+      return value.phone || '';
+    })
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+));
+
+const sendSmsToPhones = async (phones, body, context = 'notification') => {
+  const uniquePhones = collectPhoneNumbers(phones);
+  if (!uniquePhones.length || !String(body || '').trim()) return;
+  try {
+    await smsService.sendBulkSms({
+      recipients: uniquePhones,
+      body,
+    });
+  } catch (error) {
+    console.error(`Error sending ${context} SMS:`, error);
+  }
+};
+
+const sendSmsToUser = async (user, body, context = 'notification') => {
+  await sendSmsToPhones([user], body, context);
+};
+
+const sendSmsToUsers = async (users, body, context = 'notification') => {
+  await sendSmsToPhones(users, body, context);
+};
+
+const sendSmsToCompanyRoles = async ({ companyName, roles = [], body, context = 'company notification' }) => {
+  if (!companyName || !Array.isArray(roles) || !roles.length || !String(body || '').trim()) {
+    return [];
+  }
+  try {
+    const userService = require('../user/user.service');
+    const recipients = await userService.getUsersByRoles(roles, {
+      companyName,
+      status: 'active',
+    });
+    await sendSmsToUsers(recipients, body, context);
+    return recipients;
+  } catch (error) {
+    console.error(`Error loading ${context} SMS recipients:`, error);
+    return [];
+  }
 };
 
 const issueHasAssignment = (issue) => {
@@ -443,6 +506,19 @@ exports.uploadBeforeEvidence = [
 
       // Email notifications
       await emailService.sendIssueInProgressNotification(updated, technician || { name: 'Technician' }, client || { email: null });
+
+      const technicianName = technician?.name || req.user?.name || 'Technician';
+      await sendSmsToUser(
+        client,
+        `${technicianName} started work on ${formatIssueSmsContext(updated)}.`,
+        'issue in-progress'
+      );
+      await sendSmsToCompanyRoles({
+        companyName: updated.companyName,
+        roles: ['admin', 'manager'],
+        body: `Work started on ${formatIssueSmsContext(updated)}.`,
+        context: 'issue in-progress',
+      });
     } catch (err) {
       console.error('Error sending in-progress notifications:', err);
     }
@@ -509,6 +585,18 @@ exports.uploadAfterEvidence = [
         afterImage: afterImage,
         technicianName: techName
       }, technician || { name: techName }, client || { email: null });
+
+      await sendSmsToUser(
+        client,
+        `${techName} completed work on ${formatIssueSmsContext(updated)}.`,
+        'issue completed'
+      );
+      await sendSmsToCompanyRoles({
+        companyName: updated.companyName,
+        roles: ['admin', 'manager'],
+        body: `${techName} completed ${formatIssueSmsContext(updated)}.`,
+        context: 'issue completed',
+      });
 
       // In-app notification for client
       if (updated.userId) {
@@ -635,6 +723,12 @@ exports.assignToTech = async (req, res) => {
     console.error('Error sending technician assignment notification:', emailError);
   }
 
+  await sendSmsToUser(
+    techRecipient,
+    `You have been assigned to ${formatIssueSmsContext(updated)}. Priority: ${updated.priority || 'Normal'}.`,
+    'technician assignment'
+  );
+
   // In-app notification for technician
   try {
     // Only create in-app notification if we have a linked user id
@@ -747,6 +841,12 @@ exports.assignToInternal = async (req, res) => {
     } catch (emailErr) {
       console.error('Error notifying internal technician:', emailErr);
     }
+
+    await sendSmsToUser(
+      tech,
+      `You have been assigned to ${formatIssueSmsContext(updated)}. Priority: ${updated.priority || 'Normal'}.`,
+      'internal technician assignment'
+    );
 
     // In-app notification for internal technician
     if (linkedUser) {
@@ -1272,6 +1372,12 @@ exports.create = async (req, res) => {
             link: `/manager-dashboard?tab=manage-issue&id=${created.id || ''}`
           });
         }
+        await sendSmsToCompanyRoles({
+          companyName: created.companyName,
+          roles: ['admin', 'manager'],
+          body: `New ${getIssueRecordType(created).toLowerCase()} submitted: ${formatIssueSmsContext(created)}. Status: ${created.status || 'PENDING'}.`,
+          context: 'new request',
+        });
       }
     } catch (emailErr) {
       console.error('❌ Error sending request created notification:', emailErr);
@@ -1319,6 +1425,14 @@ exports.create = async (req, res) => {
             console.error('Error creating in-app assignment notification for internal tech on create:', notifyErr);
           }
         }
+      }
+
+      if (assignedInternalTechConfig?.tech) {
+        await sendSmsToUser(
+          assignedInternalTechConfig.tech,
+          `You have been assigned to ${formatIssueSmsContext(created)}. Priority: ${created.priority || 'Normal'}.`,
+          'new internal technician assignment'
+        );
       }
 
       // 2. Notify Admins/Managers (Standard flow)
@@ -1406,6 +1520,11 @@ exports.create = async (req, res) => {
                 if (owner) {
                   // Email owner
                   try { await emailService.sendNewRequestNotification(requestPayload, owner); } catch (e) { console.error('Error emailing owner on anon create:', e); }
+                  await sendSmsToUser(
+                    owner,
+                    `New maintenance request submitted for your property: ${formatIssueSmsContext(created)}.`,
+                    'anonymous request owner alert'
+                  );
                   // In-app notification for owner
                   try {
                     await notificationService.createNotification({
@@ -1586,12 +1705,22 @@ exports.update = async (req, res) => {
               description: updated.description,
               location: updated.location
             }, client, manager);
+            await sendSmsToUser(
+              client,
+              `Your request ${formatIssueSmsContext(updated)} has been approved by ${manager.name || 'your manager'}.`,
+              'request approved'
+            );
           } else if (updated.status === 'DECLINED') {
             await emailService.sendRequestDeclinedNotification({
               title: updated.title,
               description: updated.description,
               location: updated.location
             }, client, manager, req.body.reason || 'No reason provided');
+            await sendSmsToUser(
+              client,
+              `Your request ${formatIssueSmsContext(updated)} was declined. Reason: ${compactForSms(req.body.reason || 'No reason provided', 90)}.`,
+              'request declined'
+            );
           }
         }
 
@@ -1629,6 +1758,18 @@ exports.update = async (req, res) => {
           afterImage: updated.afterImage || null
         }, technician, client);
       }
+
+      await sendSmsToUser(
+        client,
+        `${technician?.name || 'Technician'} completed ${formatIssueSmsContext(updated)}.`,
+        'issue completed'
+      );
+      await sendSmsToCompanyRoles({
+        companyName: updated.companyName,
+        roles: ['admin', 'manager'],
+        body: `${technician?.name || 'Technician'} completed ${formatIssueSmsContext(updated)}.`,
+        context: 'issue completed',
+      });
     }
 
     const becameUnassigned = issueHasAssignment(oldIssue) && !issueHasAssignment(updated);

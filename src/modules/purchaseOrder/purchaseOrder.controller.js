@@ -1,6 +1,7 @@
 const { PurchaseOrder, computeTotal, generatePoNumber } = require('./purchaseOrder.model');
 const Vendor = require('../vendor/vendor.model');
 const emailService = require('../emailService/email.service');
+const smsService = require('../sms/sms.service');
 const materialRequestService = require('../materialRequest/materialRequest.service');
 const issueService = require('../issue/issue.service');
 const notificationService = require('../notification/notification.service');
@@ -8,6 +9,21 @@ const userService = require('../user/user.service');
 
 const getFrontendOrigin = () => process.env.FRONTEND_URL || 'http://localhost:5173';
 const buildPublicPoLink = (publicToken) => `${getFrontendOrigin()}/public-purchase-order/${publicToken}`;
+const compactForSms = (value, max = 120) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+};
+const collectPhoneNumbers = (values = []) => Array.from(new Set(
+  (Array.isArray(values) ? values : [values])
+    .map((value) => {
+      if (!value) return '';
+      if (typeof value === 'string') return value;
+      return value.phone || '';
+    })
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+));
 
 const normalizeItems = (items = []) => {
   if (!Array.isArray(items)) return [];
@@ -54,7 +70,7 @@ const attachVendorInfo = async (doc) => {
   return po;
 };
 
-const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '') => {
+const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '', explicitVendorPhone = '') => {
   const enriched = await attachVendorInfo(poDoc);
   const vendorEmail = String(
     explicitVendorEmail
@@ -62,8 +78,12 @@ const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '') => 
     || enriched?.vendorId?.email
     || ''
   ).trim();
-
-  if (!vendorEmail) return enriched;
+  const vendorPhone = String(
+    explicitVendorPhone
+    || enriched?.vendorDetails?.phone
+    || enriched?.vendorId?.phone
+    || ''
+  ).trim();
 
   const itemsHtml = (Array.isArray(enriched?.items) ? enriched.items : []).map((item) => `
     <tr>
@@ -73,7 +93,8 @@ const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '') => 
     </tr>
   `).join('');
 
-  await emailService.sendEmail({
+  if (vendorEmail) {
+    await emailService.sendEmail({
     to: vendorEmail,
     subject: `Purchase Order ${enriched.poNumber} from ${enriched.companyName || 'your customer'}`,
     html: `
@@ -102,7 +123,19 @@ const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '') => 
         <p>You can open the public link above to review the purchase order without signing in.</p>
       </div>
     `,
-  });
+    });
+  }
+
+  if (vendorPhone) {
+    try {
+      await smsService.sendSms({
+        to: vendorPhone,
+        body: `Purchase order ${enriched.poNumber} from ${enriched.companyName || 'your customer'} is ready. ${compactForSms(enriched.title, 50)}. Review: ${enriched.publicLink}`,
+      });
+    } catch (smsError) {
+      console.error('Error sending vendor purchase order SMS:', smsError);
+    }
+  }
 
   return enriched;
 };
@@ -125,6 +158,7 @@ const notifyCompanyPurchaseOrderResponse = async (poDoc, response, note = '') =>
   const recipientEmails = recipients
     .map((user) => String(user?.email || '').trim())
     .filter(Boolean);
+  const recipientPhones = collectPhoneNumbers(recipients);
 
   await Promise.all(recipients.map(async (recipient) => {
     try {
@@ -180,6 +214,17 @@ const notifyCompanyPurchaseOrderResponse = async (poDoc, response, note = '') =>
         </div>
       `,
     });
+  }
+
+  if (recipientPhones.length > 0) {
+    try {
+      await smsService.sendBulkSms({
+        recipients: recipientPhones,
+        body: `Vendor ${enriched?.vendorDetails?.name || enriched?.vendor || 'Vendor'} ${responseLabel} PO ${enriched?.poNumber || ''} for ${companyName}. ${note ? `Note: ${compactForSms(note, 70)}. ` : ''}Open: ${poLink}`,
+      });
+    } catch (smsError) {
+      console.error('Error sending purchase order response SMS:', smsError);
+    }
   }
 
   return enriched;
@@ -317,10 +362,12 @@ async function create(req, res) {
     const vendorId = data.vendorId || data.vendor_id || null;
     let vendorName = data.vendor || data.vendorName || '';
     let vendorEmail = data.vendorEmail || '';
+    let vendorPhone = data.vendorPhone || '';
     if (vendorId && !vendorName) {
       const v = await Vendor.findById(vendorId).lean();
       vendorName = v?.name || vendorName;
       vendorEmail = vendorEmail || v?.email || '';
+      vendorPhone = vendorPhone || v?.phone || '';
     }
     const companyName = req.user?.companyName || '';
     const po = await PurchaseOrder.create({
@@ -360,7 +407,7 @@ async function create(req, res) {
       createdBy: buildCreatedBy(req, data)
     });
     const enriched = data.sendVendorLink
-      ? await sendVendorPurchaseOrderEmail(po, vendorEmail)
+      ? await sendVendorPurchaseOrderEmail(po, vendorEmail, vendorPhone)
       : await attachVendorInfo(po);
     return res.status(201).json(enriched);
   } catch (err) {
@@ -385,10 +432,12 @@ async function update(req, res) {
     const vendorId = data.vendorId || data.vendor_id || existing.vendorId || null;
     let vendorName = data.vendor || data.vendorName || existing.vendor || '';
     let vendorEmail = data.vendorEmail || existing.vendorDetails?.email || '';
+    let vendorPhone = data.vendorPhone || existing.vendorDetails?.phone || '';
     if (vendorId && !vendorName) {
       const v = await Vendor.findById(vendorId).lean();
       vendorName = v?.name || vendorName;
       vendorEmail = vendorEmail || v?.email || '';
+      vendorPhone = vendorPhone || v?.phone || '';
     }
 
     existing.title = data.title || data.name || existing.title;
@@ -429,7 +478,7 @@ async function update(req, res) {
 
     await existing.save();
     const enriched = data.sendVendorLink
-      ? await sendVendorPurchaseOrderEmail(existing, vendorEmail)
+      ? await sendVendorPurchaseOrderEmail(existing, vendorEmail, vendorPhone)
       : await attachVendorInfo(existing);
     return res.json(enriched);
   } catch (err) {
