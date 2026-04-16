@@ -727,7 +727,7 @@ module.exports = {
   },
   async update(req, res) {
     try {
-      const existing = await model.getById(req.params.id);
+      const existing = await model.findById(req.params.id);
       if (!existing) return res.status(404).json({ error: 'Not found' });
 
       const data = { ...req.body };

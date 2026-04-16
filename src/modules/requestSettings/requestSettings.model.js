@@ -123,6 +123,7 @@ const webhookSchema = new mongoose.Schema({
 const dailyEmailSummarySchema = new mongoose.Schema({
   adminDailySummary: { type: Boolean, default: true },
   technicianDailySummary: { type: Boolean, default: true },
+  clientDailySummary: { type: Boolean, default: true },
   sendTime: { type: String, default: '07:00' },
   lastSentOn: { type: String, default: '' },
   lastSentAt: { type: Date, default: null },

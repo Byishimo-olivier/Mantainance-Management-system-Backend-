@@ -14,11 +14,15 @@ class DailyReportService {
   }
 
   isAdministratorRole(role) {
-    return ['admin', 'manager', 'coordinator', 'client'].includes(this.normalizeRole(role));
+    return ['admin', 'manager', 'coordinator'].includes(this.normalizeRole(role));
   }
 
   isTechnicianRole(role) {
     return this.normalizeRole(role) === 'technician';
+  }
+
+  isClientRole(role) {
+    return this.normalizeRole(role) === 'client';
   }
 
   dedupeRecipients(people = []) {
@@ -37,6 +41,7 @@ class DailyReportService {
     return {
       adminDailySummary: true,
       technicianDailySummary: true,
+      clientDailySummary: true,
       sendTime: '07:00',
       lastSentOn: '',
       lastSentAt: null,
@@ -261,7 +266,7 @@ class DailyReportService {
   }
 
   /**
-   * Send reports for a specific company to its admins and technicians
+   * Send reports for a specific company to its admins, technicians, and clients
    */
   async sendCompanyReports(company, dailyEmailSummary = this.getDefaultDailyEmailSummary()) {
     try {
@@ -287,6 +292,13 @@ class DailyReportService {
       for (const technician of technicians) {
         if (technician.email) {
           await this.sendTechnicianReport(technician, company, metrics);
+        }
+      }
+
+      const clients = this.dedupeRecipients(users.filter((user) => this.isClientRole(user.role)));
+      for (const client of clients) {
+        if (client.email) {
+          await this.sendAdminReport(client, company, metrics);
         }
       }
 
@@ -321,6 +333,15 @@ class DailyReportService {
         for (const technician of technicians) {
           if (!technician.email) continue;
           await this.sendTechnicianReport(technician, company, metrics);
+          sentAny = true;
+        }
+      }
+
+      if (dailyEmailSummary.clientDailySummary) {
+        const clients = this.dedupeRecipients(users.filter((user) => this.isClientRole(user.role)));
+        for (const client of clients) {
+          if (!client.email) continue;
+          await this.sendAdminReport(client, company, metrics);
           sentAny = true;
         }
       }

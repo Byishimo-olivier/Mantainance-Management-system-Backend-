@@ -172,6 +172,7 @@ const defaultMeterSettings = {
 const defaultDailyEmailSummarySettings = {
   adminDailySummary: true,
   technicianDailySummary: true,
+  clientDailySummary: true,
   sendTime: '07:00',
   lastSentOn: '',
   lastSentAt: null,
@@ -608,16 +609,15 @@ exports.updateDailyEmailSummary = async (req, res) => {
       ? requestedSendTime
       : defaultDailyEmailSummarySettings.sendTime;
 
-    settings.dailyEmailSummary = {
-      ...defaultDailyEmailSummarySettings,
-      ...(settings.dailyEmailSummary || {}),
-      adminDailySummary: req.body?.adminDailySummary !== false,
-      technicianDailySummary: req.body?.technicianDailySummary !== false,
-      sendTime: normalizedSendTime,
-    };
-
+    settings.dailyEmailSummary = settings.dailyEmailSummary || {};
+    settings.dailyEmailSummary.adminDailySummary = req.body?.adminDailySummary !== false;
+    settings.dailyEmailSummary.technicianDailySummary = req.body?.technicianDailySummary !== false;
+    settings.dailyEmailSummary.clientDailySummary = req.body?.clientDailySummary !== false;
+    settings.dailyEmailSummary.sendTime = normalizedSendTime;
+    settings.markModified('dailyEmailSummary');
     await settings.save();
-    return res.json({ dailyEmailSummary: sanitizeSettings(settings).dailyEmailSummary });
+    const refreshedSettings = await ensureWorkOrderCategoryDefaults(await ensureSettings(companyName));
+    return res.json({ dailyEmailSummary: sanitizeSettings(refreshedSettings).dailyEmailSummary });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
