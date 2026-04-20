@@ -40,20 +40,19 @@ module.exports = {
         console.warn('[Parts.list] No authenticated user. Returning empty array.');
         return res.json([]);
       }
-      // Check if user is admin/manager - they see all items
-      const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
-      if (!isAdmin) {
-        // Regular users only see items matching their company
-        if (!user.companyName) {
-          console.warn('[Parts.list] Regular user has no companyName. Returning empty array.');
-          return res.json([]);
-        }
-        const userCompanyName = String(user.companyName || '').toLowerCase().trim();
-        items = items.filter((item) => {
-          const itemCompany = String(item.companyName || item.company || '').toLowerCase().trim();
-          return itemCompany === userCompanyName;
-        });
+      
+      // ALWAYS filter by company, regardless of user role
+      if (!user.companyName) {
+        console.warn('[Parts.list] User has no companyName. Returning empty array.');
+        return res.json([]);
       }
+      
+      const userCompanyName = String(user.companyName || '').toLowerCase().trim();
+      items = items.filter((item) => {
+        const itemCompany = String(item.companyName || item.company || '').toLowerCase().trim();
+        return itemCompany === userCompanyName;
+      });
+      
       res.json(items || []);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -65,6 +64,9 @@ module.exports = {
       const data = req.body || {};
       if (!data.name) return res.status(400).json({ error: 'name is required' });
       const companyName = req.user?.companyName || '';
+      if (!companyName) {
+        return res.status(400).json({ error: 'User has no company assigned' });
+      }
       const created = await Part.create(buildPartPayload(data, companyName));
       res.status(201).json(created);
     } catch (err) {
@@ -160,6 +162,17 @@ module.exports = {
       const removed = await Part.findByIdAndDelete(req.params.id);
       if (!removed) return res.status(404).json({ error: 'Not found' });
       res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  async getSets(req, res) {
+    try {
+      // Find all inventory sets that contain this part
+      const InventorySet = require('../inventorySet/inventorySet.model');
+      const sets = await InventorySet.find({ partIds: req.params.id });
+      res.json(sets || []);
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
