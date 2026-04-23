@@ -113,6 +113,18 @@ const normalizeDateValue = (value) => {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 };
 
+const normalizeBooleanValue = (value) => {
+  if (value === undefined) return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'off', ''].includes(normalized)) return false;
+  }
+  return undefined;
+};
+
 const toCostNumber = (value) => {
   if (value === null || value === undefined || value === '') return 0;
   const normalized = Number(String(value).replace(/[^0-9.-]/g, ''));
@@ -247,6 +259,15 @@ const sanitizeIssueUpdateData = (data = {}) => {
 
   if (typeof cleaned.signature === 'boolean') {
     cleaned.signature = cleaned.signature ? 'true' : 'false';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(cleaned, 'approved')) {
+    const normalizedApproved = normalizeBooleanValue(cleaned.approved);
+    if (normalizedApproved === undefined) {
+      delete cleaned.approved;
+    } else {
+      cleaned.approved = normalizedApproved;
+    }
   }
 
   return cleaned;
@@ -623,6 +644,14 @@ module.exports = {
     }
     if (!Object.prototype.hasOwnProperty.call(d, 'assignees') || d.assignees === undefined || d.assignees === null) {
       d.assignees = [];
+    }
+    if (Object.prototype.hasOwnProperty.call(d, 'approved')) {
+      const normalizedApproved = normalizeBooleanValue(d.approved);
+      if (normalizedApproved === undefined) {
+        delete d.approved;
+      } else {
+        d.approved = normalizedApproved;
+      }
     }
     // Ensure required `time` field exists (Prisma schema requires it)
     try {
