@@ -17,6 +17,8 @@ const internalTechnicianRoutes = require('./modules/internalTechnician/internalT
 const maintenanceTemplateRoutes = require('./modules/maintenanceTemplate/maintenanceTemplate.routes');
 const maintenanceScheduleRoutes = require('./modules/maintenanceSchedule/maintenanceSchedule.routes');
 const maintenanceReminderService = require('./modules/maintenanceSchedule/maintenanceReminder.service');
+const pmAutoGenerationService = require('./modules/maintenanceSchedule/pmAutoGeneration.service');
+const cronService = require('./services/cron.service');
 const emailRoutes = require('./modules/emailService/email.routes');
 const materialRequestRoutes = require('./modules/materialRequest/materialRequest.routes');
 const aiRoutes = require('./modules/ai/ai.routes');
@@ -186,6 +188,15 @@ mongoose.connection.once('open', () => {
   
   startMonthlyReportScheduler();
   maintenanceReminderService.start();
+  
+  // Start PM Auto-Generation service
+  try {
+    pmAutoGenerationService.startPMAutoGenerationCron(cronService);
+    console.log('[bootstrap] PM Auto-Generation service started');
+  } catch (err) {
+    console.error('[bootstrap] Failed to start PM Auto-Generation service:', err);
+  }
+  
   const { PrismaClient } = require('@prisma/client');
   const prisma = new PrismaClient();
   dailyReportService.setPrismaClient(prisma);

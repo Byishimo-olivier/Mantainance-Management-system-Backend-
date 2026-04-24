@@ -20,4 +20,9 @@ router.get('/:id/reminder-logs', controller.getReminderLogs);
 router.put('/:id', authenticate, controller.update);
 router.delete('/:id', authenticate, controller.remove);
 
+// PM Auto-Generation endpoints
+router.post('/:id/generate-instances', authenticate, controller.generatePMInstances);
+router.get('/:id/instances', authenticate, controller.getPMInstances);
+router.post('/auto-gen/trigger', authenticate, controller.triggerAutoGeneration);
+
 module.exports = router;

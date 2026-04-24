@@ -1340,6 +1340,9 @@ exports.create = async (req, res) => {
 
     console.log('[CREATE ISSUE] Issue created with id:', created?.id, 'userId:', created?.userId);
 
+    res.status(201).json(normalizeExtendedJSON(created));
+
+    void (async () => {
     // Send email notification to admins/managers on request/issue creation
     try {
       if (created && created.companyName) {
@@ -1571,7 +1574,8 @@ exports.create = async (req, res) => {
       console.error('Error creating in-app new request notification:', notifyErr);
     }
 
-    res.status(201).json(normalizeExtendedJSON(created));
+    })();
+    return;
   } catch (err) {
     console.error('[CREATE ISSUE CRASH PREVENTED]', err);
     res.status(500).json({ error: 'Failed to create issue: ' + err.message });

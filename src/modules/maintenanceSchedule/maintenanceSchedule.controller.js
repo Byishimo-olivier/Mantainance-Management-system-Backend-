@@ -1,5 +1,6 @@
 const model = require('./maintenanceSchedule.model');
 const emailService = require('../emailService/email.service');
+const maintenanceReminderService = require('./maintenanceReminder.service');
 
 const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -193,6 +194,38 @@ function scheduleHasAssignment(schedule) {
   return false;
 }
 
+function formatDateInputValue(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toISOString().slice(0, 10);
+}
+
+function syncCalendarScheduleMetadata(target, existing = null) {
+  if (!target || typeof target !== 'object') return target;
+  const merged = { ...(existing || {}), ...target };
+  if (!merged.calendarRule) return target;
+
+  const computedNextDate = maintenanceReminderService.getNextCalendarOccurrence(merged, new Date());
+  if (computedNextDate && !Number.isNaN(computedNextDate.getTime())) {
+    target.nextDate = computedNextDate;
+    if (!target.date) target.date = formatDateInputValue(computedNextDate);
+  }
+
+  if (!target.time && merged.calendarRule?.time) {
+    target.time = merged.calendarRule.time;
+  }
+
+  if (!target.frequency && merged.calendarRule?.unit) {
+    target.frequency = String(merged.calendarRule.unit).toUpperCase();
+  }
+
+  if ((!Object.prototype.hasOwnProperty.call(target, 'interval') || !target.interval) && merged.calendarRule?.every) {
+    target.interval = Math.max(1, Number(merged.calendarRule.every) || 1);
+  }
+
+  return target;
+}
+
 module.exports = {
   async create(req, res) {
     try {
@@ -216,6 +249,7 @@ module.exports = {
       data.combinedRule = parseMaybeJson(data.combinedRule, data.combinedRule || null);
       data.attachments = parseMaybeJson(data.attachments, data.attachments || null);
       normalizeScheduleAssignments(data);
+      syncCalendarScheduleMetadata(data);
 
       const uploadedPhotos = Array.isArray(req.files?.photos)
         ? req.files.photos.map((file) => ({
@@ -740,6 +774,9 @@ module.exports = {
         }
       }
       normalizeScheduleAssignments(data);
+      if (data.calendarRule || data.assetsRows || data.date || data.time || data.nextDate) {
+        syncCalendarScheduleMetadata(data, existing);
+      }
       // Accept date/time fields for updates as well
       if (data.date) {
         if (data.time) {
@@ -789,6 +826,110 @@ module.exports = {
       res.json({ success: true });
     } catch (err) {
       console.error('[maintenanceSchedule.controller.js:remove]', err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+  async generatePMInstances(req, res) {
+    try {
+      const pmAutoGenService = require('./pmAutoGeneration.service');
+      const pmRecurrenceService = require('./pmRecurrence.service');
+      const scheduleId = req.params.id;
+      
+      // Get the schedule
+      const schedule = await model.findById(scheduleId);
+      if (!schedule) {
+        return res.status(404).json({ error: 'Schedule not found' });
+      }
+
+      const calendarRule = schedule.calendarRule || {};
+      if (!calendarRule.recurrenceType || calendarRule.recurrenceType === 'none') {
+        return res.status(400).json({ error: 'This is not a recurring PM schedule' });
+      }
+
+      // Calculate future occurrences (next 12 by default)
+      const limit = req.body?.limit || 12;
+      const occurrences = pmRecurrenceService.calculateAllFutureOccurrences(
+        schedule.nextDate || new Date(),
+        calendarRule,
+        limit
+      );
+
+      // Generate PM instances and work orders
+      const createdInstances = [];
+      for (const occurrence of occurrences) {
+        try {
+          const pmInstance = await pmAutoGenService.createPMInstance(
+            schedule,
+            occurrence,
+            createdInstances.length + 1
+          );
+          const workOrderId = await pmAutoGenService.generateWorkOrderForPM(schedule, pmInstance);
+          createdInstances.push({
+            pmInstanceId: pmInstance.id,
+            workOrderId,
+            dueDate: occurrence,
+          });
+        } catch (error) {
+          console.error(`[PM Instance Gen] Failed to create instance: ${error.message}`);
+        }
+      }
+
+      res.json({
+        success: true,
+        createdInstances,
+        total: createdInstances.length,
+        message: `Generated ${createdInstances.length} PM instances and work orders`,
+      });
+    } catch (err) {
+      console.error('[maintenanceSchedule.controller.js:generatePMInstances]', err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+  async getPMInstances(req, res) {
+    try {
+      const db = require('mongoose').connection.db;
+      if (!db) {
+        return res.status(500).json({ error: 'Database not connected' });
+      }
+
+      const scheduleId = req.params.id;
+      const instances = await db
+        .collection('PMInstance')
+        .find({ parentScheduleId: require('mongoose').Types.ObjectId(scheduleId) })
+        .sort({ dueDate: 1 })
+        .toArray();
+
+      res.json({
+        success: true,
+        instances: instances.map((inst) => ({
+          id: inst._id.toString(),
+          instanceNumber: inst.instanceNumber,
+          dueDate: inst.dueDate,
+          status: inst.status,
+          workOrderId: inst.workOrderId,
+        })),
+        total: instances.length,
+      });
+    } catch (err) {
+      console.error('[maintenanceSchedule.controller.js:getPMInstances]', err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+  async triggerAutoGeneration(req, res) {
+    try {
+      const pmAutoGenService = require('./pmAutoGeneration.service');
+      
+      // Manually trigger the auto-generation process
+      const createdPMs = await pmAutoGenService.processOverduePMInstances();
+
+      res.json({
+        success: true,
+        createdPMs,
+        total: createdPMs.length,
+        message: `Auto-generation triggered. Generated ${createdPMs.length} PM instances.`,
+      });
+    } catch (err) {
+      console.error('[maintenanceSchedule.controller.js:triggerAutoGeneration]', err);
       res.status(500).json({ error: err.message });
     }
   },

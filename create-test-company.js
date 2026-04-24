@@ -13,7 +13,7 @@ async function createTestCompany() {
   try {
     const now = new Date();
     const trialEndDate = new Date(now);
-    trialEndDate.setDate(trialEndDate.getDate() + 5); // 5-day trial
+    trialEndDate.setDate(trialEndDate.getDate() + 7); // 7-day trial
 
     // Create test company
     const company = await prisma.company.create({
@@ -24,7 +24,7 @@ async function createTestCompany() {
         onFreeTrial: true,
         trialStartDate: now,
         trialEndDate,
-        trialDaysRemaining: 5,
+        trialDaysRemaining: 7,
         trialExceeded: false,
         subscriptionStatus: 'trial',
       },
@@ -46,7 +46,7 @@ async function createTestCompany() {
         isTrialPeriod: true,
         trialStartDate: now,
         trialEndDate,
-        trialDaysRemaining: 5,
+        trialDaysRemaining: 7,
         features: [
           'basic_reporting',
           'user_management',

@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const TRIAL_DURATION_DAYS = 5; // 5-day free trial
+const TRIAL_DURATION_DAYS = 7; // 7-day free trial
 
 /**
  * Initialize a free trial for a new company
