@@ -1,0 +1,173 @@
+{
+  "clientName": "Thunder Client",
+  "dateExported": "2026-04-24T00:00:00.000Z",
+  "version": "1.1",
+  "folders": [],
+  "requests": [
+    {
+      "colId": "intouchpay-payment-test",
+      "containerId": "",
+      "dateExported": "2026-04-24T00:00:00.000Z",
+      "dateModified": "2026-04-24T00:00:00.000Z",
+      "description": "Login first and copy the returned JWT token into the authenticated requests below.",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "method": "POST",
+      "modified": "2026-04-24T00:00:00.000Z",
+      "name": "1. Login",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/auth/login",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"YOUR_EMAIL\",\n  \"password\": \"YOUR_PASSWORD\",\n  \"companyName\": \"YOUR_COMPANY_NAME\"\n}"
+      }
+    },
+    {
+      "colId": "intouchpay-payment-test",
+      "containerId": "",
+      "dateExported": "2026-04-24T00:00:00.000Z",
+      "dateModified": "2026-04-24T00:00:00.000Z",
+      "description": "Public pricing endpoint. Use this to confirm currency and plan amount before creating a subscription.",
+      "headers": [],
+      "method": "GET",
+      "modified": "2026-04-24T00:00:00.000Z",
+      "name": "2. Get Pricing",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/subscriptions/public/pricing",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "text": ""
+      }
+    },
+    {
+      "colId": "intouchpay-payment-test",
+      "containerId": "",
+      "dateExported": "2026-04-24T00:00:00.000Z",
+      "dateModified": "2026-04-24T00:00:00.000Z",
+      "description": "Public provider list for the Rwanda mobile money flow.",
+      "headers": [],
+      "method": "GET",
+      "modified": "2026-04-24T00:00:00.000Z",
+      "name": "3. Get Mobile Money Providers",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/subscriptions/payments/public/mobile-money-providers",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "text": ""
+      }
+    },
+    {
+      "colId": "intouchpay-payment-test",
+      "containerId": "",
+      "dateExported": "2026-04-24T00:00:00.000Z",
+      "dateModified": "2026-04-24T00:00:00.000Z",
+      "description": "Public subscription creation. Replace CLIENT_ID and SECRET_ID with the values used by the frontend helper in src/api/subscription.js if needed.",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "method": "POST",
+      "modified": "2026-04-24T00:00:00.000Z",
+      "name": "4. Create Subscription",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/subscriptions",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"userId\": \"YOUR_USER_ID\",\n  \"email\": \"YOUR_EMAIL\",\n  \"managerEmail\": \"YOUR_EMAIL\",\n  \"plan\": \"basic\",\n  \"billingCycle\": \"monthly\",\n  \"paymentMethod\": \"mobile_money\",\n  \"clientId\": \"CLIENT_ID_FROM_FRONTEND\",\n  \"secretId\": \"SECRET_ID_FROM_FRONTEND\",\n  \"metadata\": {\n    \"companyName\": \"YOUR_COMPANY_NAME\",\n    \"phone\": \"25078XXXXXXX\",\n    \"provider\": \"mtn\"\n  }\n}"
+      }
+    },
+    {
+      "colId": "intouchpay-payment-test",
+      "containerId": "",
+      "dateExported": "2026-04-24T00:00:00.000Z",
+      "dateModified": "2026-04-24T00:00:00.000Z",
+      "description": "Authenticated InTouchPay collection request. Replace Bearer token with the JWT from Login and subscriptionId with the id returned by Create Subscription.",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "key": "Authorization",
+          "value": "Bearer YOUR_AUTH_TOKEN_HERE",
+          "description": "Replace with the JWT token from the login request."
+        }
+      ],
+      "method": "POST",
+      "modified": "2026-04-24T00:00:00.000Z",
+      "name": "5. Initiate InTouchPay Mobile Money",
+      "params": [],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/subscriptions/payments/initiate-mobile-money",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"subscriptionId\": \"SUBSCRIPTION_ID_FROM_STEP_4\",\n  \"amount\": 29.99,\n  \"provider\": \"mtn\",\n  \"phoneNumber\": \"25078XXXXXXX\",\n  \"currency\": \"RWF\",\n  \"email\": \"YOUR_EMAIL\"\n}"
+      }
+    },
+    {
+      "colId": "intouchpay-payment-test",
+      "containerId": "",
+      "dateExported": "2026-04-24T00:00:00.000Z",
+      "dateModified": "2026-04-24T00:00:00.000Z",
+      "description": "Public status poller. Replace paymentId, requestTransactionId, and transactionId with the values returned by the initiate-mobile-money response.",
+      "headers": [],
+      "method": "GET",
+      "modified": "2026-04-24T00:00:00.000Z",
+      "name": "6. Check InTouchPay Status",
+      "params": [
+        {
+          "name": "paymentId",
+          "value": "PAYMENT_ID_FROM_STEP_5"
+        },
+        {
+          "name": "requestTransactionId",
+          "value": "REQUEST_TRANSACTION_ID_FROM_STEP_5"
+        },
+        {
+          "name": "transactionId",
+          "value": "TRANSACTION_ID_FROM_STEP_5"
+        }
+      ],
+      "rawParams": "",
+      "tests": "",
+      "url": "http://localhost:5000/api/subscriptions/payments/mobile-money-status",
+      "useEnvironment": false,
+      "variable": [],
+      "auth": null,
+      "body": {
+        "mimeType": "application/json",
+        "text": ""
+      }
+    }
+  ]
+}

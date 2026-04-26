@@ -21,6 +21,17 @@ const hashCredentials = (clientId, secretId) => {
     .digest('hex');
 };
 
+const reconcilePendingPaymentsInBackground = (subscriptionIds = []) => {
+  const ids = [...new Set((subscriptionIds || []).filter(Boolean).map(String))];
+  if (!ids.length) {
+    return;
+  }
+
+  paymentService
+    .reconcilePendingMobileMoneyPayments(ids)
+    .catch((error) => console.warn(`Background mobile money reconciliation failed: ${error.message}`));
+};
+
 // Create subscription with billing cycle
 exports.createSubscription = async (subscriptionData) => {
   try {
@@ -102,6 +113,8 @@ exports.getSubscriptionByClientId = async (clientId) => {
       });
     }
 
+    reconcilePendingPaymentsInBackground(subscriptions.map((entry) => entry.id));
+
     const normalizedClientId = normalizeCompanyString(queryId);
     const subscription = subscriptions.find((entry) => (
       String(entry?.companyId || '') === queryId ||
@@ -127,6 +140,8 @@ exports.getSubscriptionByClientId = async (clientId) => {
 // Get subscription by ID
 exports.getSubscriptionById = async (subscriptionId) => {
   try {
+    reconcilePendingPaymentsInBackground([subscriptionId]);
+
     const subscription = await prisma.subscription.findUnique({
       where: { id: subscriptionId },
       include: {

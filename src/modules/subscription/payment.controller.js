@@ -331,51 +331,49 @@ exports.initiateMobileMoneyPayment = async (req, res) => {
   }
 };
 
+exports.getMobileMoneyPaymentStatus = async (req, res) => {
+  try {
+    const { paymentId, requestTransactionId, transactionId } = req.query;
+
+    if (!paymentId && !requestTransactionId && !transactionId) {
+      return res.status(400).json({
+        error: 'Missing required parameter: paymentId, requestTransactionId, or transactionId',
+      });
+    }
+
+    const result = await paymentService.getMobileMoneyPaymentStatus({
+      paymentId,
+      requestTransactionId,
+      transactionId,
+    });
+
+    res.json({
+      message: 'Mobile money payment status retrieved',
+      data: normalizeExtendedJSON(result),
+    });
+  } catch (error) {
+    console.error('Mobile money status check error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
 // Get supported mobile money providers
 exports.getSupportedMobileMoneyProviders = async (req, res) => {
   try {
     const providers = [
       {
-        id: 'mpesa',
-        name: 'M-Pesa',
-        countries: ['KE', 'TZ', 'UG'],
-        description: 'Mobile money service from Safaricom',
-        ussdCode: '*150*50#',
-      },
-      {
         id: 'airtel',
         name: 'Airtel Money',
-        countries: ['KE', 'TZ', 'UG', 'RW'],
-        description: 'Mobile money service from Airtel',
+        countries: ['RW'],
+        description: 'Processed through the InTouchPay Rwanda gateway',
         ussdCode: '*144#',
       },
       {
         id: 'mtn',
         name: 'MTN Money',
-        countries: ['UG', 'RW', 'BF', 'CI', 'CM'],
-        description: 'Mobile money service from MTN',
-        ussdCode: '*165#',
-      },
-      {
-        id: 'orange',
-        name: 'Orange Money',
-        countries: ['RW', 'SN', 'CI', 'ML', 'CM'],
-        description: 'Mobile money service from Orange',
-        ussdCode: '*120#',
-      },
-      {
-        id: 'vodacom',
-        name: 'Vodacom M-Pesa',
-        countries: ['TZ', 'DZ', 'MZ', 'CD'],
-        description: 'Mobile money service from Vodacom',
-        ussdCode: '*150#',
-      },
-      {
-        id: 'tigo',
-        name: 'Tigo Pesa',
-        countries: ['TZ', 'BF', 'CM'],
-        description: 'Mobile money service from Tigo',
-        ussdCode: '*150#',
+        countries: ['RW'],
+        description: 'Processed through the InTouchPay Rwanda gateway',
+        ussdCode: '*182#',
       },
     ];
 
@@ -392,7 +390,7 @@ exports.getSupportedMobileMoneyProviders = async (req, res) => {
 // Process mobile money callback
 exports.mobileMoneyCallback = async (req, res) => {
   try {
-    const callbackData = { ...req.body, ...req.query };
+    const callbackData = req.body?.jsonpayload ? req.body : { ...req.body, ...req.query };
     console.log('Mobile money callback received:', callbackData);
 
     const result = await paymentService.processMobileMoneyCallback(callbackData);

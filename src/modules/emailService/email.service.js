@@ -1117,7 +1117,7 @@ module.exports = {
             <h3 style="color: #1f2937; margin-top: 20px;">Next Steps</h3>
             <ol style="line-height: 1.8;">
               <li><strong>Click the activation link below</strong> to begin the payment process</li>
-              <li><strong>Complete your payment</strong> using our secure payment gateway (PesaPal)</li>
+              <li><strong>Complete your payment</strong> using card via PesaPal or mobile money via InTouchPay</li>
               <li><strong>Once payment is confirmed</strong>, your account will be fully activated</li>
               <li><strong>Log in</strong> and start managing your maintenance</li>
             </ol>

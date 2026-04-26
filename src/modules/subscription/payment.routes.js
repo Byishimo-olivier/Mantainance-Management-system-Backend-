@@ -12,6 +12,9 @@ router.get('/public/calculate', ctrl.calculateAmount);
 // Get supported mobile money providers (public)
 router.get('/public/mobile-money-providers', ctrl.getSupportedMobileMoneyProviders);
 
+// Check InTouchPay / mobile money payment status (public)
+router.get('/mobile-money-status', ctrl.getMobileMoneyPaymentStatus);
+
 // Check PesaPal payment status (public - for Step 5 of integration)
 router.get('/pesapal-status', ctrl.getPesaPalPaymentStatus);
 

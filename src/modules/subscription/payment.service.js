@@ -44,9 +44,38 @@ const MTN_SUBSCRIPTION_KEY =
   process.env['Primary-key'] ||
   '';
 const MTN_TARGET_ENVIRONMENT = process.env.MTN_TARGET_ENVIRONMENT || 'sandbox';
-const MTN_CALLBACK_URL =
-  process.env.MTN_CALLBACK_URL ||
-  'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/mobile-money-callback';
+const DEFAULT_PUBLIC_BACKEND_URL =
+  (process.env.BACKEND_PUBLIC_URL || process.env.PUBLIC_BACKEND_URL || 'https://mantainance-management-system-backend.onrender.com')
+    .replace(/\/$/, '');
+
+function resolveExternalCallbackUrl(rawValue, fallbackUrl) {
+  const candidate = String(rawValue || '').trim();
+  if (!candidate) {
+    return fallbackUrl;
+  }
+
+  const normalized = candidate.toLowerCase();
+  if (normalized.includes('your-backend-domain.com') || normalized.includes('localhost')) {
+    console.warn(`[Payments] Ignoring non-public callback URL "${candidate}" and using fallback "${fallbackUrl}"`);
+    return fallbackUrl;
+  }
+
+  return candidate;
+}
+
+const MTN_CALLBACK_URL = resolveExternalCallbackUrl(
+  process.env.MTN_CALLBACK_URL,
+  `${DEFAULT_PUBLIC_BACKEND_URL}/api/subscriptions/payments/mobile-money-callback`
+);
+
+const INTOUCHPAY_BASE_URL = (process.env.INTOUCHPAY_BASE_URL || 'https://www.intouchpay.co.rw').replace(/\/$/, '');
+const INTOUCHPAY_USERNAME = process.env.INTOUCHPAY_USERNAME || '';
+const INTOUCHPAY_ACCOUNT_NO = process.env.INTOUCHPAY_ACCOUNT_NO || '';
+const INTOUCHPAY_PARTNER_PASSWORD = process.env.INTOUCHPAY_PARTNER_PASSWORD || '';
+const INTOUCHPAY_CALLBACK_URL = resolveExternalCallbackUrl(
+  process.env.INTOUCHPAY_CALLBACK_URL,
+  `${DEFAULT_PUBLIC_BACKEND_URL}/api/subscriptions/payments/mobile-money-callback`
+);
 
 // PesaPal V3 API Endpoints (relative to base URL)
 const PESAPAL_ENDPOINTS = {
@@ -836,6 +865,140 @@ function generateTransactionId() {
   return `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 }
 
+function deriveIntouchPayPaymentStatus({ responseCode, status, statusDesc, message, success }) {
+  const code = String(responseCode || '').trim();
+  const combinedText = [status, statusDesc, message]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase())
+    .join(' ');
+  const normalizedSuccess = String(success ?? '').trim().toLowerCase();
+
+  if (
+    code === '01' ||
+    code === '2001' ||
+    combinedText.includes('success') ||
+    combinedText.includes('successful') ||
+    combinedText.includes('processed') ||
+    combinedText.includes('approved') ||
+    combinedText.includes('complete') ||
+    combinedText.includes('completed') ||
+    combinedText.includes('paid')
+  ) {
+    return 'completed';
+  }
+
+  if (
+    code === '1000' ||
+    combinedText.includes('pending') ||
+    combinedText.includes('await') ||
+    combinedText.includes('approv') ||
+    combinedText.includes('processing')
+  ) {
+    return 'pending';
+  }
+
+  if (
+    normalizedSuccess === 'false' ||
+    ['3000', '3100', '3200', '2200', '2300'].includes(code) ||
+    combinedText.includes('fail') ||
+    combinedText.includes('error') ||
+    combinedText.includes('reject') ||
+    combinedText.includes('declin') ||
+    combinedText.includes('cancel') ||
+    combinedText.includes('doesn\'t exist')
+  ) {
+    return 'failed';
+  }
+
+  if (normalizedSuccess === 'true') {
+    return 'pending';
+  }
+
+  return 'pending';
+}
+
+function formatIntouchPayTimestamp(date = new Date()) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${year}${month}${day}${hours}${minutes}${seconds}`;
+}
+
+function buildIntouchPayPassword(timestamp) {
+  if (!INTOUCHPAY_USERNAME || !INTOUCHPAY_ACCOUNT_NO || !INTOUCHPAY_PARTNER_PASSWORD) {
+    throw new Error(
+      'InTouchPay configuration missing. Set INTOUCHPAY_USERNAME, INTOUCHPAY_ACCOUNT_NO, and INTOUCHPAY_PARTNER_PASSWORD.'
+    );
+  }
+
+  return crypto
+    .createHash('sha256')
+    .update(`${INTOUCHPAY_USERNAME}${INTOUCHPAY_ACCOUNT_NO}${INTOUCHPAY_PARTNER_PASSWORD}${timestamp}`)
+    .digest('hex');
+}
+
+async function initiateIntouchPayCollection({ amount, phoneNumber, requestTransactionId }) {
+  const timestamp = formatIntouchPayTimestamp();
+  const password = buildIntouchPayPassword(timestamp);
+  const normalizedPhone = formatPhoneNumber(phoneNumber, 'RW').replace(/^\+/, '');
+  const payload = new URLSearchParams({
+    username: INTOUCHPAY_USERNAME,
+    timestamp,
+    amount: String(amount),
+    mobilephone: normalizedPhone,
+    mobilephoneno: normalizedPhone,
+    requesttransactionid: String(requestTransactionId),
+    accountno: INTOUCHPAY_ACCOUNT_NO,
+    password,
+    callbackurl: INTOUCHPAY_CALLBACK_URL,
+  });
+
+  const response = await axios.post(
+    `${INTOUCHPAY_BASE_URL}/api/requestpayment/`,
+    payload.toString(),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      timeout: 65000,
+    }
+  );
+
+  return {
+    raw: response.data || {},
+    normalizedPhone,
+    timestamp,
+  };
+}
+
+async function getIntouchPayTransactionStatus({ requestTransactionId, transactionId }) {
+  const timestamp = formatIntouchPayTimestamp();
+  const password = buildIntouchPayPassword(timestamp);
+  const response = await axios.post(
+    `${INTOUCHPAY_BASE_URL}/api/gettransactionstatus/`,
+    {
+      username: INTOUCHPAY_USERNAME,
+      timestamp,
+      password,
+      requesttransactionid: String(requestTransactionId),
+      transactionid: String(transactionId),
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      timeout: 65000,
+    }
+  );
+
+  return response.data || {};
+}
+
 // Helper function to simulate payment gateway (for testing without real PayPack credentials)
 async function simulatePaymentGateway(paymentData) {
   try {
@@ -906,10 +1069,27 @@ async function updateSubscriptionAfterPayment(subscriptionId) {
     const updatedSubscription = await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
+        status: 'active',
         paymentStatus: 'paid',
         nextBillingDate,
       },
     });
+
+    if (subscription.companyId) {
+      await prisma.company.update({
+        where: { id: subscription.companyId },
+        data: {
+          subscriptionStatus: 'active',
+          subscriptionPlan: subscription.plan,
+          subscriptionStartDate: subscription.startDate || new Date(),
+          subscriptionEndDate: nextBillingDate,
+          onFreeTrial: false,
+          trialExceeded: false,
+        },
+      }).catch((error) => {
+        console.warn('Failed to update company subscription summary:', error.message);
+      });
+    }
 
     // Create invoice
     await createInvoice(subscriptionId, subscription);
@@ -919,6 +1099,44 @@ async function updateSubscriptionAfterPayment(subscriptionId) {
     console.error('Error updating subscription after payment:', error);
   }
 }
+
+exports.reconcilePendingMobileMoneyPayments = async (subscriptionIds = []) => {
+  try {
+    const ids = [...new Set((subscriptionIds || []).filter(Boolean).map(String))];
+    if (!ids.length) return;
+
+    const pendingPayments = await prisma.payment.findMany({
+      where: {
+        subscriptionId: { in: ids },
+        paymentMethod: 'intouchpay',
+        status: 'pending',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.max(ids.length * 3, 5),
+    });
+
+    for (const payment of pendingPayments) {
+      const requestTransactionId = payment.metadata?.requestTransactionId || payment.transactionId;
+      const transactionId = payment.metadata?.intouchpayTransactionId;
+
+      if (!requestTransactionId || !transactionId) {
+        continue;
+      }
+
+      try {
+        await exports.getMobileMoneyPaymentStatus({
+          paymentId: payment.id,
+          requestTransactionId,
+          transactionId,
+        });
+      } catch (error) {
+        console.warn(`Failed to reconcile payment ${payment.id}: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    console.warn(`Failed to reconcile pending mobile money payments: ${error.message}`);
+  }
+};
 
 // Create invoice for a subscription
 async function createInvoice(subscriptionId, subscription) {
@@ -1011,7 +1229,7 @@ exports.calculateAmount = (plan, billingCycle) => {
   return PRICING[plan][billingCycle];
 };
 
-// Initiate mobile money payment (M-Pesa, Airtel Money, MTN Money, etc.)
+// Initiate mobile money payment through InTouchPay collection
 exports.initiateMobileMoneyPayment = async (paymentData) => {
   try {
     const { subscriptionId, amount, phoneNumber, provider, currency, email, userId } = paymentData;
@@ -1019,12 +1237,6 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
     // Validate required fields
     if (!subscriptionId || !amount || !phoneNumber || !provider) {
       throw new Error('Missing required fields: subscriptionId, amount, phoneNumber, provider');
-    }
-
-    // Supported mobile money providers
-    const supportedProviders = ['mpesa', 'airtel', 'mtn', 'orange', 'vodacom', 'tigo'];
-    if (!supportedProviders.includes(provider.toLowerCase())) {
-      throw new Error(`Unsupported provider: ${provider}. Supported: ${supportedProviders.join(', ')}`);
     }
 
     // Get subscription to verify
@@ -1039,6 +1251,8 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
     // Get system settings for currency
     const settings = await systemSettingsService.getSettings();
     const paymentCurrency = currency || settings?.platform?.subscriptionCurrency || 'RWF';
+    const normalizedProvider = String(provider || 'intouchpay').trim().toLowerCase() || 'intouchpay';
+    const requestTransactionId = generateTransactionId();
 
     // Create payment record in pending state
     const payment = await prisma.payment.create({
@@ -1046,132 +1260,68 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
         subscriptionId,
         amount,
         currency: paymentCurrency,
-        paymentMethod: `mobile_${provider.toLowerCase()}`,
+        paymentMethod: 'intouchpay',
         status: 'pending',
-        description: `${provider} payment for ${subscription.plan} subscription`,
-        transactionId: generateTransactionId(),
+        description: `InTouchPay collection for ${subscription.plan} subscription`,
+        transactionId: requestTransactionId,
         metadata: {
           phoneNumber,
           email: email || subscription.email,
           userId,
-          provider: provider.toLowerCase(),
+          provider: normalizedProvider,
+          gateway: 'intouchpay',
+          requestTransactionId,
           mobileMoneyInitiated: new Date().toISOString(),
         },
       },
     });
 
-    // Route to appropriate mobile money provider
-    let mobilemoneyResponse;
-    switch (provider.toLowerCase()) {
-      case 'mpesa':
-        mobilemoneyResponse = await initiateMPesaPayment({
-          amount,
-          phoneNumber,
-          paymentId: payment.id,
-          currency: paymentCurrency,
-        });
-        break;
-      case 'airtel':
-        mobilemoneyResponse = await initiateAirtelMoneyPayment({
-          amount,
-          phoneNumber,
-          paymentId: payment.id,
-          currency: paymentCurrency,
-        });
-        break;
-      case 'mtn':
-        mobilemoneyResponse = await initiateMTNMoneyPayment({
-          amount,
-          phoneNumber,
-          paymentId: payment.id,
-          currency: paymentCurrency,
-        });
-        break;
-      case 'orange':
-        mobilemoneyResponse = await initiateOrangeMoneyPayment({
-          amount,
-          phoneNumber,
-          paymentId: payment.id,
-          currency: paymentCurrency,
-        });
-        break;
-      default:
-        // Generic USSD fallback
-        mobilemoneyResponse = await initiateUSSDPayment({
-          amount,
-          phoneNumber,
-          paymentId: payment.id,
-          provider: provider.toLowerCase(),
-          currency: paymentCurrency,
-        });
-    }
+    const intouchPayResponse = await initiateIntouchPayCollection({
+      amount,
+      phoneNumber,
+      requestTransactionId,
+    });
 
-    // Update payment with mobile money transaction details
+    const intouchData = intouchPayResponse.raw || {};
+    const rawResponseCode = String(intouchData.responsecode || '').trim();
+    const paymentStatus = deriveIntouchPayPaymentStatus({
+      responseCode: rawResponseCode,
+      status: intouchData.status,
+      statusDesc: intouchData.statusdesc,
+      message: intouchData.message,
+      success: intouchData.success,
+    });
+
     const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },
       data: {
+        status: paymentStatus,
+        paidAt: paymentStatus === 'completed' ? new Date() : null,
+        failureReason: paymentStatus === 'failed' ? (intouchData.message || 'InTouchPay request failed') : null,
         metadata: {
           ...payment.metadata,
-          ...mobilemoneyResponse,
-          paymentGateway: 'mobile_money',
+          intouchpayRequestTimestamp: intouchPayResponse.timestamp,
+          intouchpayResponseCode: intouchData.responsecode || null,
+          intouchpayStatus: intouchData.status || null,
+          intouchpayTransactionId: intouchData.transactionid ? String(intouchData.transactionid) : null,
+          intouchpayReferenceNo: intouchData.referenceno ? String(intouchData.referenceno) : null,
+          intouchpayMessage: intouchData.message || null,
+          paymentGateway: 'intouchpay',
+          callbackUrl: INTOUCHPAY_CALLBACK_URL,
+          instructionMessage: 'Approve the payment request on your phone to complete the transaction.',
         },
       },
     });
+
+    if (updatedPayment.status === 'completed') {
+      await updateSubscriptionAfterPayment(updatedPayment.subscriptionId);
+    }
 
     return updatedPayment;
   } catch (error) {
     throw new Error(`Failed to initiate mobile money payment: ${error.message}`);
   }
 };
-
-// M-Pesa payment initiation
-async function initiateMPesaPayment(paymentData) {
-  try {
-    const { amount, phoneNumber, paymentId, currency } = paymentData;
-
-    // Format phone number - M-Pesa expects international format
-    const formattedPhone = formatPhoneNumber(phoneNumber, 'KE');
-
-    // For now, return a pending instruction
-    // In production, integrate with XYZ Pay or M-Pesa API
-    return {
-      mobileProvider: 'M-Pesa',
-      phoneNumber: formattedPhone,
-      amount,
-      currency,
-      ussdCode: '*150*50#', // Example USSD code for M-Pesa balance
-      instructionMessage: `Send ${amount} ${currency} to {shortcode}`,
-      referenceCode: paymentId,
-      status: 'awaiting_payment',
-      initiatedAt: new Date().toISOString(),
-    };
-  } catch (error) {
-    throw new Error(`M-Pesa payment initiation failed: ${error.message}`);
-  }
-}
-
-// Airtel Money payment initiation
-async function initiateAirtelMoneyPayment(paymentData) {
-  try {
-    const { amount, phoneNumber, paymentId, currency } = paymentData;
-
-    const formattedPhone = formatPhoneNumber(phoneNumber, 'KE');
-
-    return {
-      mobileProvider: 'Airtel Money',
-      phoneNumber: formattedPhone,
-      amount,
-      currency,
-      ussdCode: '*144#',
-      instructionMessage: `Send ${amount} ${currency} to {shortcode}`,
-      referenceCode: paymentId,
-      status: 'awaiting_payment',
-      initiatedAt: new Date().toISOString(),
-    };
-  } catch (error) {
-    throw new Error(`Airtel Money payment initiation failed: ${error.message}`);
-  }
-}
 
 // MTN Money payment initiation
 async function initiateMTNMoneyPayment(paymentData) {
@@ -1363,43 +1513,57 @@ function formatPhoneNumber(phoneNumber, country) {
 // Process mobile money callback/verification
 exports.processMobileMoneyCallback = async (callbackData) => {
   try {
-    const { transactionId, status, provider } = callbackData;
+    const payload = callbackData?.jsonpayload || callbackData;
+    const requestTransactionId = String(payload?.requesttransactionid || payload?.requestTransactionId || payload?.transactionId || '').trim();
+    const intouchTransactionId = String(payload?.transactionid || payload?.intouchpayTransactionId || '').trim();
 
-    if (!transactionId) {
-      throw new Error('Transaction ID is required');
+    if (!requestTransactionId && !intouchTransactionId) {
+      throw new Error('requesttransactionid or transactionid is required');
     }
 
-    // Find payment by transaction ID
-    const payment = await prisma.payment.findUnique({
-      where: { transactionId },
-    });
+    const payment = requestTransactionId
+      ? await prisma.payment.findFirst({
+          where: {
+            OR: [
+              { transactionId: requestTransactionId },
+              { metadata: { path: ['requestTransactionId'], equals: requestTransactionId } },
+            ],
+          },
+        })
+      : await prisma.payment.findFirst({
+          where: {
+            metadata: { path: ['intouchpayTransactionId'], equals: intouchTransactionId },
+          },
+        });
 
     if (!payment) {
-      throw new Error(`Payment not found for transaction: ${transactionId}`);
+      throw new Error(`Payment not found for callback reference: ${requestTransactionId || intouchTransactionId}`);
     }
 
-    // Verify payment status with provider
-    let paymentStatus = status;
-    if (!paymentStatus && provider) {
-      const verificationResult = await verifyMobileMoneyPayment({
-        transactionId,
-        provider,
-      });
-      paymentStatus = verificationResult.status;
-    }
+    const rawResponseCode = String(payload?.responsecode || '').trim();
+    const paymentStatus = deriveIntouchPayPaymentStatus({
+      responseCode: rawResponseCode,
+      status: payload?.status,
+      statusDesc: payload?.statusdesc,
+      message: payload?.message,
+      success: payload?.success,
+    });
 
-    // Update payment status
     const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },
       data: {
-        status: paymentStatus === 'completed' ? 'completed' : paymentStatus === 'failed' ? 'failed' : 'pending',
+        status: paymentStatus,
         paidAt: paymentStatus === 'completed' ? new Date() : null,
-        failureReason: paymentStatus === 'failed' ? callbackData.failureReason : null,
+        failureReason: paymentStatus === 'failed' ? (payload?.statusdesc || payload?.message || 'Mobile money payment failed') : null,
         metadata: {
           ...payment.metadata,
           mobileMoneyStatus: paymentStatus,
+          intouchpayStatus: payload?.status || payload?.statusdesc || null,
+          intouchpayResponseCode: payload?.responsecode || null,
+          intouchpayTransactionId: intouchTransactionId || payment.metadata?.intouchpayTransactionId || null,
+          intouchpayReferenceNo: payload?.referenceno || payment.metadata?.intouchpayReferenceNo || null,
           callbackReceivedAt: new Date().toISOString(),
-          ...callbackData,
+          callbackPayload: payload,
         },
       },
     });
@@ -1415,27 +1579,97 @@ exports.processMobileMoneyCallback = async (callbackData) => {
   }
 };
 
-// Verify mobile money payment status
-async function verifyMobileMoneyPayment(verificationData) {
+exports.getMobileMoneyPaymentStatus = async ({ paymentId, requestTransactionId, transactionId }) => {
   try {
-    const { transactionId, provider } = verificationData;
+    let payment = null;
 
-    // This is a placeholder for actual API calls to mobile money providers
-    // In production, you would make actual API requests to verify payment status
+    if (paymentId) {
+      payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+    }
 
-    console.log(`Verifying ${provider} payment for transaction: ${transactionId}`);
+    if (!payment && requestTransactionId) {
+      payment = await prisma.payment.findFirst({
+        where: {
+          OR: [
+            { transactionId: requestTransactionId },
+            { metadata: { path: ['requestTransactionId'], equals: requestTransactionId } },
+          ],
+        },
+      });
+    }
 
-    // For now, return pending status - in production this would check actual provider APIs
+    if (!payment && transactionId) {
+      payment = await prisma.payment.findFirst({
+        where: {
+          metadata: { path: ['intouchpayTransactionId'], equals: String(transactionId) },
+        },
+      });
+    }
+
+    if (!payment) {
+      throw new Error('Payment not found');
+    }
+
+    const requestRef = requestTransactionId || payment.metadata?.requestTransactionId || payment.transactionId;
+    const intouchRef = transactionId || payment.metadata?.intouchpayTransactionId;
+
+    if (!requestRef || !intouchRef) {
+      return {
+        paymentId: payment.id,
+        status: payment.status || 'pending',
+        responseCode: payment.metadata?.intouchpayResponseCode || null,
+        message: payment.metadata?.intouchpayMessage || 'Awaiting callback confirmation',
+      };
+    }
+
+    const statusResponse = await getIntouchPayTransactionStatus({
+      requestTransactionId: requestRef,
+      transactionId: intouchRef,
+    });
+
+    const rawResponseCode = String(statusResponse?.responsecode || '').trim();
+    const paymentStatus = deriveIntouchPayPaymentStatus({
+      responseCode: rawResponseCode,
+      status: statusResponse?.status,
+      statusDesc: statusResponse?.statusdesc,
+      message: statusResponse?.message,
+      success: statusResponse?.success,
+    });
+
+    if (payment.status !== paymentStatus || payment.metadata?.intouchpayResponseCode !== rawResponseCode) {
+      payment = await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: paymentStatus,
+          paidAt: paymentStatus === 'completed' ? (payment.paidAt || new Date()) : payment.paidAt,
+          failureReason: paymentStatus === 'failed' ? (statusResponse?.message || payment.failureReason || 'InTouchPay payment failed') : payment.failureReason,
+          metadata: {
+            ...payment.metadata,
+            intouchpayStatus: statusResponse?.status || null,
+            intouchpayResponseCode: rawResponseCode || null,
+            intouchpayMessage: statusResponse?.message || null,
+            lastStatusCheckAt: new Date().toISOString(),
+          },
+        },
+      });
+    }
+
+    if (paymentStatus === 'completed') {
+      await updateSubscriptionAfterPayment(payment.subscriptionId);
+    }
+
     return {
-      status: 'pending',
-      transactionId,
-      provider,
-      verifiedAt: new Date().toISOString(),
+      paymentId: payment.id,
+      status: paymentStatus,
+      responseCode: rawResponseCode || null,
+      message: statusResponse?.message || statusResponse?.status || 'Status retrieved',
+      requestTransactionId: requestRef,
+      transactionId: intouchRef,
     };
   } catch (error) {
-    throw new Error(`Payment verification failed: ${error.message}`);
+    throw new Error(`Failed to get mobile money payment status: ${error.message}`);
   }
-}
+};
 
 // ============================================
 // PesaPal API Testing & Documentation
