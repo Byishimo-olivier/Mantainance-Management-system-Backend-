@@ -2,6 +2,8 @@ const service = require('./subscription.service');
 const companySubscriptionService = require('./company-subscription.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 const systemSettingsService = require('../systemSettings/systemSettings.service');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 exports.createSubscription = async (req, res) => {
   try {
@@ -143,9 +145,17 @@ exports.updateSubscription = async (req, res) => {
     if (req.body.paymentMethod) payload.paymentMethod = req.body.paymentMethod;
     // Note: phoneNumber and propertyId not in Subscription model; store in metadata if needed
 
-    // admin users may modify status or metadata
+    // admin users may modify status or metadata, but not without payment verification
     if (isAdmin) {
-      if (req.body.status) payload.status = req.body.status;
+      // ✓ FIX: Prevent admin from setting status to 'active' without payment
+      if (req.body.status) {
+        if (req.body.status === 'active' && existing.paymentStatus !== 'paid') {
+          return res.status(403).json({ 
+            error: 'Cannot activate subscription without confirming payment. Payment status must be "paid".' 
+          });
+        }
+        payload.status = req.body.status;
+      }
       if (req.body.metadata) payload.metadata = req.body.metadata;
     }
 
@@ -514,8 +524,41 @@ exports.getTrialStatus = async (req, res) => {
 
     // Get company ID from user
     const companyId = user.company?._id?.toString() || user.companyId?.toString() || user.company?.id?.toString();
+    let resolvedCompanyId = companyId;
+    const normalizedCompanyName = String(user.companyName || '').trim();
+
+    if (!resolvedCompanyId && normalizedCompanyName) {
+      const companyRecord = await companySubscriptionService
+        .ensureCompanyExists(normalizedCompanyName, String(userId))
+        .catch(() => null);
+
+      resolvedCompanyId = companyRecord?.id?.toString() || null;
+    }
+
+    if (resolvedCompanyId) {
+      const companyRecord = await prisma.company.findUnique({
+        where: { id: resolvedCompanyId },
+        select: {
+          trialStartDate: true,
+          trialEndDate: true,
+          subscriptionStatus: true,
+          trialExceeded: true,
+        },
+      }).catch(() => null);
+
+      const needsTrialInitialization =
+        companyRecord &&
+        !companyRecord.trialStartDate &&
+        !companyRecord.trialEndDate &&
+        String(companyRecord.subscriptionStatus || 'inactive').toLowerCase() === 'inactive' &&
+        companyRecord.trialExceeded !== true;
+
+      if (needsTrialInitialization) {
+        await trialService.initializeFreeTrial(resolvedCompanyId);
+      }
+    }
     
-    if (!companyId) {
+    if (!resolvedCompanyId) {
       // Return default trial status if no company attached
       return res.json({
         message: 'No company associated with user',
@@ -528,7 +571,7 @@ exports.getTrialStatus = async (req, res) => {
       });
     }
 
-    const trialStatus = await trialService.getTrialStatus(companyId);
+    const trialStatus = await trialService.getTrialStatus(resolvedCompanyId);
 
     res.json({
       message: 'Trial status retrieved successfully',

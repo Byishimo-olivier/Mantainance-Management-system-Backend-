@@ -55,7 +55,7 @@ exports.createSubscription = async (subscriptionData) => {
         plan,
         billingCycle,
         amount,
-        status: 'active',
+        status: 'pending_payment',
         paymentStatus: 'pending',
         startDate: new Date(),
         nextBillingDate,

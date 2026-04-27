@@ -388,7 +388,7 @@ exports.processPesaPalCallback = async (callbackData) => {
 
     // If payment successful, update subscription and create invoice
     if (paymentStatus === 'completed') {
-      await updateSubscriptionAfterPayment(payment.subscriptionId);
+      await updateSubscriptionAfterPayment(payment.subscriptionId, payment.id);
 
       // ACTIVATE USER ACCOUNT if payment is for account activation
       const User = require('../user/user.model.js');
@@ -489,7 +489,7 @@ exports.getPesaPalPaymentStatus = async (orderTrackingIdOrTransactionId) => {
 
       // If payment just completed, update subscription
       if (paymentStatus === 'completed' && payment.status !== 'completed') {
-        await updateSubscriptionAfterPayment(payment.subscriptionId);
+        await updateSubscriptionAfterPayment(payment.subscriptionId, payment.id);
       }
     }
 
@@ -1034,7 +1034,7 @@ async function simulatePaymentGateway(paymentData) {
       });
 
       // Update subscription after successful payment
-      await updateSubscriptionAfterPayment(subscriptionId);
+      await updateSubscriptionAfterPayment(subscriptionId, updatedPayment.id);
       return updatedPayment;
     } else {
       return await prisma.payment.update({
@@ -1052,7 +1052,7 @@ async function simulatePaymentGateway(paymentData) {
 }
 
 // Helper function to update subscription after payment
-async function updateSubscriptionAfterPayment(subscriptionId) {
+async function updateSubscriptionAfterPayment(subscriptionId, paymentId = null) {
   try {
     const subscription = await prisma.subscription.findUnique({
       where: { id: subscriptionId },
@@ -1060,6 +1060,33 @@ async function updateSubscriptionAfterPayment(subscriptionId) {
 
     if (!subscription) {
       throw new Error('Subscription not found');
+    }
+
+    const confirmedPayment = paymentId
+      ? await prisma.payment.findFirst({
+          where: {
+            id: paymentId,
+            subscriptionId,
+            status: 'completed',
+          },
+        })
+      : await prisma.payment.findFirst({
+          where: {
+            subscriptionId,
+            status: 'completed',
+          },
+          orderBy: { paidAt: 'desc' },
+        });
+
+    if (!confirmedPayment) {
+      console.warn(
+        `Skipping subscription activation for ${subscriptionId}: no completed payment${paymentId ? ` (${paymentId})` : ''} was confirmed.`
+      );
+      return subscription;
+    }
+
+    if (subscription.status === 'active' && subscription.paymentStatus === 'paid') {
+      return subscription;
     }
 
     // Calculate next billing date
@@ -1092,7 +1119,7 @@ async function updateSubscriptionAfterPayment(subscriptionId) {
     }
 
     // Create invoice
-    await createInvoice(subscriptionId, subscription);
+    await createInvoice(subscriptionId, updatedSubscription);
 
     return updatedSubscription;
   } catch (error) {
@@ -1314,7 +1341,7 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
     });
 
     if (updatedPayment.status === 'completed') {
-      await updateSubscriptionAfterPayment(updatedPayment.subscriptionId);
+      await updateSubscriptionAfterPayment(updatedPayment.subscriptionId, updatedPayment.id);
     }
 
     return updatedPayment;
@@ -1570,7 +1597,7 @@ exports.processMobileMoneyCallback = async (callbackData) => {
 
     // If payment successful, update subscription
     if (paymentStatus === 'completed') {
-      await updateSubscriptionAfterPayment(payment.subscriptionId);
+      await updateSubscriptionAfterPayment(payment.subscriptionId, payment.id);
     }
 
     return updatedPayment;
@@ -1655,7 +1682,7 @@ exports.getMobileMoneyPaymentStatus = async ({ paymentId, requestTransactionId, 
     }
 
     if (paymentStatus === 'completed') {
-      await updateSubscriptionAfterPayment(payment.subscriptionId);
+      await updateSubscriptionAfterPayment(payment.subscriptionId, payment.id);
     }
 
     return {

@@ -3,11 +3,13 @@ const { createUser, findUserByEmail, getAllUsers, getUsersByRoles, findCompanyBy
 const emailService = require('../emailService/email.service.js');
 const UserInvite = require('./userInvite.model.js');
 const User = require('./user.model.js');
+const { PrismaClient } = require('@prisma/client');
 
 const propertyModel = require('../property/property.model');
 const assetModel = require('../asset/asset.model');
 const internalTechnicianModel = require('../internalTechnician/internalTechnician.model');
 const checklistService = require('../checklist/checklist.service');
+const prisma = new PrismaClient();
 
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim().toLowerCase());
@@ -60,6 +62,46 @@ exports.registerUser = async (req, res) => {
 
     // Auto-activate user on signup (no payment required)
     const user = await createUser(payload, { requirePaymentBeforeActivation: false });
+    let companyId = null;
+
+    const normalizedCompanyName = String(user.companyName || '').trim();
+    const normalizedCompanyType = String(user.companyType || 'main').trim().toLowerCase();
+
+    if (normalizedCompanyName && String(user.role || '').toLowerCase() !== 'superadmin') {
+      try {
+        const companySubscriptionService = require('../subscription/company-subscription.service');
+        const trialService = require('../subscription/trial.service');
+
+        const company = await companySubscriptionService.ensureCompanyExists(normalizedCompanyName, String(user._id));
+        companyId = company?.id ? String(company.id) : null;
+
+        if (companyId && normalizedCompanyType !== 'branch') {
+          const freshCompany = await prisma.company.findUnique({
+            where: { id: companyId },
+            select: {
+              id: true,
+              trialStartDate: true,
+              trialEndDate: true,
+              subscriptionStatus: true,
+              trialExceeded: true,
+            },
+          });
+
+          const needsTrialInitialization =
+            freshCompany &&
+            !freshCompany.trialStartDate &&
+            !freshCompany.trialEndDate &&
+            String(freshCompany.subscriptionStatus || 'inactive').toLowerCase() === 'inactive' &&
+            freshCompany.trialExceeded !== true;
+
+          if (needsTrialInitialization) {
+            await trialService.initializeFreeTrial(companyId);
+          }
+        }
+      } catch (trialError) {
+        console.error('Failed to ensure company trial on signup:', trialError.message);
+      }
+    }
     
     // Send welcome email to new user
     if (user.email) {
@@ -88,6 +130,7 @@ exports.registerUser = async (req, res) => {
         name: user.name,
         email: user.email,
         companyName: user.companyName,
+        companyId,
         role: user.role,
         isActive: user.isActive
       }

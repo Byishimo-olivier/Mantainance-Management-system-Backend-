@@ -174,20 +174,6 @@ exports.upgradeToPaid = async (companyId, plan, billingCycle) => {
     // Calculate next billing date based on cycle
     const nextBillingDate = calculateNextBillingDate(billingCycle);
 
-    const updatedCompany = await prisma.company.update({
-      where: { id: companyId },
-      data: {
-        onFreeTrial: false,
-        trialExceeded: false,
-        trialDaysRemaining: 0,
-        subscriptionStatus: 'active',
-        subscriptionPlan: plan,
-        subscriptionStartDate: now,
-        subscriptionEndDate: nextBillingDate,
-      },
-      include: { subscriptions: true },
-    });
-
     // Close trial subscriptions
     await prisma.subscription.updateMany({
       where: {
@@ -199,17 +185,18 @@ exports.upgradeToPaid = async (companyId, plan, billingCycle) => {
       },
     });
 
-    // Create new paid subscription
+    // Create new PENDING_PAYMENT subscription (NOT active until payment is confirmed)
     const paidAmount = calculateAmount(plan, billingCycle);
-    await prisma.subscription.create({
+    const company = await prisma.company.findUnique({ where: { id: companyId } });
+    const newSubscription = await prisma.subscription.create({
       data: {
         companyId,
-        email: updatedCompany.email,
+        email: company?.email,
         plan,
         billingCycle,
         amount: paidAmount,
-        status: 'active',
-        paymentStatus: 'paid',
+        status: 'pending_payment', // ✓ FIX: Start as pending, not active
+        paymentStatus: 'pending', // ✓ FIX: Payment is pending, not paid
         isTrialPeriod: false,
         features: getFeaturesByPlan(plan),
         startDate: now,
@@ -218,9 +205,21 @@ exports.upgradeToPaid = async (companyId, plan, billingCycle) => {
       },
     });
 
-    return updatedCompany;
+    // Update company to reflect trial ended (but subscription not yet active)
+    const updatedCompany = await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        onFreeTrial: false,
+        trialExceeded: false,
+        trialDaysRemaining: 0,
+        subscriptionPlan: plan,
+      },
+      include: { subscriptions: true },
+    });
+
+    return { ...updatedCompany, pendingSubscription: newSubscription };
   } catch (error) {
-    throw new Error(`Failed to upgrade to paid subscription: ${error.message}`);
+    throw new Error(`Failed to create pending paid subscription: ${error.message}`);
   }
 };
 

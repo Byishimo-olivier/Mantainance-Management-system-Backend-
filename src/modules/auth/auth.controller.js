@@ -212,10 +212,17 @@ const login = async (req, res) => {
   // Get company name from user (works for both Mongoose and Prisma)
   const companyName = isFromPrisma ? (user.companyName || null) : (user.companyName || null);
   
-  // For Prisma users, also try to get companyId for later use if needed
+  // Resolve company ID so trial/subscription lookups can use the actual company record.
   let companyId = null;
   if (isFromPrisma && user.companyId) {
     companyId = user.companyId;
+  }
+  if (!companyId && companyName) {
+    const companyRecord = await prisma.company.findUnique({
+      where: { name: String(companyName).trim() },
+      select: { id: true },
+    }).catch(() => null);
+    companyId = companyRecord?.id || null;
   }
 
   const accountStatus = String(user.status || '').toLowerCase();
@@ -356,7 +363,7 @@ const login = async (req, res) => {
       email: user.email,
       role: role,
       companyName,
-      companyId: String(userId),
+      companyId: companyId ? String(companyId) : null,
       companyType: user.companyType || 'main',
       branchName: user.branchName || '',
       branchDetails: user.branchDetails || ''
