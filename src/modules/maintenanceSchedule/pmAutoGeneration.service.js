@@ -6,6 +6,12 @@
 const pmRecurrenceService = require('./pmRecurrence.service');
 const mongoose = require('mongoose');
 
+const sameMoment = (left, right) => {
+  const leftTime = left instanceof Date ? left.getTime() : new Date(left).getTime();
+  const rightTime = right instanceof Date ? right.getTime() : new Date(right).getTime();
+  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime === rightTime;
+};
+
 /**
  * Auto-generate work order for a PM instance
  */
@@ -17,24 +23,43 @@ const generateWorkOrderForPM = async (schedule, pmInstance) => {
       return null;
     }
 
+    const scheduleId = schedule.id || schedule._id;
+    const dueDate = pmInstance.dueDate || schedule.nextDate;
+    const existingIssue = await db.collection('Issue').findOne({
+      parentScheduleId: scheduleId,
+      createdBySchedule: true,
+      dueDate,
+    });
+    if (existingIssue) {
+      console.log('[PM Auto Gen] Work order already exists for schedule/due date:', scheduleId);
+      return existingIssue._id;
+    }
+
     const issueData = {
       title: `${schedule.workOrderTitle || schedule.name || 'Preventive Maintenance'} - Instance ${pmInstance.instanceNumber || 1}`,
       description: schedule.workOrderDescription || schedule.description || 'Auto-generated preventive maintenance work order',
       location: schedule.location || 'Preventive Maintenance',
-      propertyId: schedule.assetsRows?.[0]?.propertyId || null,
+      propertyId: schedule.assetsRows?.[0]?.propertyId || schedule.assetsRows?.[0]?.locationId || schedule.propertyId || null,
       assetId: schedule.assetsRows?.[0]?.assetId || null,
       tags: ['recurring-pm', 'auto-generated'],
       assignees: [],
       time: 'Scheduled',
       userId: schedule.userId || null,
-      status: 'PENDING',
+      clientId: schedule.clientId || schedule.userId || null,
+      requestorId: schedule.requestorId || schedule.userId || null,
+      createdBy: schedule.userId || null,
+      approved: true,
+      status: 'OPEN',
       priority: (schedule.priority || 'MEDIUM').toUpperCase(),
       category: schedule.category || 'General',
-      scheduleId: schedule.id || schedule._id,
-      parentScheduleId: schedule.id || schedule._id, // Reference to the recurring PM
+      scheduleId,
+      parentScheduleId: scheduleId, // Reference to the recurring PM
       pmInstanceId: pmInstance.id, // Reference to this PM instance
+      pmTrigger: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
+      preventiveMaintenanceName: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
       dueDate: pmInstance.dueDate || schedule.nextDate,
       createdAt: new Date(),
+      updatedAt: new Date(),
       createdBySchedule: true,
       companyName: schedule.companyName || schedule.company || null,
     };
@@ -68,9 +93,23 @@ const createPMInstance = async (schedule, nextInstanceDate, instanceNumber) => {
       throw new Error('No database connection');
     }
 
+    const scheduleId = schedule.id || schedule._id;
+    const existingInstance = await db.collection('PMInstance').findOne({
+      parentScheduleId: scheduleId,
+      dueDate: nextInstanceDate,
+      createdBySchedule: true,
+    });
+    if (existingInstance) {
+      return {
+        id: existingInstance._id,
+        instanceNumber: existingInstance.instanceNumber || instanceNumber || 1,
+        dueDate: existingInstance.dueDate || nextInstanceDate,
+      };
+    }
+
     const pmInstanceData = {
-      parentScheduleId: schedule.id || schedule._id,
-      scheduleId: schedule.id || schedule._id,
+      parentScheduleId: scheduleId,
+      scheduleId,
       instanceNumber: instanceNumber || 1,
       dueDate: nextInstanceDate,
       status: 'Pending',
@@ -124,6 +163,26 @@ const processOverduePMInstances = async () => {
 
         // Check if it's time to generate
         if (!nextDate || nextDate > now) {
+          continue;
+        }
+
+        const existingInstance = await maintenanceCollection.db.collection('PMInstance').findOne({
+          parentScheduleId: schedule._id,
+          dueDate: nextDate,
+          createdBySchedule: true,
+        });
+        if (existingInstance) {
+          const nextOccurrence = pmRecurrenceService.calculateNextOccurrence(nextDate, calendarRule);
+          await maintenanceCollection.updateOne(
+            { _id: schedule._id, nextDate },
+            {
+              $set: {
+                nextDate: nextOccurrence || nextDate,
+                lastGeneratedDate: now,
+              },
+              $max: { occurrenceCount: existingInstance.instanceNumber || (schedule.occurrenceCount || 0) + 1 },
+            }
+          );
           continue;
         }
 
