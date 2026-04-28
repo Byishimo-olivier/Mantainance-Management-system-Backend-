@@ -3,11 +3,21 @@
  * Handles automatic generation of PMs and work orders based on recurrence rules
  */
 
+const getDaysInMonth = (year, monthIndex) => new Date(year, monthIndex + 1, 0).getDate();
+
 const calculateNextOccurrence = (lastDate, rule) => {
   if (!rule || !lastDate) return null;
 
   const current = new Date(lastDate);
-  const { recurrenceType, every = 1, unit = 'day', selectedWeekDays = [], selectedMonthDay = 1 } = rule;
+  const {
+    recurrenceType,
+    every = 1,
+    unit = 'day',
+    selectedWeekDays = [],
+    selectedMonthDay = 1,
+    selectedYearMonth = 1,
+    selectedYearDay = 1,
+  } = rule;
 
   if (recurrenceType === 'none' || !recurrenceType) {
     return null;
@@ -36,8 +46,15 @@ const calculateNextOccurrence = (lastDate, rule) => {
     }
   } else if (recurrenceType === 'monthly') {
     // Move to next month on the selected day
+    next.setDate(1);
     next.setMonth(next.getMonth() + (Number(every) || 1));
-    const dayOfMonth = Math.min(Number(selectedMonthDay) || 1, 31);
+    const dayOfMonth = Math.min(Number(selectedMonthDay) || 1, getDaysInMonth(next.getFullYear(), next.getMonth()));
+    next.setDate(dayOfMonth);
+  } else if (recurrenceType === 'yearly') {
+    next.setDate(1);
+    next.setFullYear(next.getFullYear() + (Number(every) || 1));
+    next.setMonth(Math.min(Math.max((Number(selectedYearMonth) || 1) - 1, 0), 11));
+    const dayOfMonth = Math.min(Number(selectedYearDay) || 1, getDaysInMonth(next.getFullYear(), next.getMonth()));
     next.setDate(dayOfMonth);
   }
 
@@ -119,7 +136,7 @@ const formatRecurrenceDisplay = (rule) => {
     return 'One-time';
   }
 
-  const { recurrenceType, every = 1, selectedWeekDays = [], selectedMonthDay = 1 } = rule;
+  const { recurrenceType, every = 1, selectedWeekDays = [], selectedMonthDay = 1, selectedYearMonth = 1, selectedYearDay = 1 } = rule;
   const everyNum = Number(every) || 1;
 
   if (recurrenceType === 'daily') {
@@ -139,6 +156,14 @@ const formatRecurrenceDisplay = (rule) => {
     return everyNum === 1
       ? `Every month on day ${selectedMonthDay}`
       : `Every ${everyNum} months on day ${selectedMonthDay}`;
+  }
+
+  if (recurrenceType === 'yearly') {
+    const monthIndex = Math.min(Math.max((Number(selectedYearMonth) || 1) - 1, 0), 11);
+    const monthName = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][monthIndex];
+    return everyNum === 1
+      ? `Every year on ${monthName} ${selectedYearDay}`
+      : `Every ${everyNum} years on ${monthName} ${selectedYearDay}`;
   }
 
   return 'Custom schedule';

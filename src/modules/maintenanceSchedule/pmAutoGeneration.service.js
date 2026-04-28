@@ -110,7 +110,7 @@ const processOverduePMInstances = async () => {
       .find({
         routine: true,
         status: { $ne: 'Completed' },
-        'calendarRule.recurrenceType': { $in: ['daily', 'weekly', 'monthly'] },
+        'calendarRule.recurrenceType': { $in: ['daily', 'weekly', 'monthly', 'yearly'] },
       })
       .toArray();
 
