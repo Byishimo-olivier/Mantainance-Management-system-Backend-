@@ -118,8 +118,26 @@ exports.update = async (req, res) => {
 };
 
 exports.delete = async (req, res) => {
-  await service.delete(req.params.id);
-  res.status(204).end();
+  try {
+    const id = String(req.params.id || '').trim();
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+
+    // Fetch existing technician
+    const existing = await service.getById(id);
+    if (!existing) return res.status(404).json({ error: 'Technician not found' });
+
+    // Check company authorization for non-superadmin
+    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    await service.delete(id);
+    res.status(204).end();
+  } catch (err) {
+    console.error('[technician.delete]', err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // Manager/admin: get minimal tech list for assignment (external only)

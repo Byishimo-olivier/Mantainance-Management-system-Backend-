@@ -12,6 +12,6 @@ router.post('/', authenticate, authorizeRoles('admin', 'manager'), ctrl.create);
 // Invite external technician via email (admin/manager)
 router.post('/invite', authenticate, authorizeRoles('admin', 'manager'), ctrl.invite);
 router.put('/:id', authenticate, authorizeRoles('admin', 'manager'), ctrl.update);
-router.delete('/:id', authenticate, authorizeRoles('admin', 'manager'), ctrl.delete);
+router.delete('/:id', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.delete);
 
 module.exports = router;

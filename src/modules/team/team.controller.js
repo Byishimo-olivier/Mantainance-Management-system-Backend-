@@ -62,6 +62,10 @@ exports.getById = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     const payload = req.body || {};
+    // Set companyName from authenticated user
+    if (req.user && req.user.companyName) {
+      payload.companyName = req.user.companyName;
+    }
     // parse members if provided as JSON string (from multipart/form-data)
     if (payload.members && typeof payload.members === 'string') {
       try {
@@ -147,7 +151,23 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
+    const id = String(req.params.id || '').trim();
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+
+    // Fetch existing team
+    const existing = await service.findById(id);
+    if (!existing) return res.status(404).json({ error: 'Team not found' });
+
+    // Check company authorization for non-superadmin
+    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const payload = req.body || {};
+    // Prevent changing companyName
+    delete payload.companyName;
+    
     if (payload.members && typeof payload.members === 'string') {
       try { payload.members = JSON.parse(payload.members); } catch (e) { payload.members = payload.members.split(',').map(s => s.trim()).filter(Boolean); }
     }
@@ -172,7 +192,7 @@ exports.update = async (req, res) => {
         console.warn('[team.update] member extraction failed or extractor not installed', e && e.message);
       }
     }
-    const updated = await service.update(req.params.id, payload);
+    const updated = await service.update(id, payload);
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
@@ -183,7 +203,20 @@ exports.update = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    const result = await service.delete(req.params.id);
+    const id = String(req.params.id || '').trim();
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+
+    // Fetch existing team
+    const existing = await service.findById(id);
+    if (!existing) return res.status(404).json({ error: 'Team not found' });
+
+    // Check company authorization for non-superadmin
+    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const result = await service.delete(id);
     if (!result || result.success === false) return res.status(404).json({ error: result && result.error ? result.error : 'Not found' });
     res.json(result);
   } catch (err) {

@@ -49,6 +49,6 @@ router.get('/invites', authenticate, authorizeRoles('admin', 'manager', 'client'
 router.delete('/invites/:id', authenticate, authorizeRoles('admin', 'manager', 'client'), deleteInvite);
 router.patch('/company/manage', authenticate, authorizeRoles('superadmin', 'admin', 'manager'), manageCompany);
 router.patch('/:id', authenticate, authorizeRoles('superadmin', 'admin', 'manager'), updateUser);
-router.delete('/:id', authenticate, authorizeRoles('superadmin', 'admin', 'manager'), deleteUser);
+router.delete('/:id', authenticate, authorizeRoles('superadmin', 'admin', 'manager', 'client'), deleteUser);
 
 module.exports = router;
