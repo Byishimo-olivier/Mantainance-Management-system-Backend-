@@ -61,8 +61,8 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   process.env.FRONTEND_URL,
-  'https://fixnest.rw',
-  'https://www.fixnest.rw',
+  // 'https://fixnest.rw',
+  // 'https://www.fixnest.rw',
   'https://mms-frontend.vercel.app',
 ].filter(Boolean);
 
