@@ -432,8 +432,6 @@ model Technician {
   type           String   @default("EXTERNAL")
   password       String?
   companyName    String?
-  
-  @@unique([email, companyName])
 }
 
 model Issue {

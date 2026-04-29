@@ -61,6 +61,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   process.env.FRONTEND_URL,
+  'https://fixnest.rw',
   'https://www.fixnest.rw',
   'https://mms-frontend.vercel.app',
 ].filter(Boolean);
@@ -109,74 +110,85 @@ async function repairUserIndexes() {
     if (!db) return;
     
     const collection = db.collection('users');
+    
+    console.log('[Index Repair] Starting user collection index repair...');
+    
+    // Get all existing indexes
+    const indexes = await collection.listIndexes().toArray();
+    console.log('[Index Repair] Current indexes:', indexes.map(i => ({ name: i.name, unique: i.unique, sparse: i.sparse })));
+    
+    // Drop all problematic unique indexes (they need to be recreated as sparse)
+    const indexesToDrop = [
+      'email_1',
+      'phone_1',
+      'email_1_companyName_1',
+      'phone_1_companyName_1',
+      'email_1_companyId_1',
+      'phone_1_companyId_1',
+      'users_email_companyId_key',
+      'users_phone_companyId_key'
+    ];
+    
+    for (const index of indexes) {
+      if (index.name === '_id_') continue;
+      if (indexesToDrop.includes(index.name)) {
+        try {
+          console.log(`[Index Repair] Dropping index: ${index.name}...`);
+          await collection.dropIndex(index.name);
+          console.log(`[Index Repair] ✓ Dropped: ${index.name}`);
+        } catch (dropErr) {
+          console.warn(`[Index Repair] Could not drop ${index.name}:`, dropErr.message);
+        }
+      }
+    }
+    
+    // Create new sparse compound indexes using companyName
+    console.log('[Index Repair] Creating new sparse compound indexes...');
+    
+    try {
+      await collection.createIndex(
+        { email: 1, companyName: 1 },
+        { unique: true, sparse: true, name: 'email_1_companyName_1_sparse' }
+      );
+      console.log('[Index Repair] ✓ Created sparse index: {email: 1, companyName: 1}');
+    } catch (createErr) {
+      console.warn('[Index Repair] Could not create email index:', createErr.message);
+    }
+    
+    try {
+      await collection.createIndex(
+        { phone: 1, companyName: 1 },
+        { unique: true, sparse: true, name: 'phone_1_companyName_1_sparse' }
+      );
+      console.log('[Index Repair] ✓ Created sparse index: {phone: 1, companyName: 1}');
+    } catch (createErr) {
+      console.warn('[Index Repair] Could not create phone index:', createErr.message);
+    }
+    
+    console.log('[Index Repair] ✓ User collection indexes repaired successfully');
+  } catch (err) {
+    console.error('[Index Repair] Error repairing indexes:', err.message);
+  }
+}
+
+// Function to repair technician collection indexes
+async function repairTechnicianIndexes() {
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return;
+    
+    const collection = db.collection('technicians');
     const indexes = await collection.listIndexes().toArray();
     const indexNames = indexes.map(idx => idx.name);
     
-    let repaired = false;
-    
-    // Drop old global unique indexes if they exist
-    if (indexNames.includes('email_1')) {
-      console.log('[Index Repair] Dropping old email_1 index...');
-      await collection.dropIndex('email_1');
-      repaired = true;
-    }
-    
-    if (indexNames.includes('phone_1')) {
-      console.log('[Index Repair] Dropping old phone_1 index...');
-      await collection.dropIndex('phone_1');
-      repaired = true;
-    }
-    
-    // Drop old compound indexes that might not have sparse option
-    if (indexNames.includes('users_email_companyId_key')) {
-      const indexInfo = await collection.listIndexes().toArray().then(idx => 
-        idx.find(i => i.name === 'users_email_companyId_key')
-      );
-      if (!indexInfo?.sparse) {
-        console.log('[Index Repair] Dropping old users_email_companyId_key (non-sparse)...');
-        await collection.dropIndex('users_email_companyId_key');
-        repaired = true;
-      }
-    }
-    
-    if (indexNames.includes('users_phone_companyId_key')) {
-      const indexInfo = await collection.listIndexes().toArray().then(idx => 
-        idx.find(i => i.name === 'users_phone_companyId_key')
-      );
-      if (!indexInfo?.sparse) {
-        console.log('[Index Repair] Dropping old users_phone_companyId_key (non-sparse)...');
-        await collection.dropIndex('users_phone_companyId_key');
-        repaired = true;
-      }
-    }
-    
-    // Create new compound unique SPARSE indexes
-    // SPARSE means: null values are ignored, allowing multiple nulls
-    const newIndexes = (await collection.listIndexes().toArray()).map(idx => idx.name);
-    
-    if (!newIndexes.includes('users_email_companyId_key')) {
-      console.log('[Index Repair] Creating sparse compound index: {email: 1, companyId: 1}');
-      await collection.createIndex(
-        { email: 1, companyId: 1 },
-        { unique: true, sparse: true, name: 'users_email_companyId_key' }
-      );
-      repaired = true;
-    }
-    
-    if (!newIndexes.includes('users_phone_companyId_key')) {
-      console.log('[Index Repair] Creating sparse compound index: {phone: 1, companyId: 1}');
-      await collection.createIndex(
-        { phone: 1, companyId: 1 },
-        { unique: true, sparse: true, name: 'users_phone_companyId_key' }
-      );
-      repaired = true;
-    }
-    
-    if (repaired) {
-      console.log('[Index Repair] ✓ User collection indexes repaired successfully (sparse mode enabled)');
+    // Drop old unique constraint on email+companyName to allow same email in different companies
+    if (indexNames.includes('email_1_companyName_1')) {
+      console.log('[Index Repair] Dropping old unique index: email_1_companyName_1...');
+      await collection.dropIndex('email_1_companyName_1');
+      console.log('[Index Repair] ✓ Technician email+companyName unique constraint removed');
     }
   } catch (err) {
-    console.error('[Index Repair] Error repairing indexes:', err.message);
+    console.error('[Index Repair] Error repairing technician indexes:', err.message);
   }
 }
 
@@ -184,6 +196,11 @@ mongoose.connection.once('open', () => {
   // Repair user indexes for multi-company support
   repairUserIndexes().catch((err) => {
     console.error('[bootstrap] Failed to repair user indexes:', err);
+  });
+  
+  // Repair technician indexes
+  repairTechnicianIndexes().catch((err) => {
+    console.error('[bootstrap] Failed to repair technician indexes:', err);
   });
   
   startMonthlyReportScheduler();

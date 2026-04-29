@@ -18,6 +18,32 @@ module.exports = {
       hashedPassword = await bcrypt.hash(data.password, saltRounds);
     }
 
+    // Check if technician with same email already exists in this company
+    if (data.email && data.companyName) {
+      const existingEmail = await prisma.technician.findFirst({
+        where: {
+          email: data.email,
+          companyName: data.companyName
+        }
+      });
+      if (existingEmail) {
+        throw new Error('A technician with this email already exists in this company.');
+      }
+    }
+
+    // Check if technician with same phone already exists in this company
+    if (data.phone && data.companyName) {
+      const existingPhone = await prisma.technician.findFirst({
+        where: {
+          phone: data.phone,
+          companyName: data.companyName
+        }
+      });
+      if (existingPhone) {
+        throw new Error('A technician with this phone already exists in this company.');
+      }
+    }
+
     const payload = {
       name: data.name || 'Unnamed Technician',
       email: data.email || null,
@@ -30,16 +56,13 @@ module.exports = {
       password: hashedPassword,
       companyName: data.companyName || null
     };
+  
     try {
       const created = await prisma.technician.create({ data: payload });
       return created;
     } catch (err) {
       // Convert Prisma unique constraint errors into friendlier messages
       if (err && err.code === 'P2002' && err.meta && err.meta.target) {
-        // Check if it's the compound unique constraint on email+companyName
-        if (err.meta.target.includes('email') && err.meta.target.includes('companyName')) {
-          throw new Error('A technician with this email already exists in this company.');
-        }
         throw new Error(`A technician with that ${err.meta.target.join(', ')} already exists.`);
       }
       throw err;

@@ -482,12 +482,6 @@ exports.inviteUser = async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     if (!email || !isValidEmail(email)) return res.status(400).json({ error: 'Valid email is required' });
 
-    // Allow same email in different companies - only reject if in SAME company
-    const existingUser = await findUserByEmail(email);
-    if (existingUser && existingUser.companyName === companyName) {
-      return res.status(409).json({ error: 'User already exists with this email in your company' });
-    }
-
     const { role, accessLevel, label } = resolveInviteRole(req.body?.role, req.body?.accessLevel);
 
     const defaultHours = parseInt(process.env.USER_INVITE_EXPIRES_HOURS, 10) || 168; // 7 days
@@ -579,7 +573,13 @@ exports.acceptInvite = async (req, res) => {
     const { PrismaClient } = require('@prisma/client');
     const prisma = new PrismaClient();
 
-    // Check if user already exists in this company (by email)
+    const name = String(req.body?.name || '').trim();
+    const phone = String(req.body?.phone || '').trim();
+    const password = String(req.body?.password || '');
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    if (!password) return res.status(400).json({ error: 'Password is required' });
+
+    // Check if user already exists with same email in this company
     const existingByEmail = await prisma.user.findFirst({
       where: { 
         email,
@@ -588,26 +588,21 @@ exports.acceptInvite = async (req, res) => {
     });
     
     if (existingByEmail) {
-      return res.status(409).json({ error: 'User already exists with this email in your company' });
+      return res.status(409).json({ error: 'User with this email already exists in your company' });
     }
 
-    const name = String(req.body?.name || '').trim();
-    const phone = String(req.body?.phone || '').trim();
-    const password = String(req.body?.password || '');
-    if (!name) return res.status(400).json({ error: 'Name is required' });
-    if (!phone) return res.status(400).json({ error: 'Phone is required' });
-    if (!password) return res.status(400).json({ error: 'Password is required' });
-
-    // Check phone uniqueness in the same company
-    const existingByPhone = await prisma.user.findFirst({
-      where: { 
-        phone: phone.trim(),
-        companyName 
+    // Check if user already exists with same phone in this company (if phone is provided)
+    if (phone) {
+      const existingByPhone = await prisma.user.findFirst({
+        where: { 
+          phone: phone.trim(),
+          companyName 
+        }
+      });
+      
+      if (existingByPhone) {
+        return res.status(409).json({ error: 'User with this phone already exists in your company' });
       }
-    });
-    
-    if (existingByPhone) {
-      return res.status(409).json({ error: 'This phone number is already registered in your company' });
     }
 
     // Hash password
