@@ -661,3 +661,90 @@ exports.canAccessFeatures = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+exports.getTrialCompanies = async (req, res) => {
+  try {
+    const role = String(req.user?.role || '').toLowerCase();
+    if (!['superadmin', 'super-admin', 'admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: 'Forbidden: insufficient role' });
+    }
+
+    const companies = await prisma.company.findMany({
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        subscriptions: {
+          where: { isTrialPeriod: true },
+          orderBy: { trialStartDate: 'desc' },
+          take: 1,
+        },
+      },
+      take: 300,
+    });
+
+    const now = new Date();
+    const data = companies.map((company) => {
+      const trialEndDate = company.trialEndDate ? new Date(company.trialEndDate) : null;
+      const daysRemaining = trialEndDate
+        ? Math.max(0, Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24)))
+        : 0;
+
+      return {
+        id: company.id,
+        name: company.name,
+        email: company.email,
+        phone: company.phone,
+        subscriptionStatus: company.subscriptionStatus,
+        subscriptionPlan: company.subscriptionPlan,
+        onFreeTrial: company.onFreeTrial,
+        trialStartDate: company.trialStartDate,
+        trialEndDate: company.trialEndDate,
+        trialDaysRemaining: daysRemaining,
+        trialExceeded: company.trialExceeded,
+        totalUsers: company.totalUsers,
+        latestTrialSubscription: company.subscriptions?.[0] || null,
+        updatedAt: company.updatedAt,
+      };
+    });
+
+    res.json({
+      success: true,
+      count: data.length,
+      data: normalizeExtendedJSON(data),
+    });
+  } catch (error) {
+    console.error('Error fetching trial companies:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch trial companies' });
+  }
+};
+
+exports.extendFreeTrial = async (req, res) => {
+  try {
+    const role = String(req.user?.role || '').toLowerCase();
+    if (!['superadmin', 'super-admin', 'admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: 'Forbidden: insufficient role' });
+    }
+
+    const { companyId } = req.params;
+    const extensionDays = Number(req.body?.extensionDays || req.body?.days || 0);
+    const reason = String(req.body?.reason || '').trim();
+
+    if (!companyId || !extensionDays || extensionDays < 1) {
+      return res.status(400).json({ error: 'Company ID and extension days are required' });
+    }
+
+    const trialService = require('./trial.service');
+    const updated = await trialService.extendFreeTrial(companyId, extensionDays, {
+      reason,
+      extendedBy: req.user?.userId || req.user?.id || req.user?.email || 'system',
+    });
+
+    res.json({
+      success: true,
+      message: `Free trial extended by ${extensionDays} day(s)`,
+      data: normalizeExtendedJSON(updated),
+    });
+  } catch (error) {
+    console.error('Error extending free trial:', error);
+    res.status(400).json({ error: error.message || 'Failed to extend free trial' });
+  }
+};

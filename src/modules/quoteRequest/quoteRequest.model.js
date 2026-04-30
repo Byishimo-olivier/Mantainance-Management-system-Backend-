@@ -8,6 +8,7 @@ const quoteRequestSchema = new mongoose.Schema({
   message: { type: String, trim: true, default: '' },
   userId: { type: String, trim: true, default: '' },
   status: { type: String, trim: true, default: 'pending' },
+  notes: { type: String, trim: true, default: '' },
 }, { timestamps: true });
 
 quoteRequestSchema.index({ companyName: 1, createdAt: -1 });

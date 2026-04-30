@@ -22,6 +22,8 @@ router.get('/trial/status', authenticate, ctrl.getTrialStatus);
 router.post('/trial/initialize', authenticate, ctrl.initializeFreeTrial);
 router.post('/trial/upgrade-to-paid', authenticate, ctrl.upgradeToPaid);
 router.get('/trial/can-access', authenticate, ctrl.canAccessFeatures);
+router.get('/trial/companies', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.getTrialCompanies);
+router.post('/trial/companies/:companyId/extend', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.extendFreeTrial);
 
 // Protected routes - require authentication
 router.use(authenticate);

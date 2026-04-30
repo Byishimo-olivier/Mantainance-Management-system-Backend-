@@ -52,6 +52,118 @@ exports.initializeFreeTrial = async (companyId) => {
   }
 };
 
+exports.extendFreeTrial = async (companyId, extensionDays, metadata = {}) => {
+  try {
+    const daysToAdd = Math.max(1, Math.min(730, Number(extensionDays) || 0));
+    if (!companyId || !daysToAdd) {
+      throw new Error('Company ID and extension days are required');
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      include: {
+        subscriptions: {
+          where: { isTrialPeriod: true },
+          orderBy: { trialStartDate: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!company) {
+      throw new Error('Company not found');
+    }
+
+    const now = new Date();
+    const currentEnd = company.trialEndDate ? new Date(company.trialEndDate) : now;
+    const baseDate = currentEnd > now ? currentEnd : now;
+    const trialEndDate = new Date(baseDate);
+    trialEndDate.setDate(trialEndDate.getDate() + daysToAdd);
+    const trialStartDate = company.trialStartDate || now;
+    const trialDaysRemaining = Math.max(0, Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24)));
+
+    const updatedCompany = await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        onFreeTrial: true,
+        trialStartDate,
+        trialEndDate,
+        trialDaysRemaining,
+        trialExceeded: false,
+        subscriptionStatus: 'trial',
+        metadata: {
+          ...(company.metadata && typeof company.metadata === 'object' ? company.metadata : {}),
+          lastTrialExtension: {
+            daysAdded: daysToAdd,
+            extendedAt: now.toISOString(),
+            extendedBy: metadata.extendedBy || null,
+            reason: metadata.reason || '',
+          },
+        },
+      },
+      include: { subscriptions: true, users: true },
+    });
+
+    const existingTrialSubscription = company.subscriptions?.[0];
+    if (existingTrialSubscription) {
+      await prisma.subscription.update({
+        where: { id: existingTrialSubscription.id },
+        data: {
+          status: 'trial',
+          paymentStatus: 'pending',
+          trialStartDate,
+          trialEndDate,
+          trialDaysRemaining,
+          endDate: trialEndDate,
+          nextBillingDate: trialEndDate,
+          metadata: {
+            ...(existingTrialSubscription.metadata && typeof existingTrialSubscription.metadata === 'object' ? existingTrialSubscription.metadata : {}),
+            lastTrialExtension: {
+              daysAdded: daysToAdd,
+              extendedAt: now.toISOString(),
+              extendedBy: metadata.extendedBy || null,
+              reason: metadata.reason || '',
+            },
+          },
+        },
+      });
+    } else {
+      await prisma.subscription.create({
+        data: {
+          companyId,
+          email: updatedCompany.email || `${updatedCompany.name.replace(/\s+/g, '').toLowerCase()}@trial.local`,
+          plan: updatedCompany.subscriptionPlan || 'basic',
+          billingCycle: 'monthly',
+          amount: 0,
+          status: 'trial',
+          paymentStatus: 'pending',
+          isTrialPeriod: true,
+          trialStartDate,
+          trialEndDate,
+          trialDaysRemaining,
+          features: getTrialFeatures(),
+          startDate: trialStartDate,
+          endDate: trialEndDate,
+          nextBillingDate: trialEndDate,
+          metadata: {
+            createdByTrialExtension: true,
+            lastTrialExtension: {
+              daysAdded: daysToAdd,
+              extendedAt: now.toISOString(),
+              extendedBy: metadata.extendedBy || null,
+              reason: metadata.reason || '',
+            },
+          },
+        },
+      });
+    }
+
+    return updatedCompany;
+  } catch (error) {
+    throw new Error(`Failed to extend free trial: ${error.message}`);
+  }
+};
+
 /**
  * Get trial status for a company
  * Calculates remaining days and updates status if needed

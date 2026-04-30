@@ -45,6 +45,7 @@ const taskRoutes = require('./modules/task/task.routes');
 const dailyReportRoutes = require('./modules/reports/dailyReport.routes');
 const quoteRequestRoutes = require('./modules/quoteRequest/quoteRequest.routes');
 const contactMessageRoutes = require('./modules/contactMessage/contactMessage.routes');
+const demoRequestRoutes = require('./modules/demoRequest/demoRequest.routes');
 const dailyReportService = require('./modules/reports/dailyReport.service');
 const systemSettingsService = require('./modules/systemSettings/systemSettings.service');
 const paymentService = require('./modules/subscription/payment.service');
@@ -306,12 +307,23 @@ app.use('/api/request-settings', requestSettingsRoutes);
 app.use('/api/analytics-preferences', analyticsPreferenceRoutes);
 app.use('/api/reports', dailyReportRoutes);
 app.use('/api/quote-requests', quoteRequestRoutes);
+app.use('/', demoRequestRoutes);
 app.use('/', contactMessageRoutes);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`[startup] Port ${PORT} is already in use. Stop the existing backend process or set a different PORT in .env.`);
+    process.exit(1);
+  }
+
+  console.error('[startup] Server failed to start:', error);
+  process.exit(1);
 });
 
 module.exports = app;
