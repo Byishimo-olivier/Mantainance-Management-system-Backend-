@@ -45,7 +45,7 @@ const toTitleCase = (value) => String(value || '')
 const getGoogleRedirectUri = () => (
   process.env.GOOGLE_CALLBACK_URL ||
   process.env.GOOGLE_REDIRECT_URI ||
-  `${getBackendOrigin()}/auth/google/callback`
+  `${getBackendOrigin()}/api/auth/google/callback`
 );
 
 const getGoogleProvider = () => ({
@@ -362,7 +362,7 @@ const getGoogleSsoConfig = (req, res) => {
     redirectUri: provider.redirectUri,
     frontendUrl: getFrontendOrigin(),
     backendUrl: getBackendOrigin(),
-    callbackPath: '/auth/google/callback',
+    callbackPath: '/api/auth/google/callback',
   });
 };
 

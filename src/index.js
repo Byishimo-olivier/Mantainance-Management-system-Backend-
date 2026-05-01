@@ -315,7 +315,7 @@ const PORT = process.env.PORT || 5000;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`[Google SSO] Redirect URI: ${process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI || `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/auth/google/callback`}`);
+  console.log(`[Google SSO] Redirect URI: ${process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI || `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/api/auth/google/callback`}`);
 });
 
 server.on('error', (error) => {
