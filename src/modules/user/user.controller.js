@@ -60,8 +60,7 @@ exports.registerUser = async (req, res) => {
       payload.branchImages = req.files.branchImages.map((file) => `/uploads/${file.filename}`);
     }
 
-    // Auto-activate user on signup (no payment required)
-    const user = await createUser(payload, { requirePaymentBeforeActivation: false });
+    const user = await createUser(payload, { requireEmailActivation: true });
     let companyId = null;
 
     const normalizedCompanyName = String(user.companyName || '').trim();
@@ -103,27 +102,29 @@ exports.registerUser = async (req, res) => {
       }
     }
     
-    // Send welcome email to new user
+    // Send activation email to new user
     if (user.email) {
       try {
-        await emailService.sendAccountWelcomeEmail({
+        const activationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/activate/${user._activationToken}`;
+        await emailService.sendActivationEmail({
           to: user.email,
-          name: user.name || user.companyName,
-          email: user.email,
-          companyName: user.companyName,
-          role: user.role
+          userName: user.name || user.companyName,
+          activationLink,
+          plan: user.plan || 'Free Trial',
+          price: 'No payment required',
+          billingCycle: 'Email verification'
         });
       } catch (err) {
-        console.error('Failed to send welcome email:', err.message);
+        console.error('Failed to send activation email:', err.message);
         // Don't fail the registration if email fails
       }
     }
 
     // Return success message
     res.status(201).json({
-      message: 'Account created successfully! Your account is active and ready to use. Check your email for a welcome message.',
+      message: 'Account created successfully! Check your email to activate your account.',
       email: user.email,
-      status: 'account_created',
+      status: 'activation_pending',
       user: {
         _id: user._id,
         id: String(user._id),
@@ -157,6 +158,17 @@ exports.activateAccount = async (req, res) => {
     if (!user) {
       return res.status(400).json({ 
         error: 'Invalid or expired activation token. Please sign up again to receive a new activation link.' 
+      });
+    }
+
+    if (!user.paymentPendingActivation) {
+      return res.status(200).json({
+        message: 'Activation token verified. Ready to activate account.',
+        status: 'token_verified',
+        activationMode: 'email',
+        userId: user._id,
+        email: user.email,
+        activationToken: token
       });
     }
 
@@ -197,9 +209,12 @@ exports.completeActivation = async (req, res) => {
       return res.status(400).json({ error: 'Activation token and user ID are required' });
     }
 
-    // Find and activate the user
-    const user = await User.findByIdAndUpdate(
-      userId,
+    const user = await User.findOneAndUpdate(
+      {
+        _id: userId,
+        activationToken,
+        activationTokenExpires: { $gt: new Date() },
+      },
       {
         isActive: true,
         paymentPendingActivation: false,
@@ -210,7 +225,7 @@ exports.completeActivation = async (req, res) => {
     );
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'Invalid or expired activation link.' });
     }
 
     res.status(200).json({

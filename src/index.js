@@ -269,6 +269,7 @@ if (process.env.DEBUG_ROUTES === '1') {
 
 app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
 app.use('/api/technicians', technicianRoutes);
 app.use('/api/issues', issueRoutes);
@@ -314,6 +315,7 @@ const PORT = process.env.PORT || 5000;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`[Google SSO] Redirect URI: ${process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI || `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/auth/google/callback`}`);
 });
 
 server.on('error', (error) => {

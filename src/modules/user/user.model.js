@@ -28,7 +28,10 @@ const userSchema = new mongoose.Schema({
   paymentPendingActivation: { type: Boolean, default: false }, // Waiting for payment before activation
   createdAt: { type: Date, default: Date.now },
   resetPasswordToken: { type: String },
-  resetPasswordExpires: { type: Date }
+  resetPasswordExpires: { type: Date },
+  googleId: { type: String, trim: true, sparse: true },
+  authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
+  avatar: { type: String, trim: true }
 });
 
 // Company is used as a tenant filter, so index it (non-unique)
@@ -37,5 +40,6 @@ userSchema.index({ companyName: 1 });
 userSchema.index({ email: 1, companyName: 1 }, { unique: true });
 // Compound unique index: same phone allowed in different companies (different technician records), but not within same company
 userSchema.index({ phone: 1, companyName: 1 }, { unique: true });
+userSchema.index({ googleId: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('User', userSchema);

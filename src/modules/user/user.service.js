@@ -12,6 +12,7 @@ const createUser = async (userData, options = {}) => {
   if (!userData || !userData.password) throw new Error('Password is required');
   const allowExistingCompany = options.allowExistingCompany === true;
   const requirePaymentBeforeActivation = options.requirePaymentBeforeActivation === true;
+  const requireEmailActivation = options.requireEmailActivation === true || requirePaymentBeforeActivation;
 
   const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 10;
   const hashedPassword = await bcrypt.hash(userData.password, saltRounds);
@@ -76,10 +77,10 @@ const createUser = async (userData, options = {}) => {
     }
   }
 
-  // Generate activation token if payment is required
+  // Generate activation token when email verification or payment activation is required
   let activationToken = null;
   let activationTokenExpires = null;
-  if (requirePaymentBeforeActivation) {
+  if (requireEmailActivation) {
     activationToken = require('crypto').randomBytes(32).toString('hex');
     activationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
   }
@@ -100,7 +101,7 @@ const createUser = async (userData, options = {}) => {
     password: hashedPassword,
     role,
     accessLevel,
-    isActive: !requirePaymentBeforeActivation, // Set to false if payment required
+    isActive: !requireEmailActivation,
     activationToken: activationToken,
     activationTokenExpires: activationTokenExpires,
     paymentPendingActivation: requirePaymentBeforeActivation
