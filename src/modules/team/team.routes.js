@@ -5,8 +5,8 @@ const upload = require('../../middleware/upload');
 const { authenticate, authorizeRoles } = require('../../middleware/auth.js');
 const router = express.Router();
 
-router.get('/', ctrl.getAll);
-router.get('/:id', ctrl.getById);
+router.get('/', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.getAll);
+router.get('/:id', authenticate, authorizeRoles('admin', 'manager', 'client'), ctrl.getById);
 // accept one 'image' and multiple 'files' (attachments)
 const teamUploadFields = upload.fields([
 	{ name: 'image', maxCount: 1 },

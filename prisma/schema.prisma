@@ -215,6 +215,15 @@ model MaintenanceSchedule {
   snoozedUntil DateTime?
   // Per-user dismissal map: { userId: timestamp }
   dismissedBy  Json?
+  
+  // Work Order Auto-Generation Configuration
+  autoGenerateWorkOrders Boolean?  @default(true)      // Enable/disable WO creation
+  woGenerationTiming     String?   @default("onDueDate") // 'onDueDate' | 'beforeDueDate'
+  woGenerationDays       Int?      @default(0)         // Days before due date to create WO (only if beforeDueDate)
+  woReferenceType        String?   @default("workOrder") // 'workOrder' | 'issue' | 'task'
+  woAssignees            Json?     // [{id, name}] - who to assign the generated WO to
+  woNotifyUsers          Json?     // [{id, email}] - who to notify when WO is created
+  
   status       String
   block        String?
   rooms        String?

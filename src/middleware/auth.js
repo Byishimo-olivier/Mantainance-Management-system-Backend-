@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 const hydrateAuthUser = async (decoded = {}) => {
   const authUser = {
     userId: decoded.userId,
-    role: decoded.role,
+    role: String(decoded.role || '').toLowerCase(),
     companyName: decoded.companyName || null,
     name: decoded.name || null,
     email: decoded.email || null,
@@ -101,10 +101,13 @@ const optionalAuthenticate = (req, res, next) => {
 };
 
 const authorizeRoles = (...roles) => (req, res, next) => {
-  if (req.user?.role === 'superadmin') {
+  const userRole = String(req.user?.role || '').toLowerCase();
+  const allowedRoles = roles.map((role) => String(role || '').toLowerCase());
+
+  if (userRole === 'superadmin') {
     return next();
   }
-  if (!roles.includes(req.user.role)) {
+  if (!allowedRoles.includes(userRole)) {
     return res.status(403).json({ error: 'Forbidden: insufficient role' });
   }
   next();

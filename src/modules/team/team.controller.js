@@ -1,10 +1,91 @@
 const service = require('./team.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
+const normalizeCompanyName = (value) => String(value || '').trim().toLowerCase();
+const getTeamCompanyName = (team) => String(team?.companyName || '').trim();
+
+const getMemberIdentifier = (member) => {
+  if (!member && member !== 0) return '';
+  if (typeof member === 'object') {
+    return String(member._id || member.id || member.userId || member.value || '').trim();
+  }
+  const raw = String(member || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw);
+      return getMemberIdentifier(parsed);
+    } catch (err) {
+      return raw;
+    }
+  }
+  return raw;
+};
+
+const memberBelongsToCompany = async (member, companyName) => {
+  const normalizedCompany = normalizeCompanyName(companyName);
+  if (!normalizedCompany) return false;
+
+  if (member && typeof member === 'object' && normalizeCompanyName(member.companyName) === normalizedCompany) {
+    return true;
+  }
+
+  const memberId = getMemberIdentifier(member);
+  if (!memberId) return false;
+
+  try {
+    const userService = require('../user/user.service');
+    const user = await userService.findUserById(memberId).catch(() => null);
+    if (user && normalizeCompanyName(user.companyName) === normalizedCompany) return true;
+  } catch (err) {
+    // ignore and try technician lookup
+  }
+
+  try {
+    const techService = require('../technician/technician.service');
+    const technician = await techService.getById(memberId).catch(() => null);
+    if (technician && normalizeCompanyName(technician.companyName) === normalizedCompany) return true;
+  } catch (err) {
+    // ignore
+  }
+
+  return false;
+};
+
+const teamBelongsToCompany = async (team, companyName) => {
+  const teamCompany = getTeamCompanyName(team);
+  if (teamCompany) return normalizeCompanyName(teamCompany) === normalizeCompanyName(companyName);
+
+  const members = Array.isArray(team?.members) ? team.members : [];
+  if (!members.length) return false;
+
+  for (const member of members) {
+    if (await memberBelongsToCompany(member, companyName)) return true;
+  }
+  return false;
+};
+
 exports.getAll = async (req, res) => {
   try {
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+
+    if (actorRole === 'superadmin') {
+      const items = await service.findAll();
+      return res.json(normalizeExtendedJSON(items));
+    }
+
+    if (!actorCompany) return res.status(400).json({ error: 'Missing companyName on user token' });
+
     const items = await service.findAll();
-    res.json(normalizeExtendedJSON(items));
+    const visibleItems = [];
+    for (const item of items) {
+      if (await teamBelongsToCompany(item, actorCompany)) {
+        visibleItems.push(item);
+      }
+    }
+
+    res.json(normalizeExtendedJSON(visibleItems));
   } catch (err) {
     console.error('[team.getAll]', err);
     res.status(500).json({ error: err.message });
@@ -15,6 +96,11 @@ exports.getById = async (req, res) => {
   try {
     const item = await service.findById(req.params.id);
     if (!item) return res.status(404).json({ error: 'Not found' });
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const actorCompany = String(req.user?.companyName || '').trim();
+    if (actorRole !== 'superadmin' && !(await teamBelongsToCompany(item, actorCompany))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     // Resolve member ids to People/User objects when possible
     try {
       if (item.members && Array.isArray(item.members) && item.members.length > 0) {
@@ -159,14 +245,23 @@ exports.update = async (req, res) => {
     const existing = await service.findById(id);
     if (!existing) return res.status(404).json({ error: 'Team not found' });
 
+    const payload = req.body || {};
+    const existingCompany = getTeamCompanyName(existing);
+
     // Check company authorization for non-superadmin
-    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+    if (
+      actorRole !== 'superadmin' &&
+      !(await teamBelongsToCompany(existing, actorCompany))
+    ) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const payload = req.body || {};
-    // Prevent changing companyName
-    delete payload.companyName;
+    // Prevent changing companyName, but backfill legacy teams that were created before company scoping.
+    if (actorRole !== 'superadmin' && actorCompany && !existingCompany) {
+      payload.companyName = actorCompany;
+    } else {
+      delete payload.companyName;
+    }
     
     if (payload.members && typeof payload.members === 'string') {
       try { payload.members = JSON.parse(payload.members); } catch (e) { payload.members = payload.members.split(',').map(s => s.trim()).filter(Boolean); }
@@ -212,7 +307,7 @@ exports.delete = async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Team not found' });
 
     // Check company authorization for non-superadmin
-    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+    if (actorRole !== 'superadmin' && !(await teamBelongsToCompany(existing, actorCompany))) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 

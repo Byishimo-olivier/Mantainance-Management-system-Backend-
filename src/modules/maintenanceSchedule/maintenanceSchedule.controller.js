@@ -350,33 +350,61 @@ module.exports = {
           const mongoose = require('mongoose');
           const db = mongoose.connection.db;
           if (db) {
+            const scheduleId = schedule.id || schedule._id;
+            const initialDueDate = data.nextDate ? new Date(data.nextDate) : new Date();
+            const dueStart = new Date(initialDueDate);
+            dueStart.setSeconds(0, 0);
+            const dueEnd = new Date(dueStart.getTime() + 60000);
+            const existingInitialIssue = await db.collection('Issue').findOne({
+              $or: [
+                { parentScheduleId: scheduleId },
+                { parentScheduleId: String(scheduleId) },
+                { maintenanceScheduleId: scheduleId },
+                { maintenanceScheduleId: String(scheduleId) },
+                { scheduleId },
+                { scheduleId: String(scheduleId) },
+              ],
+              createdBySchedule: true,
+              dueDate: { $gte: dueStart, $lt: dueEnd },
+            });
+            if (existingInitialIssue) {
+              console.log('[Schedule Create] Initial PM work order already exists for schedule', String(scheduleId));
+            } else {
             const issueData = {
               title: data.workOrderTitle || data.name || 'Preventive Maintenance',
               description: data.workOrderDescription || data.description || 'Preventive maintenance generated work order',
               location: data.location || 'Preventive Maintenance',
               propertyId: data.assetsRows?.[0]?.propertyId || data.assetsRows?.[0]?.locationId || data.propertyId || null,
               assetId: data.assetsRows?.[0]?.assetId || null,
-              tags: [],
+              tags: ['preventive', 'recurring-pm', 'auto-generated'],
               assignees: [],
               time: 'Scheduled',
               userId: data.userId || null,
               clientId: data.clientId || data.userId || null,
               requestorId: data.requestorId || data.userId || null,
               createdBy: data.userId || null,
+              submissionType: 'inspection',
+              issueType: 'preventive',
+              isPreventive: true,
               approved: true,
               status: 'OPEN',
               priority: (data.priority || 'MEDIUM').toUpperCase(),
               category: data.category || 'General',
-              scheduleId: schedule.id || schedule._id,
-              parentScheduleId: schedule.id || schedule._id,
+              scheduleId,
+              maintenanceScheduleId: scheduleId,
+              parentScheduleId: scheduleId,
               pmTrigger: data.name || data.workOrderTitle || 'Preventive Maintenance',
               preventiveMaintenanceName: data.name || data.workOrderTitle || 'Preventive Maintenance',
+              dueDate: initialDueDate,
               createdAt: new Date(),
               updatedAt: new Date(),
+              createdBySchedule: true,
               companyName: data.companyName || data.company || null,
+              referenceType: 'workOrder',
             };
             const result = await db.collection('Issue').insertOne(issueData);
             console.log('[Schedule Create] Work order created with id', result.insertedId.toString());
+            }
           } else {
             console.warn('[Schedule Create] Cannot create work order: no DB connection');
           }

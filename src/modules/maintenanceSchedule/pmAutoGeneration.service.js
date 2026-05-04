@@ -12,10 +12,27 @@ const sameMoment = (left, right) => {
   return Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime === rightTime;
 };
 
+const occurrenceDateKey = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
+};
+
+const dayRange = (value) => {
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    return { start: now, end: new Date(now.getTime() + 86400000) };
+  }
+  date.setHours(0, 0, 0, 0);
+  return { start: date, end: new Date(date.getTime() + 86400000) };
+};
+
 /**
  * Auto-generate work order for a PM instance
  */
-const generateWorkOrderForPM = async (schedule, pmInstance) => {
+const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = true) => {
   try {
     const db = mongoose.connection.db;
     if (!db) {
@@ -23,38 +40,95 @@ const generateWorkOrderForPM = async (schedule, pmInstance) => {
       return null;
     }
 
+    // Check if auto-generation is enabled
+    if (schedule.autoGenerateWorkOrders === false) {
+      console.log('[PM Auto Gen] Auto-generation disabled for schedule:', schedule._id);
+      return null;
+    }
+
     const scheduleId = schedule.id || schedule._id;
+    const scheduleKey = String(scheduleId);
     const dueDate = pmInstance.dueDate || schedule.nextDate;
+    const { start: dueStart, end: dueEnd } = dayRange(dueDate);
+    const pmOccurrenceKey = `${scheduleKey}:${occurrenceDateKey(dueDate)}`;
+    await db.collection('Issue').createIndex(
+      { pmOccurrenceKey: 1 },
+      { unique: true, sparse: true, name: 'unique_pm_work_order_occurrence' }
+    ).catch((indexError) => {
+      console.warn('[PM Auto Gen] Could not ensure PM work order occurrence index:', indexError.message);
+    });
+    const scheduleMatch = [
+        { parentScheduleId: scheduleId },
+        { parentScheduleId: scheduleKey },
+        { maintenanceScheduleId: scheduleId },
+        { maintenanceScheduleId: scheduleKey },
+        { scheduleId },
+        { scheduleId: scheduleKey },
+    ];
+    const occurrenceNumber = Number(pmInstance.instanceNumber || schedule.occurrenceCount || 1);
+    const existingConditions = [
+      {
+        $or: scheduleMatch,
+        createdBySchedule: true,
+        dueDate: { $gte: dueStart, $lt: dueEnd },
+      },
+      { pmOccurrenceKey },
+    ];
+    if (pmInstance.id) {
+      existingConditions.push({
+        $or: scheduleMatch,
+        pmInstanceId: pmInstance.id,
+      });
+      existingConditions.push({
+        $or: scheduleMatch,
+        pmInstanceId: String(pmInstance.id),
+      });
+    }
+    if (occurrenceNumber <= 1) {
+      existingConditions.push({
+        $or: scheduleMatch,
+        dueDate: { $exists: false },
+      });
+    }
+
     const existingIssue = await db.collection('Issue').findOne({
-      parentScheduleId: scheduleId,
-      createdBySchedule: true,
-      dueDate,
+      $or: existingConditions,
     });
     if (existingIssue) {
       console.log('[PM Auto Gen] Work order already exists for schedule/due date:', scheduleId);
       return existingIssue._id;
     }
 
+    const workOrderTitle = schedule.workOrderTitle || schedule.name || 'Preventive Maintenance';
     const issueData = {
-      title: `${schedule.workOrderTitle || schedule.name || 'Preventive Maintenance'} - Instance ${pmInstance.instanceNumber || 1}`,
+      title: workOrderTitle,
       description: schedule.workOrderDescription || schedule.description || 'Auto-generated preventive maintenance work order',
       location: schedule.location || 'Preventive Maintenance',
       propertyId: schedule.assetsRows?.[0]?.propertyId || schedule.assetsRows?.[0]?.locationId || schedule.propertyId || null,
       assetId: schedule.assetsRows?.[0]?.assetId || null,
       tags: ['recurring-pm', 'auto-generated'],
-      assignees: [],
+      assignees: schedule.woAssignees || schedule.assignedTo ? [{
+        id: schedule.assignedTo || schedule.technicianUserId,
+        name: schedule.assignedToName || schedule.technicianName || 'Assigned',
+      }] : [],
       time: 'Scheduled',
       userId: schedule.userId || null,
       clientId: schedule.clientId || schedule.userId || null,
       requestorId: schedule.requestorId || schedule.userId || null,
       createdBy: schedule.userId || null,
+      submissionType: 'inspection',
+      issueType: 'preventive',
+      isPreventive: true,
       approved: true,
       status: 'OPEN',
       priority: (schedule.priority || 'MEDIUM').toUpperCase(),
       category: schedule.category || 'General',
       scheduleId,
+      maintenanceScheduleId: scheduleId,
       parentScheduleId: scheduleId, // Reference to the recurring PM
       pmInstanceId: pmInstance.id, // Reference to this PM instance
+      pmInstanceNumber: pmInstance.instanceNumber || 1,
+      pmOccurrenceKey,
       pmTrigger: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
       preventiveMaintenanceName: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
       dueDate: pmInstance.dueDate || schedule.nextDate,
@@ -62,10 +136,13 @@ const generateWorkOrderForPM = async (schedule, pmInstance) => {
       updatedAt: new Date(),
       createdBySchedule: true,
       companyName: schedule.companyName || schedule.company || null,
+      referenceType: schedule.woReferenceType || 'workOrder',
     };
 
     // Add assignees if available
-    if (schedule.assignedTo || schedule.technicianUserId) {
+    if (schedule.woAssignees && Array.isArray(schedule.woAssignees)) {
+      issueData.assignees = schedule.woAssignees;
+    } else if (schedule.assignedTo || schedule.technicianUserId) {
       issueData.assignees = [
         {
           id: schedule.assignedTo || schedule.technicianUserId,
@@ -74,9 +151,53 @@ const generateWorkOrderForPM = async (schedule, pmInstance) => {
       ];
     }
 
-    const result = await db.collection('Issue').insertOne(issueData);
-    console.log('[PM Auto Gen] Work order created:', result.insertedId.toString());
-    return result.insertedId;
+    const result = await db.collection('Issue').findOneAndUpdate(
+      { pmOccurrenceKey },
+      { $setOnInsert: issueData },
+      { upsert: true, returnDocument: 'after' }
+    );
+    const savedIssue = result.value || result || await db.collection('Issue').findOne({ pmOccurrenceKey });
+    const workOrderId = String(savedIssue?._id || result.lastErrorObject?.upserted || '');
+    console.log('[PM Auto Gen] Work order created:', workOrderId);
+
+    // Send notification if enabled
+    if (sendNotification && schedule.woNotifyUsers && Array.isArray(schedule.woNotifyUsers) && schedule.woNotifyUsers.length > 0) {
+      try {
+        const notificationService = require('../notification/notification.service');
+        const emailService = require('../emailService/email.service');
+        
+        for (const notifyUser of schedule.woNotifyUsers) {
+          await notificationService.createNotification({
+            userId: notifyUser.id,
+            type: 'workorder-created',
+            title: `Work Order Created: ${issueData.title}`,
+            message: `A new work order has been created for PM schedule: ${schedule.name}`,
+            relatedItemId: workOrderId,
+            relatedItemType: 'WorkOrder',
+          });
+
+          // Send email
+          if (notifyUser.email) {
+            await emailService.sendEmail({
+              to: notifyUser.email,
+              subject: `Work Order Created: ${issueData.title}`,
+              html: `
+                <h2>Work Order Created</h2>
+                <p>A new work order has been created for the PM schedule: <strong>${schedule.name}</strong></p>
+                <p><strong>Title:</strong> ${issueData.title}</p>
+                <p><strong>Due Date:</strong> ${new Date(issueData.dueDate).toLocaleDateString()}</p>
+                <p><strong>Priority:</strong> ${issueData.priority}</p>
+                <p><strong>Description:</strong> ${issueData.description}</p>
+              `,
+            });
+          }
+        }
+      } catch (notificationError) {
+        console.warn('[PM Auto Gen] Failed to send notification:', notificationError.message);
+      }
+    }
+
+    return workOrderId;
   } catch (error) {
     console.error('[PM Auto Gen] Failed to generate work order:', error);
     throw error;
@@ -94,10 +215,29 @@ const createPMInstance = async (schedule, nextInstanceDate, instanceNumber) => {
     }
 
     const scheduleId = schedule.id || schedule._id;
+    const scheduleKey = String(scheduleId);
+    const { start: dueStart, end: dueEnd } = dayRange(nextInstanceDate);
+    const pmOccurrenceKey = `${scheduleKey}:${occurrenceDateKey(nextInstanceDate)}`;
+    await db.collection('PMInstance').createIndex(
+      { pmOccurrenceKey: 1 },
+      { unique: true, sparse: true, name: 'unique_pm_instance_occurrence' }
+    ).catch((indexError) => {
+      console.warn('[PM Auto Gen] Could not ensure PM instance occurrence index:', indexError.message);
+    });
     const existingInstance = await db.collection('PMInstance').findOne({
-      parentScheduleId: scheduleId,
-      dueDate: nextInstanceDate,
-      createdBySchedule: true,
+      $or: [
+        { pmOccurrenceKey },
+        {
+          $or: [
+            { parentScheduleId: scheduleId },
+            { parentScheduleId: scheduleKey },
+            { scheduleId },
+            { scheduleId: scheduleKey },
+          ],
+          dueDate: { $gte: dueStart, $lt: dueEnd },
+          createdBySchedule: true,
+        },
+      ],
     });
     if (existingInstance) {
       return {
@@ -112,17 +252,23 @@ const createPMInstance = async (schedule, nextInstanceDate, instanceNumber) => {
       scheduleId,
       instanceNumber: instanceNumber || 1,
       dueDate: nextInstanceDate,
+      pmOccurrenceKey,
       status: 'Pending',
       workOrderId: null,
       createdAt: new Date(),
       createdBySchedule: true,
     };
 
-    const result = await db.collection('PMInstance').insertOne(pmInstanceData);
+    const result = await db.collection('PMInstance').findOneAndUpdate(
+      { pmOccurrenceKey },
+      { $setOnInsert: pmInstanceData },
+      { upsert: true, returnDocument: 'after' }
+    );
+    const savedInstance = result.value || result || await db.collection('PMInstance').findOne({ pmOccurrenceKey });
     return {
-      id: result.insertedId,
-      instanceNumber,
-      dueDate: nextInstanceDate,
+      id: savedInstance?._id || result.lastErrorObject?.upserted,
+      instanceNumber: savedInstance?.instanceNumber || instanceNumber || 1,
+      dueDate: savedInstance?.dueDate || nextInstanceDate,
     };
   } catch (error) {
     console.error('[PM Auto Gen] Failed to create PM instance:', error);

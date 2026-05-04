@@ -90,6 +90,7 @@ const normalizeIdentifiersPayload = (identifiers) => {
     manufacturer: toTrimmedString(identifiers.manufacturer),
     category: toTrimmedString(identifiers.category),
     area: toTrimmedString(identifiers.area),
+    purchaseCurrency: toTrimmedString(identifiers.purchaseCurrency) || 'RWF',
     residualValue: toOptionalNumber(identifiers.residualValue),
     workerId: toTrimmedString(identifiers.workerId),
     teamId: toTrimmedString(identifiers.teamId),

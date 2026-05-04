@@ -3,9 +3,9 @@ const mongoose = require('mongoose');
 const collectionName = 'Team';
 
 module.exports = {
-  findAll: async () => {
+  findAll: async (filter = {}) => {
     const db = mongoose.connection.db;
-    const docs = await db.collection(collectionName).find({}).toArray();
+    const docs = await db.collection(collectionName).find(filter).toArray();
     return docs.map(d => ({ ...d, id: d._id.toString() }));
   },
   findById: async (id) => {
