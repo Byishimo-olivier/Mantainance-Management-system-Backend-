@@ -26,7 +26,7 @@ const PESAPAL_API_URL = IS_SANDBOX
 // Callback URL for IPN notifications
 const PESAPAL_CALLBACK_URL =
   process.env.PESAPAL_CALLBACK_URL ||
-  'https://mantainance-management-system-backend.onrender.com/api/subscriptions/payments/pesapal-callback';
+  'https://api.fixnest.rw/api/subscriptions/payments/pesapal-callback';
 
 const MTN_COLLECTION_BASE_URL =
   process.env.MTN_COLLECTION_BASE_URL ||
@@ -45,7 +45,7 @@ const MTN_SUBSCRIPTION_KEY =
   '';
 const MTN_TARGET_ENVIRONMENT = process.env.MTN_TARGET_ENVIRONMENT || 'sandbox';
 const DEFAULT_PUBLIC_BACKEND_URL =
-  (process.env.BACKEND_PUBLIC_URL || process.env.PUBLIC_BACKEND_URL || 'https://mantainance-management-system-backend.onrender.com')
+  (process.env.BACKEND_PUBLIC_URL || process.env.PUBLIC_BACKEND_URL || 'https://api.fixnest.rw')
     .replace(/\/$/, '');
 
 function resolveExternalCallbackUrl(rawValue, fallbackUrl) {
@@ -255,6 +255,19 @@ const normalizePricing = (pricing = {}) => {
   return next;
 };
 
+async function findPaymentByMetadataValue(metadataKey, value, filters = {}) {
+  const normalizedValue = String(value || '').trim();
+  if (!metadataKey || !normalizedValue) return null;
+
+  const payments = await prisma.payment.findMany({
+    where: filters,
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+
+  return payments.find((payment) => String(payment.metadata?.[metadataKey] || '').trim() === normalizedValue) || null;
+}
+
 // Initialize PesaPal payment
 exports.initiatePesaPalPayment = async (paymentData) => {
   try {
@@ -343,15 +356,18 @@ exports.processPesaPalCallback = async (callbackData) => {
       status = verificationResponse.status_code || verificationResponse.status;
     }
 
-    // Find payment by PesaPal order tracking ID (stored in metadata)
-    let payment = await prisma.payment.findFirst({
-      where: {
-        OR: [
-          { id: orderTrackingId }, // Old style or fallback
-          { metadata: { path: ['pesapalOrderTrackingId'], equals: orderTrackingId } }
-        ]
-      },
-    });
+    // Find payment by PesaPal order tracking ID (stored in metadata).
+    // Prisma JSON path filters are not supported by this MongoDB setup, so use
+    // direct fields first and fall back to a narrow metadata scan.
+    let payment = await prisma.payment.findUnique({
+      where: { id: orderTrackingId },
+    }).catch(() => null);
+
+    if (!payment) {
+      payment = await findPaymentByMetadataValue('pesapalOrderTrackingId', orderTrackingId, {
+        paymentMethod: 'pesapal',
+      });
+    }
 
     if (!payment) {
       // Try finding by merchant reference (id) if provided
@@ -1548,20 +1564,25 @@ exports.processMobileMoneyCallback = async (callbackData) => {
       throw new Error('requesttransactionid or transactionid is required');
     }
 
-    const payment = requestTransactionId
-      ? await prisma.payment.findFirst({
-          where: {
-            OR: [
-              { transactionId: requestTransactionId },
-              { metadata: { path: ['requestTransactionId'], equals: requestTransactionId } },
-            ],
-          },
-        })
-      : await prisma.payment.findFirst({
-          where: {
-            metadata: { path: ['intouchpayTransactionId'], equals: intouchTransactionId },
-          },
+    let payment = null;
+
+    if (requestTransactionId) {
+      payment = await prisma.payment.findFirst({
+        where: { transactionId: requestTransactionId },
+      });
+
+      if (!payment) {
+        payment = await findPaymentByMetadataValue('requestTransactionId', requestTransactionId, {
+          paymentMethod: 'intouchpay',
         });
+      }
+    }
+
+    if (!payment && intouchTransactionId) {
+      payment = await findPaymentByMetadataValue('intouchpayTransactionId', intouchTransactionId, {
+        paymentMethod: 'intouchpay',
+      });
+    }
 
     if (!payment) {
       throw new Error(`Payment not found for callback reference: ${requestTransactionId || intouchTransactionId}`);
@@ -1616,20 +1637,19 @@ exports.getMobileMoneyPaymentStatus = async ({ paymentId, requestTransactionId, 
 
     if (!payment && requestTransactionId) {
       payment = await prisma.payment.findFirst({
-        where: {
-          OR: [
-            { transactionId: requestTransactionId },
-            { metadata: { path: ['requestTransactionId'], equals: requestTransactionId } },
-          ],
-        },
+        where: { transactionId: requestTransactionId },
       });
+
+      if (!payment) {
+        payment = await findPaymentByMetadataValue('requestTransactionId', requestTransactionId, {
+          paymentMethod: 'intouchpay',
+        });
+      }
     }
 
     if (!payment && transactionId) {
-      payment = await prisma.payment.findFirst({
-        where: {
-          metadata: { path: ['intouchpayTransactionId'], equals: String(transactionId) },
-        },
+      payment = await findPaymentByMetadataValue('intouchpayTransactionId', transactionId, {
+        paymentMethod: 'intouchpay',
       });
     }
 

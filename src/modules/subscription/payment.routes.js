@@ -32,7 +32,7 @@ router.post('/callback', ctrl.paypackCallback);
 router.all('/pesapal-callback', ctrl.pesapalCallback);
 
 // Mobile money callback (webhook - no authentication required)
-router.post('/mobile-money-callback', ctrl.mobileMoneyCallback);
+router.all('/mobile-money-callback', ctrl.mobileMoneyCallback);
 
 // All other payment routes require authentication
 router.use(authenticate);
