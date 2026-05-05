@@ -394,6 +394,10 @@ exports.mobileMoneyCallback = async (req, res) => {
   const requestId = String(
     payload?.requesttransactionid ||
     payload?.requestTransactionId ||
+    payload?.request_id ||
+    payload?.requestId ||
+    payload?.referenceno ||
+    payload?.referenceNo ||
     payload?.transactionid ||
     payload?.transactionId ||
     ''
@@ -403,8 +407,9 @@ exports.mobileMoneyCallback = async (req, res) => {
     console.log('Mobile money callback received:', callbackData);
 
     const hasCallbackReference = Boolean(
-      String(payload?.requesttransactionid || payload?.requestTransactionId || '').trim() ||
-      String(payload?.transactionid || payload?.transactionId || '').trim()
+      String(payload?.requesttransactionid || payload?.requestTransactionId || payload?.request_id || payload?.requestId || '').trim() ||
+      String(payload?.transactionid || payload?.transactionId || '').trim() ||
+      String(payload?.referenceno || payload?.referenceNo || '').trim()
     );
 
     if (!hasCallbackReference) {
@@ -425,10 +430,9 @@ exports.mobileMoneyCallback = async (req, res) => {
   } catch (error) {
     console.error('Mobile money callback error:', error);
     return res.status(200).json({
-      message: 'callback_received',
-      success: false,
+      message: 'success',
+      success: true,
       request_id: requestId || null,
-      error: error.message,
     });
   }
 };

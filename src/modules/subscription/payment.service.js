@@ -268,6 +268,34 @@ async function findPaymentByMetadataValue(metadataKey, value, filters = {}) {
   return payments.find((payment) => String(payment.metadata?.[metadataKey] || '').trim() === normalizedValue) || null;
 }
 
+async function findIntouchPayPaymentByReference(reference) {
+  const normalizedReference = String(reference || '').trim();
+  if (!normalizedReference) return null;
+
+  let payment = await prisma.payment.findFirst({
+    where: {
+      paymentMethod: 'intouchpay',
+      transactionId: normalizedReference,
+    },
+  });
+
+  if (payment) return payment;
+
+  payment = await findPaymentByMetadataValue('requestTransactionId', normalizedReference, {
+    paymentMethod: 'intouchpay',
+  });
+  if (payment) return payment;
+
+  payment = await findPaymentByMetadataValue('intouchpayTransactionId', normalizedReference, {
+    paymentMethod: 'intouchpay',
+  });
+  if (payment) return payment;
+
+  return await findPaymentByMetadataValue('intouchpayReferenceNo', normalizedReference, {
+    paymentMethod: 'intouchpay',
+  });
+}
+
 // Initialize PesaPal payment
 exports.initiatePesaPalPayment = async (paymentData) => {
   try {
@@ -1557,35 +1585,45 @@ function formatPhoneNumber(phoneNumber, country) {
 exports.processMobileMoneyCallback = async (callbackData) => {
   try {
     const payload = callbackData?.jsonpayload || callbackData;
-    const requestTransactionId = String(payload?.requesttransactionid || payload?.requestTransactionId || payload?.transactionId || '').trim();
-    const intouchTransactionId = String(payload?.transactionid || payload?.intouchpayTransactionId || '').trim();
+    const requestTransactionId = String(
+      payload?.requesttransactionid ||
+      payload?.requestTransactionId ||
+      payload?.request_id ||
+      payload?.requestId ||
+      payload?.transactionId ||
+      ''
+    ).trim();
+    const intouchTransactionId = String(
+      payload?.transactionid ||
+      payload?.intouchpayTransactionId ||
+      ''
+    ).trim();
+    const referenceNo = String(
+      payload?.referenceno ||
+      payload?.referenceNo ||
+      ''
+    ).trim();
 
-    if (!requestTransactionId && !intouchTransactionId) {
+    if (!requestTransactionId && !intouchTransactionId && !referenceNo) {
       throw new Error('requesttransactionid or transactionid is required');
     }
 
     let payment = null;
 
     if (requestTransactionId) {
-      payment = await prisma.payment.findFirst({
-        where: { transactionId: requestTransactionId },
-      });
-
-      if (!payment) {
-        payment = await findPaymentByMetadataValue('requestTransactionId', requestTransactionId, {
-          paymentMethod: 'intouchpay',
-        });
-      }
+      payment = await findIntouchPayPaymentByReference(requestTransactionId);
     }
 
     if (!payment && intouchTransactionId) {
-      payment = await findPaymentByMetadataValue('intouchpayTransactionId', intouchTransactionId, {
-        paymentMethod: 'intouchpay',
-      });
+      payment = await findIntouchPayPaymentByReference(intouchTransactionId);
+    }
+
+    if (!payment && referenceNo) {
+      payment = await findIntouchPayPaymentByReference(referenceNo);
     }
 
     if (!payment) {
-      throw new Error(`Payment not found for callback reference: ${requestTransactionId || intouchTransactionId}`);
+      throw new Error(`Payment not found for callback reference: ${requestTransactionId || intouchTransactionId || referenceNo}`);
     }
 
     const rawResponseCode = String(payload?.responsecode || '').trim();
