@@ -17,6 +17,14 @@ const reconcilePendingPaymentsInBackground = (subscriptionIds = []) => {
     .catch((error) => console.warn(`Background company payment reconciliation failed: ${error.message}`));
 };
 
+const isCurrentlyActiveSubscription = (subscription, now = new Date()) => {
+  const status = String(subscription?.status || '').toLowerCase();
+  if (status !== 'active') return false;
+  if (!subscription?.endDate) return true;
+  const endDate = new Date(subscription.endDate);
+  return !Number.isNaN(endDate.getTime()) && endDate > now;
+};
+
 /**
  * Get company subscription status for a user
  * Returns the company's subscription if user is part of a company with active subscription
@@ -34,10 +42,7 @@ exports.getCompanySubscription = async (userId) => {
     if (normalizedCompanyName) {
       let subscriptionCandidates = await prisma.subscription.findMany({
         where: {
-          OR: [
-            { company: { name: normalizedCompanyName } },
-            ...(normalizedEmail ? [{ email: normalizedEmail }] : []),
-          ],
+          company: { name: normalizedCompanyName },
         },
         orderBy: { createdAt: 'desc' },
         include: { company: true },
@@ -45,15 +50,47 @@ exports.getCompanySubscription = async (userId) => {
 
       reconcilePendingPaymentsInBackground(subscriptionCandidates.map((subscription) => subscription.id));
 
-      const companyNameSubscription = subscriptionCandidates.find((subscription) => {
+      const matchingCandidates = subscriptionCandidates.filter((subscription) => {
         const companyNameMatch = normalizeCompanyString(subscription?.company?.name) === normalizeCompanyString(normalizedCompanyName);
         const metadataCompanyMatch = normalizeCompanyString(subscription?.metadata?.companyName) === normalizeCompanyString(normalizedCompanyName);
-        const emailMatch = normalizedEmail && String(subscription?.email || '').trim().toLowerCase() === normalizedEmail;
-        return companyNameMatch || metadataCompanyMatch || emailMatch;
+        return companyNameMatch || metadataCompanyMatch;
       });
 
-      if (companyNameSubscription) {
-        return companyNameSubscription;
+      const now = new Date();
+      const activeCandidate = matchingCandidates.find((subscription) => isCurrentlyActiveSubscription(subscription, now));
+      if (activeCandidate) {
+        return activeCandidate;
+      }
+
+      const latestNonCancelledCandidate = matchingCandidates.find(
+        (subscription) => String(subscription?.status || '').toLowerCase() !== 'cancelled'
+      );
+
+      if (latestNonCancelledCandidate) {
+        return latestNonCancelledCandidate;
+      }
+
+      if (matchingCandidates.length) {
+        return matchingCandidates[0];
+      }
+    }
+
+    if (normalizedEmail) {
+      const emailCandidates = await prisma.subscription.findMany({
+        where: { email: normalizedEmail },
+        orderBy: { createdAt: 'desc' },
+        include: { company: true },
+        take: 20,
+      });
+
+      const now = new Date();
+      const activeEmailCandidate = emailCandidates.find((subscription) => isCurrentlyActiveSubscription(subscription, now));
+      if (activeEmailCandidate) {
+        return activeEmailCandidate;
+      }
+
+      if (emailCandidates.length) {
+        return emailCandidates[0];
       }
     }
 
@@ -79,13 +116,7 @@ exports.getCompanySubscription = async (userId) => {
     if (!subscriptions.length) return null;
 
     const now = new Date();
-    const activeSubscription = subscriptions.find((subscription) => {
-      const status = String(subscription?.status || '').toLowerCase();
-      if (status !== 'active') return false;
-      if (!subscription?.endDate) return true;
-      const endDate = new Date(subscription.endDate);
-      return !Number.isNaN(endDate.getTime()) && endDate > now;
-    });
+    const activeSubscription = subscriptions.find((subscription) => isCurrentlyActiveSubscription(subscription, now));
 
     return activeSubscription || subscriptions[0] || null;
   } catch (error) {

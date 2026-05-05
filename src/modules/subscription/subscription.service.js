@@ -32,6 +32,53 @@ const reconcilePendingPaymentsInBackground = (subscriptionIds = []) => {
     .catch((error) => console.warn(`Background mobile money reconciliation failed: ${error.message}`));
 };
 
+async function refreshCompanySubscriptionSummary(companyId) {
+  if (!companyId) return;
+
+  const now = new Date();
+  const subscriptions = await prisma.subscription.findMany({
+    where: { companyId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const activeSubscription = subscriptions.find((subscription) => {
+    const status = String(subscription?.status || '').toLowerCase();
+    if (status !== 'active') return false;
+    if (!subscription?.endDate) return true;
+    const endDate = new Date(subscription.endDate);
+    return !Number.isNaN(endDate.getTime()) && endDate > now;
+  });
+
+  if (activeSubscription) {
+    await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        subscriptionStatus: 'active',
+        subscriptionPlan: activeSubscription.plan,
+        subscriptionStartDate: activeSubscription.startDate || null,
+        subscriptionEndDate: activeSubscription.endDate || activeSubscription.nextBillingDate || null,
+        onFreeTrial: false,
+        trialExceeded: false,
+      },
+    }).catch((error) => {
+      console.warn(`Failed to refresh company subscription summary for ${companyId}: ${error.message}`);
+    });
+    return;
+  }
+
+  await prisma.company.update({
+    where: { id: companyId },
+    data: {
+      subscriptionStatus: 'inactive',
+      subscriptionPlan: null,
+      subscriptionStartDate: null,
+      subscriptionEndDate: null,
+    },
+  }).catch((error) => {
+    console.warn(`Failed to set company ${companyId} inactive after cancellation: ${error.message}`);
+  });
+}
+
 // Create subscription with billing cycle
 exports.createSubscription = async (subscriptionData) => {
   try {
@@ -209,6 +256,8 @@ exports.cancelSubscription = async (subscriptionId) => {
         cancelledAt: new Date(),
       },
     });
+
+    await refreshCompanySubscriptionSummary(subscription.companyId);
     return subscription;
   } catch (error) {
     throw new Error(`Failed to cancel subscription: ${error.message}`);

@@ -918,30 +918,6 @@ function deriveIntouchPayPaymentStatus({ responseCode, status, statusDesc, messa
   const normalizedSuccess = String(success ?? '').trim().toLowerCase();
 
   if (
-    code === '01' ||
-    code === '2001' ||
-    combinedText.includes('success') ||
-    combinedText.includes('successful') ||
-    combinedText.includes('processed') ||
-    combinedText.includes('approved') ||
-    combinedText.includes('complete') ||
-    combinedText.includes('completed') ||
-    combinedText.includes('paid')
-  ) {
-    return 'completed';
-  }
-
-  if (
-    code === '1000' ||
-    combinedText.includes('pending') ||
-    combinedText.includes('await') ||
-    combinedText.includes('approv') ||
-    combinedText.includes('processing')
-  ) {
-    return 'pending';
-  }
-
-  if (
     normalizedSuccess === 'false' ||
     ['3000', '3100', '3200', '2200', '2300'].includes(code) ||
     combinedText.includes('fail') ||
@@ -954,7 +930,31 @@ function deriveIntouchPayPaymentStatus({ responseCode, status, statusDesc, messa
     return 'failed';
   }
 
-  if (normalizedSuccess === 'true') {
+  if (
+    code === '01' ||
+    code === '2001' ||
+    combinedText.includes('completed') ||
+    combinedText.includes('paid')
+  ) {
+    return 'completed';
+  }
+
+  if (
+    code === '1000' ||
+    normalizedSuccess === 'true' ||
+    combinedText.includes('success') ||
+    combinedText.includes('successful') ||
+    combinedText.includes('processed') ||
+    combinedText.includes('approved') ||
+    combinedText.includes('complete') ||
+    combinedText.includes('initiated') ||
+    combinedText.includes('accepted') ||
+    combinedText.includes('request') ||
+    combinedText.includes('pending') ||
+    combinedText.includes('await') ||
+    combinedText.includes('approv') ||
+    combinedText.includes('processing')
+  ) {
     return 'pending';
   }
 
