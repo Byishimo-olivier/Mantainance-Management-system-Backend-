@@ -12,6 +12,9 @@ router.get('/public/calculate', ctrl.calculateAmount);
 // Get supported mobile money providers (public)
 router.get('/public/mobile-money-providers', ctrl.getSupportedMobileMoneyProviders);
 
+// Request mobile money deposit / payout (public)
+router.all('/public/request-deposit', ctrl.requestMobileMoneyDeposit);
+
 // Check InTouchPay / mobile money payment status (public)
 router.get('/mobile-money-status', ctrl.getMobileMoneyPaymentStatus);
 
@@ -51,6 +54,9 @@ router.post('/initiate-pesapal', ctrl.initiatePesaPalPayment);
 
 // Initiate mobile money payment
 router.post('/initiate-mobile-money', ctrl.initiateMobileMoneyPayment);
+
+// Request mobile money deposit / payout
+router.post('/request-deposit', authorizeRoles('admin', 'manager'), ctrl.requestMobileMoneyDeposit);
 
 // Get payment by ID
 router.get('/:id', ctrl.getPaymentById);

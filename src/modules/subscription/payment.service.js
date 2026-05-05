@@ -1019,6 +1019,50 @@ async function initiateIntouchPayCollection({ amount, phoneNumber, requestTransa
   };
 }
 
+async function initiateIntouchPayDeposit({
+  amount,
+  phoneNumber,
+  requestTransactionId,
+  withdrawCharge = 1,
+  reason = '',
+  sid = 1,
+}) {
+  const timestamp = formatIntouchPayTimestamp();
+  const password = buildIntouchPayPassword(timestamp);
+  const normalizedPhone = formatPhoneNumber(phoneNumber, 'RW').replace(/^\+/, '');
+  const payload = new URLSearchParams({
+    username: INTOUCHPAY_USERNAME,
+    timestamp,
+    amount: String(amount),
+    withdrawcharge: String(withdrawCharge ? 1 : 0),
+    reason: String(reason || 'Deposit request'),
+    sid: String(sid || 1),
+    mobilephone: normalizedPhone,
+    mobilephoneno: normalizedPhone,
+    requesttransactionid: String(requestTransactionId),
+    accountno: INTOUCHPAY_ACCOUNT_NO,
+    password,
+  });
+
+  const response = await axios.post(
+    `${INTOUCHPAY_BASE_URL}/api/requestdeposit/`,
+    payload.toString(),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      timeout: 65000,
+    }
+  );
+
+  return {
+    raw: response.data || {},
+    normalizedPhone,
+    timestamp,
+  };
+}
+
 async function getIntouchPayTransactionStatus({ requestTransactionId, transactionId }) {
   const timestamp = formatIntouchPayTimestamp();
   const password = buildIntouchPayPassword(timestamp);
@@ -1755,6 +1799,63 @@ exports.getMobileMoneyPaymentStatus = async ({ paymentId, requestTransactionId, 
     throw new Error(`Failed to get mobile money payment status: ${error.message}`);
   }
 };
+
+exports.requestMobileMoneyDeposit = async ({
+  amount,
+  phoneNumber,
+  reason,
+  withdrawCharge = 1,
+  sid = 1,
+  requestTransactionId,
+}) => {
+  try {
+    if (!amount || Number(amount) <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+
+    if (!phoneNumber) {
+      throw new Error('Phone number is required');
+    }
+
+    const depositRequestId = String(requestTransactionId || generateTransactionId()).trim();
+    const intouchPayResponse = await initiateIntouchPayDeposit({
+      amount,
+      phoneNumber,
+      requestTransactionId: depositRequestId,
+      withdrawCharge,
+      reason,
+      sid,
+    });
+
+    const raw = intouchPayResponse.raw || {};
+    const responseCode = String(raw.responsecode || '').trim();
+    const success = raw.success === true || responseCode === '2001';
+
+    return {
+      requestTransactionId: String(raw.requesttransactionid || depositRequestId),
+      referenceId: raw.referenceid ? String(raw.referenceid) : null,
+      responseCode: responseCode || null,
+      success,
+      amount: Number(amount),
+      phoneNumber: intouchPayResponse.normalizedPhone,
+      timestamp: intouchPayResponse.timestamp,
+      reason: reason || '',
+      withdrawCharge: withdrawCharge ? 1 : 0,
+      sid: String(sid || 1),
+      raw: normalizeExtendedJSONSafe(raw),
+    };
+  } catch (error) {
+    throw new Error(`Failed to request mobile money deposit: ${error.message}`);
+  }
+};
+
+function normalizeExtendedJSONSafe(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
 
 // ============================================
 // PesaPal API Testing & Documentation

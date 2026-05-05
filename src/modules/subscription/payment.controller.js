@@ -357,6 +357,47 @@ exports.getMobileMoneyPaymentStatus = async (req, res) => {
   }
 };
 
+exports.requestMobileMoneyDeposit = async (req, res) => {
+  try {
+    if (req.method === 'GET') {
+      return res.status(200).json({
+        message: 'public_deposit_endpoint_available',
+        success: true,
+        method: 'POST',
+        endpoint: '/api/subscriptions/payments/public/request-deposit',
+        requiredFields: ['amount', 'phoneNumber'],
+        optionalFields: ['reason', 'withdrawCharge', 'sid', 'requestTransactionId'],
+        description: 'Use this endpoint to send money from your IntouchPay account to a mobile money number.',
+      });
+    }
+
+    const { amount, phoneNumber, reason, withdrawCharge, sid, requestTransactionId } = req.body;
+
+    if (!amount || !phoneNumber) {
+      return res.status(400).json({
+        error: 'Missing required fields: amount, phoneNumber',
+      });
+    }
+
+    const result = await paymentService.requestMobileMoneyDeposit({
+      amount,
+      phoneNumber,
+      reason,
+      withdrawCharge,
+      sid,
+      requestTransactionId,
+    });
+
+    return res.status(201).json({
+      message: 'Mobile money deposit requested',
+      data: normalizeExtendedJSON(result),
+    });
+  } catch (error) {
+    console.error('Mobile money deposit request error:', error);
+    return res.status(400).json({ error: error.message });
+  }
+};
+
 // Get supported mobile money providers
 exports.getSupportedMobileMoneyProviders = async (req, res) => {
   try {
