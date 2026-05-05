@@ -389,19 +389,47 @@ exports.getSupportedMobileMoneyProviders = async (req, res) => {
 
 // Process mobile money callback
 exports.mobileMoneyCallback = async (req, res) => {
+  const callbackData = req.body?.jsonpayload ? req.body : { ...req.body, ...req.query };
+  const payload = callbackData?.jsonpayload || callbackData;
+  const requestId = String(
+    payload?.requesttransactionid ||
+    payload?.requestTransactionId ||
+    payload?.transactionid ||
+    payload?.transactionId ||
+    ''
+  ).trim();
+
   try {
-    const callbackData = req.body?.jsonpayload ? req.body : { ...req.body, ...req.query };
     console.log('Mobile money callback received:', callbackData);
 
-    const result = await paymentService.processMobileMoneyCallback(callbackData);
+    const hasCallbackReference = Boolean(
+      String(payload?.requesttransactionid || payload?.requestTransactionId || '').trim() ||
+      String(payload?.transactionid || payload?.transactionId || '').trim()
+    );
 
-    res.json({
-      message: 'Mobile money payment processed',
-      data: normalizeExtendedJSON(result),
+    if (!hasCallbackReference) {
+      return res.status(200).json({
+        message: 'success',
+        success: true,
+        request_id: requestId || null,
+      });
+    }
+
+    await paymentService.processMobileMoneyCallback(callbackData);
+
+    return res.status(200).json({
+      message: 'success',
+      success: true,
+      request_id: requestId || null,
     });
   } catch (error) {
     console.error('Mobile money callback error:', error);
-    res.status(400).json({ error: error.message });
+    return res.status(200).json({
+      message: 'callback_received',
+      success: false,
+      request_id: requestId || null,
+      error: error.message,
+    });
   }
 };
 
