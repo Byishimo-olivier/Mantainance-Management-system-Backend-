@@ -91,9 +91,25 @@ exports.createSubscription = async (subscriptionData) => {
     const plan = subscriptionData.plan || 'basic';
     const propertyId = subscriptionData.metadata?.propertyId;
     const companyId = subscriptionData.metadata?.companyId; // Extract company ID from metadata
+    const employeeLimit = paymentService.normalizeEmployeeCount(
+      subscriptionData.employeeCount ||
+      subscriptionData.employeeLimit ||
+      subscriptionData.metadata?.employeeCount ||
+      subscriptionData.metadata?.employeeLimit ||
+      subscriptionData.metadata?.maxUsers
+    );
+    const includedEmployees = paymentService.getIncludedEmployees();
+    const extraEmployees = Math.max(0, employeeLimit - includedEmployees);
 
-    const amount = paymentService.calculateAmount(plan, billingCycle);
+    const amount = paymentService.calculateAmount(plan, billingCycle, employeeLimit);
     const nextBillingDate = calculateNextBillingDate(billingCycle);
+    const metadata = {
+      ...(subscriptionData.metadata || {}),
+      includedEmployees,
+      employeeLimit,
+      extraEmployees,
+      pricingModel: 'base_includes_10_employees',
+    };
 
     const subscription = await prisma.subscription.create({
       data: {
@@ -111,7 +127,7 @@ exports.createSubscription = async (subscriptionData) => {
         autoRenew: subscriptionData.autoRenew !== false,
         paymentMethod: subscriptionData.paymentMethod,
         propertyId,
-        metadata: subscriptionData.metadata || {},
+        metadata,
       },
       include: { property: true, company: true },
     });
@@ -273,7 +289,18 @@ exports.updateSubscription = async (subscriptionId, updateData) => {
       if (existing) {
         const newPlan = updateData.plan || existing.plan;
         const newCycle = updateData.billingCycle || existing.billingCycle;
-        updateData.amount = paymentService.calculateAmount(newPlan, newCycle);
+        const employeeLimit = paymentService.normalizeEmployeeCount(
+          updateData.employeeLimit ||
+          updateData.employeeCount ||
+          updateData.metadata?.employeeLimit ||
+          updateData.metadata?.employeeCount ||
+          existing.metadata?.employeeLimit ||
+          existing.metadata?.employeeCount
+        );
+        updateData.amount = paymentService.calculateAmount(newPlan, newCycle, employeeLimit);
+        if (updateData.plan) {
+          updateData.features = getFeaturesByPlan(newPlan);
+        }
         if (updateData.billingCycle) {
           updateData.nextBillingDate = calculateNextBillingDate(updateData.billingCycle);
         }
@@ -463,13 +490,43 @@ function calculateNextBillingDate(billingCycle) {
 }
 
 function getFeaturesByPlan(plan) {
+  const normalizedPlan = String(plan || 'basic').trim().toLowerCase();
   const features = {
-    basic: ['Dashboard', 'Basic Reporting', 'Email Support'],
-    premium: ['Dashboard', 'Advanced Reporting', 'Priority Support', 'Basic API Access', 'Company Branding'],
-    professional: ['All Premium Features', 'Full API Access', 'Custom Integrations', 'Advanced Analytics', 'Account Manager'],
-    enterprise: ['All Professional Features', 'Dedicated Support', 'Custom Solutions', 'Training & Onboarding', 'SLA Guarantee', 'Multiple Properties'],
+    basic: ['unlimited_work_orders', 'requests', 'ai_assistance'],
+    professional: [
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
+      'asset_tracking',
+      'location_management',
+      'preventive_maintenance',
+      'advanced_ai',
+    ],
+    enterprise: [
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
+      'asset_tracking',
+      'location_management',
+      'preventive_maintenance',
+      'advanced_ai',
+      'analytics',
+      'material_requests',
+    ],
+    premium: [
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
+      'asset_tracking',
+      'location_management',
+      'preventive_maintenance',
+      'advanced_ai',
+      'analytics',
+      'material_requests',
+      'purchase_order',
+    ],
   };
-  return features[plan] || features.basic;
+  return features[normalizedPlan] || features.basic;
 }
 
 module.exports = exports;

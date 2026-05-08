@@ -338,11 +338,13 @@ exports.getUserSubscriptionStatus = async (userId) => {
         id: subscription.id,
         plan: subscription.plan,
         billingCycle: subscription.billingCycle,
+        amount: subscription.amount,
         status: subscription.status,
         paymentStatus: subscription.paymentStatus,
         startDate: subscription.startDate,
         endDate: subscription.endDate,
-        nextBillingDate: subscription.nextBillingDate
+        nextBillingDate: subscription.nextBillingDate,
+        metadata: subscription.metadata || {},
       } : null,
       company: user?.company ? {
         id: user.company.id,

@@ -1001,10 +1001,13 @@ class AIController {
 
             // Get user context for personalized AI response
             const userRole = req.user?.role || 'technician';
-            const companyId = req.user?.companyId || null;
+            const companyContext = {
+                companyId: req.user?.companyId || null,
+                companyName: companyName || null,
+            };
 
             // Call the AI Service (Claude > Gemini pipeline) with full context
-            const aiResponse = await aiService.chat(message, sanitizedHistory, analyticsSummary, userRole, companyId);
+            const aiResponse = await aiService.chat(message, sanitizedHistory, analyticsSummary, userRole, companyContext);
             
             // Check if response is a JSON action response
             let parsedResponse = aiResponse;

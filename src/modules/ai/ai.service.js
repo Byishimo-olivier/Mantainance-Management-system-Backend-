@@ -15,6 +15,7 @@ const isMaintenanceQuestion = (text) => /issue|incident|property|technician|tech
 
 class AIService {
   constructor() {
+    this.openai = null;
     this.model = null;
     this.claudeClient = null;
     this.initialized = false;
@@ -23,6 +24,13 @@ class AIService {
   async init() {
     if (this.initialized) return;
     try {
+      const openAiApiKey = process.env.OPENAI_API_KEY;
+      if (openAiApiKey) {
+        const OpenAI = require("openai");
+        this.openai = new OpenAI({ apiKey: openAiApiKey });
+        console.log("OpenAI client initialized");
+      }
+
       // Try Claude first
       const Anthropic = require("@anthropic-ai/sdk");
       const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -51,31 +59,32 @@ class AIService {
    * Fetch live MongoDB data for context injection
    * This pulls real-time data from the maintenance database
    */
-  async getMaintenanceContext(companyId = null, includeStatuses = null) {
+  async getMaintenanceContext(companyContext = {}, includeStatuses = null) {
     try {
       const { PrismaClient } = require("@prisma/client");
       const prisma = new PrismaClient();
+      const companyId = companyContext?.companyId || null;
+      const companyName = companyContext?.companyName || null;
 
       // Default statuses if not specified - includes all statuses for comprehensive data
       const statusFilter = includeStatuses || ['OPEN', 'IN_PROGRESS', 'PENDING', 'COMPLETED', 'ON_HOLD', 'open', 'in progress', 'in_progress', 'pending', 'completed', 'on hold', 'on_hold'];
-      console.log('📡 [DB Query] Fetching with:', { statusFilter, companyId });
+      console.log('📡 [DB Query] Fetching with:', { statusFilter, companyId, companyName });
 
       // Fetch work orders with flexible status filtering - try uppercase and lowercase variations
       const workOrders = await prisma.issue.findMany({
         where: {
-          ...(companyId && { companyId })
-          // Note: Removed status filter temporarily to debug
+          ...(companyName && companyName !== '__all__' ? { companyName } : {})
         },
         select: {
-          _id: true,
+          id: true,
           title: true,
           assetName: true,
           priority: true,
           status: true,
           assignedTo: true,
           createdAt: true,
-          dueDate: true,
-          completedDate: true,
+          fixDeadline: true,
+          updatedAt: true,
         },
         orderBy: { createdAt: 'desc' },
         take: 50  // Fetch more to see what we have
@@ -103,16 +112,15 @@ class AIService {
       // Fetch active assets
       const assets = await prisma.asset.findMany({
         where: {
-          status: { $ne: 'DECOMMISSIONED' },
-          ...(companyId && { companyId })
+          status: { not: 'DECOMMISSIONED' },
         },
         select: {
-          _id: true,
+          id: true,
           name: true,
           type: true,
           location: true,
-          condition: true,
-          lastMaintenanceDate: true,
+          status: true,
+          purchaseDate: true,
         },
         take: 20
       });
@@ -137,11 +145,11 @@ class AIService {
       const highPriorityIssues = await prisma.issue.findMany({
         where: {
           priority: 'HIGH',
-          status: { $ne: 'COMPLETED' },
-          ...(companyId && { companyId })
+          status: { not: 'COMPLETED' },
+          ...(companyName && companyName !== '__all__' ? { companyName } : {})
         },
         select: {
-          _id: true,
+          id: true,
           title: true,
           status: true,
           createdAt: true,
@@ -152,15 +160,16 @@ class AIService {
       // Fetch technician availability
       const technicians = await prisma.internalTechnician.findMany({
         where: {
-          status: 'ACTIVE',
-          ...(companyId && { companyId })
+          status: 'Active',
         },
         select: {
-          _id: true,
-          firstName: true,
-          lastName: true,
-          specializations: true,
-          currentWorkload: true,
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          specialty: true,
+          completed: true,
+          status: true,
         },
         take: 10
       });
@@ -219,12 +228,12 @@ ${(liveData.workOrders || []).map(w =>
 
 ACTIVE ASSETS (${liveData.assets?.length || 0}):
 ${(liveData.assets || []).slice(0, 10).map(a =>
-  `- ${a.name} (${a.type}) | Location: ${a.location} | Condition: ${a.condition} | Last Maintenance: ${a.lastMaintenanceDate ? new Date(a.lastMaintenanceDate).toLocaleDateString() : 'Never'}`
+  `- ${a.name} (${a.type}) | Location: ${typeof a.location === 'object' ? JSON.stringify(a.location) : a.location || 'N/A'} | Status: ${a.status || 'Unknown'} | Purchased: ${a.purchaseDate ? new Date(a.purchaseDate).toLocaleDateString() : 'N/A'}`
 ).join('\n') || '- None'}
 
 LOW STOCK SPARE PARTS (${liveData.spareParts?.length || 0}):
 ${(liveData.spareParts || []).map(p =>
-  `- ${p.name} | In Stock: ${p.quantity}/${p.minimumQuantity} | Unit Cost: $${p.unitCost || 0}`
+  `- ${p.name} | In Stock: ${p.quantity}/${p.lowStockThreshold || 'threshold not set'} | Unit Cost: $${p.unitCost || 0}`
 ).join('\n') || '- None'}
 
 HIGH-PRIORITY UNRESOLVED ISSUES (${liveData.highPriorityIssues?.length || 0}):
@@ -234,7 +243,7 @@ ${(liveData.highPriorityIssues || []).map(i =>
 
 AVAILABLE TECHNICIANS (${liveData.technicians?.length || 0}):
 ${(liveData.technicians || []).map(t =>
-  `- ${t.firstName} ${t.lastName} | Skills: ${(t.specializations || []).join(', ') || 'General'} | Workload: ${t.currentWorkload || 0} tasks`
+  `- ${t.name} | Skills: ${(t.specialty || []).join(', ') || 'General'} | Completed: ${t.completed || 0} tasks`
 ).join('\n') || '- None'}
 
 === END OF LIVE DATA ===
@@ -498,7 +507,7 @@ INSTRUCTIONS:
     };
   }
 
-  async chat(question = '', history = [], analyticsSummary = null, userRole = 'technician', companyId = null) {
+  async chat(question = '', history = [], analyticsSummary = null, userRole = 'technician', companyContext = {}) {
     await this.init();
     const q = normalizeText(question);
 
@@ -511,7 +520,7 @@ INSTRUCTIONS:
       console.log('🔍 [AI] Extracted Entities:', { question, entities });
       
       // Fetch live data from MongoDB with smart status filtering
-      const liveData = await this.getMaintenanceContext(companyId, entities.statuses);
+      const liveData = await this.getMaintenanceContext(companyContext, entities.statuses);
       console.log('📊 [AI] Live Data Fetched:', {
         workOrdersCount: liveData.workOrders?.length || 0,
         assetsCount: liveData.assets?.length || 0,
@@ -520,6 +529,42 @@ INSTRUCTIONS:
         statuses: entities.statuses,
         sample: liveData.workOrders?.[0] // Log first work order as sample
       });
+
+      if (this.openai) {
+        const systemPrompt = this.buildSystemPromptWithContext(userRole, liveData);
+        const conversationHistory = (Array.isArray(history) ? history : [])
+          .map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}`)
+          .join('\n');
+
+        const composedInput = conversationHistory
+          ? `${conversationHistory}\nUser: ${question}`
+          : question;
+
+        try {
+          console.log('[OpenAI] Sending chat request with', liveData.workOrders?.length || 0, 'work orders');
+          const response = await this.openai.responses.create({
+            model: process.env.OPENAI_MODEL || 'gpt-5.5',
+            input: [
+              {
+                role: 'system',
+                content: systemPrompt,
+              },
+              {
+                role: 'user',
+                content: composedInput,
+              },
+            ],
+          });
+
+          if (response.output_text && String(response.output_text).trim()) {
+            console.log('[OpenAI] Response generated successfully');
+            return String(response.output_text).trim();
+          }
+        } catch (error) {
+          console.error('[OpenAI] API Error:', error.message);
+          // Fall through to Claude, Gemini, or rule-based fallback.
+        }
+      }
 
       // If Claude is available, use it with injected context
       if (this.claudeClient) {
@@ -613,55 +658,63 @@ Response:`;
     // ========================
     
     // Pattern matchers for "how to" questions
-    const asksHowToAdd = (text) => /how.*add|how.*create|how.*submit|where.*add|where.*create|where to|how do i|can i/.test(text);
+    const asksHowToAdd = (text) => /how.*add|how.*create|how.*submit|how.*schedul|where.*add|where.*create|where to|how do i|can i/.test(text);
     const mentionsMeters = (text) => /meter|meters/.test(text);
     const mentionsRequests = (text) => /request|issue|complaint|report/.test(text);
     const mentionsWorkOrder = (text) => /work\s?order|task|job/.test(text);
     const mentionsPM = (text) => /preventive\s?maintenance|preventive|pm|scheduled|scheduled maintenance/.test(text);
+    const mentionsSchedule = (text) => /schedule|schedules|schedul|schedula|calendar/.test(text);
     const mentionsAsset = (text) => /asset|equipment|property|device|edge device|meter/.test(text);
     const mentionsTechnician = (text) => /technician|tech|worker|staff|assign/.test(text);
 
     // How-to responses
     if (asksHowToAdd(q)) {
+      if (mentionsSchedule(q) && mentionsWorkOrder(q)) {
+        return JSON.stringify({
+          kind: 'action',
+          content: `📅 How to Schedule a Task:\n\n1. Open the Scheduler section.\n2. Click "Add Schedule".\n3. Choose the property, asset, or task you want to plan.\n4. Set the date, time, and frequency if it should repeat.\n5. Assign the technician or team.\n6. Save the schedule so it appears in the workflow.\n\nThis is the best place to plan maintenance work ahead of time. Use the button below to open the schedule form.`,
+          action: { label: 'Add Schedule', type: 'openAddSchedule' }
+        });
+      }
       if (mentionsMeters(q)) {
         return JSON.stringify({
           kind: 'action',
-          content: `📊 How to Add a Meter:\n\n1. Go to the "Meters" tab in your dashboard\n2. Click "Add Meter" button\n3. Fill in meter details (name, location, type)\n4. Configure meter readings & alerts\n5. Save\n\nMeters help track consumption and identify anomalies. Click the button below to get started!`,
+          content: `📊 How to Add a Meter:\n\n1. Go to the "Meters" tab in your dashboard.\n2. Click the "Add Meter" button.\n3. Enter the meter name, type, unit, and location.\n4. Configure readings or alert thresholds if needed.\n5. Save the record.\n\nMeters help you track consumption and spot unusual changes. Use the button below to open the Meters area.`,
           action: { label: 'Open Meters', type: 'openMetersTab' }
         });
       }
       if (mentionsRequests(q)) {
         return JSON.stringify({
           kind: 'action',
-          content: `📝 How to Create a Request:\n\n1. Go to "Requests" section\n2. Click "Create New Request"\n3. Select property & description\n4. Add priority level & due date\n5. Assign to technician (optional)\n6. Submit\n\nYour request will be queued for assignment. Ready to create one? Click below!`,
+          content: `📝 How to Create a Request:\n\n1. Open the "Requests" section.\n2. Click "Create New Request".\n3. Select the property or location.\n4. Describe the issue clearly.\n5. Add priority, timing, and any useful notes or photos.\n6. Submit the request.\n\nAfter submission, the request can be reviewed, assigned, or converted into a work order. Use the button below to open the request form.`,
           action: { label: 'Open Request Form', type: 'openRequestForm' }
         });
       }
       if (mentionsWorkOrder(q)) {
         return JSON.stringify({
           kind: 'action',
-          content: `📋 How to Create a Work Order:\n\n1. Go to "Work Orders" tab\n2. Click "Create Work Order"\n3. Select asset/location\n4. Enter issue description & priority\n5. Set due date\n6. Assign technician\n7. Save & track status\n\nWork orders are tracked in real-time. Let's create one!`,
+          content: `📋 How to Create a Work Order:\n\n1. Open the "Work Orders" tab.\n2. Click "Create Work Order".\n3. Select the asset or location involved.\n4. Add the task description and set the priority.\n5. Choose the due date.\n6. Assign the technician or team.\n7. Save it so progress can be tracked in real time.\n\nUse the button below to open the work order form.`,
           action: { label: 'Create Work Order', type: 'openWorkOrderDetailsForm' }
         });
       }
       if (mentionsPM(q)) {
         return JSON.stringify({
           kind: 'action',
-          content: `🔄 How to Create Preventive Maintenance:\n\n1. Go to "Maintenance" → "Preventive"\n2. Click "Create PM Schedule"\n3. Select asset/property\n4. Set frequency (weekly, monthly, quarterly, etc.)\n5. Choose maintenance tasks\n6. Assign technician\n7. Save\n\nPMs help prevent breakdowns. Create one now!`,
+          content: `🔄 How to Create Preventive Maintenance:\n\n1. Go to "Maintenance" and open "Preventive".\n2. Click "Create PM Schedule".\n3. Select the asset or property.\n4. Set the frequency such as weekly, monthly, or quarterly.\n5. Define the maintenance tasks.\n6. Assign the technician or team.\n7. Save the PM item.\n\nThis helps your team prevent breakdowns instead of reacting late. Use the button below to create a preventive item.`,
           action: { label: 'Create Preventive', type: 'openCreatePm' }
         });
       }
       if (mentionsAsset(q)) {
         return JSON.stringify({
           kind: 'action',
-          content: `🏢 How to Add an Asset:\n\n1. Go to "Assets" section\n2. Click "Add New Asset"\n3. Enter asset name, type, location\n4. Set condition & warranty info\n5. Attach documents (optional)\n6. Save\n\nAssets help track equipment. Ready to add one?`,
+          content: `🏢 How to Add an Asset:\n\n1. Open the "Assets" section.\n2. Click "Add New Asset".\n3. Enter the asset name, type, and location.\n4. Add useful details like status, serial number, warranty, or vendor information.\n5. Attach documents if needed.\n6. Save the asset record.\n\nA complete asset record makes scheduling and reporting much easier later. Use the button below to open the asset form.`,
           action: { label: 'Add Asset', type: 'openAddAsset' }
         });
       }
       if (mentionsTechnician(q)) {
         return JSON.stringify({
           kind: 'action',
-          content: `👥 How to Assign a Technician:\n\n1. Open work order/request\n2. Click "Assign Technician"\n3. Filter by skill/availability\n4. Select technician from list\n5. Confirm assignment\n6. Technician gets notification\n\nConsider workload when assigning. Manage your team!`,
+          content: `👥 How to Assign a Technician:\n\n1. Open the work order or request.\n2. Click "Assign Technician".\n3. Review available team members by skill or role.\n4. Choose the most suitable technician.\n5. Confirm the assignment.\n6. The technician will then see the task in their workflow.\n\nUse the button below if you want to manage or add technicians first.`,
           action: { label: 'Manage Team', type: 'openAddTechnician' }
         });
       }

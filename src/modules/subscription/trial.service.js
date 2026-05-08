@@ -1,7 +1,79 @@
 const { PrismaClient } = require('@prisma/client');
+const User = require('../user/user.model');
+const companySubscriptionService = require('./company-subscription.service');
 const prisma = new PrismaClient();
 
 const TRIAL_DURATION_DAYS = 7; // 7-day free trial
+const ACTIVE_SUBSCRIPTION_STATUSES = ['active'];
+
+const normalizePlan = (plan) => String(plan || 'basic').trim().toLowerCase();
+const normalizeFeature = (feature) => String(feature || '').trim().toLowerCase();
+const isSuperAdminRole = (role) => ['superadmin', 'super-admin'].includes(String(role || '').trim().toLowerCase());
+
+const isCurrentlyActiveSubscription = (subscription, now = new Date()) => {
+  const status = String(subscription?.status || '').toLowerCase();
+  if (!ACTIVE_SUBSCRIPTION_STATUSES.includes(status)) return false;
+  if (!subscription?.endDate) return true;
+  const endDate = new Date(subscription.endDate);
+  return !Number.isNaN(endDate.getTime()) && endDate > now;
+};
+
+const getUserCompany = async (userId) => {
+  if (!userId) return null;
+
+  const prismaUser = await prisma.user.findUnique({
+    where: { id: String(userId) },
+    include: { company: true },
+  }).catch(() => null);
+
+  if (prismaUser?.company) {
+    return prismaUser.company;
+  }
+
+  const mongoUser = await User.findById(userId)
+    .select('companyName role email')
+    .lean()
+    .catch(() => null);
+
+  if (!mongoUser?.companyName || isSuperAdminRole(mongoUser?.role)) {
+    return null;
+  }
+
+  return companySubscriptionService
+    .ensureCompanyExists(String(mongoUser.companyName).trim(), String(userId))
+    .catch(() => null);
+};
+
+const getUserRole = async (userId) => {
+  const mongoUser = await User.findById(userId).select('role').lean().catch(() => null);
+  if (mongoUser?.role) return mongoUser.role;
+
+  const prismaUser = await prisma.user.findUnique({
+    where: { id: String(userId) },
+    select: { role: true },
+  }).catch(() => null);
+
+  return prismaUser?.role || '';
+};
+
+const getActiveSubscriptionForUser = async (userId, companyId) => {
+  const subscription = await companySubscriptionService.getCompanySubscription(userId).catch(() => null);
+  if (isCurrentlyActiveSubscription(subscription)) {
+    return subscription;
+  }
+
+  if (!companyId) return null;
+
+  const directSubscription = await prisma.subscription.findFirst({
+    where: {
+      companyId,
+      status: 'active',
+    },
+    orderBy: { createdAt: 'desc' },
+  }).catch(() => null);
+
+  return isCurrentlyActiveSubscription(directSubscription) ? directSubscription : null;
+};
 
 /**
  * Initialize a free trial for a new company
@@ -340,16 +412,12 @@ exports.upgradeToPaid = async (companyId, plan, billingCycle) => {
  */
 exports.isUserInActiveTrial = async (userId) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { company: true },
-    });
-
-    if (!user?.company) {
+    const company = await getUserCompany(userId);
+    if (!company) {
       return false;
     }
 
-    const trialStatus = await exports.getTrialStatus(user.company.id);
+    const trialStatus = await exports.getTrialStatus(company.id);
     return trialStatus?.isInTrial === true;
   } catch (error) {
     console.error('Error checking if user in trial:', error);
@@ -362,16 +430,12 @@ exports.isUserInActiveTrial = async (userId) => {
  */
 exports.hasTrialExpired = async (userId) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { company: true },
-    });
-
-    if (!user?.company) {
+    const company = await getUserCompany(userId);
+    if (!company) {
       return false;
     }
 
-    const trialStatus = await exports.getTrialStatus(user.company.id);
+    const trialStatus = await exports.getTrialStatus(company.id);
     return trialStatus?.trialExceeded === true;
   } catch (error) {
     console.error('Error checking if trial expired:', error);
@@ -387,12 +451,12 @@ exports.hasTrialExpired = async (userId) => {
  */
 exports.canAccessFeatures = async (userId) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { company: true },
-    });
+    if (isSuperAdminRole(await getUserRole(userId))) {
+      return true;
+    }
 
-    if (!user?.company) {
+    const company = await getUserCompany(userId);
+    if (!company) {
       return false;
     }
 
@@ -403,12 +467,8 @@ exports.canAccessFeatures = async (userId) => {
     }
 
     // Check if has active paid subscription
-    const company = user.company;
-    const now = new Date();
-    const hasValidEndDate = !company.subscriptionEndDate || new Date(company.subscriptionEndDate) > now;
-    const isActive = company.subscriptionStatus === 'active' && hasValidEndDate;
-
-    return isActive;
+    const activeSubscription = await getActiveSubscriptionForUser(userId, company.id);
+    return !!activeSubscription;
   } catch (error) {
     console.error('Error checking feature access:', error);
     return false;
@@ -416,17 +476,21 @@ exports.canAccessFeatures = async (userId) => {
 };
 
 /**
- * Get features available during trial
+ * Get ALL features available during trial
+ * Trial users get access to ALL features
  */
 function getTrialFeatures() {
   return [
-    'basic_reporting',
-    'user_management',
+    'unlimited_work_orders',
+    'requests',
+    'ai_assistance',
     'asset_tracking',
-    'maintenance_scheduling',
-    'issue_tracking',
-    'dashboard',
-    'mobile_access',
+    'location_management',
+    'preventive_maintenance',
+    'advanced_ai',
+    'analytics',
+    'material_requests',
+    'purchase_order',
   ];
 }
 
@@ -434,61 +498,52 @@ function getTrialFeatures() {
  * Get features by plan
  */
 function getFeaturesByPlan(plan) {
+  const normalizedPlan = normalizePlan(plan);
   const features = {
     basic: [
-      'basic_reporting',
-      'user_management',
-      'asset_tracking',
-      'maintenance_scheduling',
-      'issue_tracking',
-      'dashboard',
-    ],
-    premium: [
-      'basic_reporting',
-      'advanced_reporting',
-      'user_management',
-      'asset_tracking',
-      'maintenance_scheduling',
-      'preventive_maintenance',
-      'issue_tracking',
-      'dashboard',
-      'mobile_access',
-      'email_alerts',
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
     ],
     professional: [
-      'basic_reporting',
-      'advanced_reporting',
-      'predictive_analytics',
-      'user_management',
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
       'asset_tracking',
-      'maintenance_scheduling',
+      'location_management',
       'preventive_maintenance',
-      'issue_tracking',
-      'dashboard',
-      'mobile_access',
-      'email_alerts',
-      'api_access',
+      'advanced_ai',
     ],
     enterprise: [
-      'basic_reporting',
-      'advanced_reporting',
-      'predictive_analytics',
-      'user_management',
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
       'asset_tracking',
-      'maintenance_scheduling',
+      'location_management',
       'preventive_maintenance',
-      'issue_tracking',
-      'dashboard',
-      'mobile_access',
-      'email_alerts',
-      'api_access',
-      'custom_branding',
-      'dedicated_support',
+      'advanced_ai',
+      'analytics',
+      'material_requests',
+    ],
+    premium: [
+      'unlimited_work_orders',
+      'requests',
+      'ai_assistance',
+      'asset_tracking',
+      'location_management',
+      'preventive_maintenance',
+      'advanced_ai',
+      'analytics',
+      'material_requests',
+      'purchase_order',
     ],
   };
 
-  return features[plan] || features.basic;
+  return features[normalizedPlan] || features.basic;
 }
+
+exports.getTrialFeatures = getTrialFeatures;
+exports.getFeaturesByPlan = getFeaturesByPlan;
 
 /**
  * Calculate billing amount for plan and cycle
@@ -521,5 +576,139 @@ function calculateNextBillingDate(billingCycle) {
 
   return nextDate;
 }
+
+/**
+ * Get all accessible features for a user based on trial or subscription plan
+ * @param {string} userId - User ID
+ * @returns {Promise<Array>} - Array of accessible features
+ */
+exports.getUserAccessibleFeatures = async (userId) => {
+  try {
+    if (isSuperAdminRole(await getUserRole(userId))) {
+      return getTrialFeatures();
+    }
+
+    const company = await getUserCompany(userId);
+    if (!company) {
+      return [];
+    }
+
+    // Check if user is in active trial
+    const isInTrial = await exports.isUserInActiveTrial(userId);
+    if (isInTrial) {
+      return getTrialFeatures(); // Return ALL features for trial users
+    }
+
+    // Get user's subscription plan
+    const subscription = await getActiveSubscriptionForUser(userId, company.id);
+
+    if (!subscription) {
+      return [];
+    }
+
+    return getFeaturesByPlan(subscription.plan);
+  } catch (error) {
+    console.error('Error getting user accessible features:', error);
+    return [];
+  }
+};
+
+/**
+ * Check if user has access to a specific feature
+ * @param {string} userId - User ID
+ * @param {string} feature - Feature name
+ * @returns {Promise<boolean>} - True if user can access feature
+ */
+exports.hasFeatureAccess = async (userId, feature) => {
+  try {
+    const accessibleFeatures = await exports.getUserAccessibleFeatures(userId);
+    const normalizedFeature = normalizeFeature(feature);
+
+    if (normalizedFeature === 'ai_assistance' && accessibleFeatures.includes('advanced_ai')) {
+      return true;
+    }
+
+    return accessibleFeatures.includes(normalizedFeature);
+  } catch (error) {
+    console.error('Error checking feature access:', error);
+    return false;
+  }
+};
+
+/**
+ * Check if user has "Write" access (Create/Update/Delete) for a feature.
+ * Trial users: Always true
+ * Basic users: False for advanced modules
+ */
+exports.hasWriteAccess = async (userId, feature) => {
+  try {
+    const info = await exports.getUserSubscriptionInfo(userId);
+    
+    // 1. Trial users get full write access to everything
+    if (info.isTrialPeriod || info.plan === 'trial') {
+      return true;
+    }
+
+    // 2. Define features that are READ-ONLY for Basic plan
+    const readOnlyForBasic = [
+      'asset_tracking',
+      'location_management',
+      'preventive_maintenance'
+    ];
+
+    if (info.plan === 'basic' && readOnlyForBasic.includes(feature)) {
+      return false;
+    }
+
+    // 3. For other plans/features, if they have the feature, they can write
+    return info.features.includes(feature);
+  } catch (error) {
+    return false;
+  }
+};
+
+/**
+ * Get user's subscription plan (for trial or paid)
+ * @param {string} userId - User ID
+ * @returns {Promise<Object>} - { plan, isTrialPeriod, features }
+ */
+exports.getUserSubscriptionInfo = async (userId) => {
+  try {
+    if (isSuperAdminRole(await getUserRole(userId))) {
+      return { plan: 'superadmin', isTrialPeriod: false, features: getTrialFeatures() };
+    }
+
+    const company = await getUserCompany(userId);
+    if (!company) {
+      return { plan: 'none', isTrialPeriod: false, features: [] };
+    }
+
+    // Check if user is in active trial
+    const isInTrial = await exports.isUserInActiveTrial(userId);
+    if (isInTrial) {
+      return {
+        plan: 'trial',
+        isTrialPeriod: true,
+        features: getTrialFeatures(),
+      };
+    }
+
+    // Get user's subscription plan
+    const subscription = await getActiveSubscriptionForUser(userId, company.id);
+
+    if (!subscription) {
+      return { plan: 'none', isTrialPeriod: false, features: [] };
+    }
+
+    return {
+      plan: normalizePlan(subscription.plan),
+      isTrialPeriod: false,
+      features: getFeaturesByPlan(subscription.plan),
+    };
+  } catch (error) {
+    console.error('Error getting user subscription info:', error);
+    return { plan: 'none', isTrialPeriod: false, features: [] };
+  }
+};
 
 module.exports = exports;

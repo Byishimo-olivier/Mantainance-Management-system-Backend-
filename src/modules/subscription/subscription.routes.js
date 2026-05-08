@@ -25,6 +25,13 @@ router.get('/trial/can-access', authenticate, ctrl.canAccessFeatures);
 router.get('/trial/companies', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.getTrialCompanies);
 router.post('/trial/companies/:companyId/extend', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.extendFreeTrial);
 
+// ============================================
+// FEATURE ACCESS ROUTES
+// ============================================
+router.get('/features/subscription-info', authenticate, ctrl.getUserSubscriptionInfo);
+router.get('/features/accessible', authenticate, ctrl.getAccessibleFeatures);
+router.get('/features/has-access', authenticate, ctrl.hasFeatureAccess);
+
 // Protected routes - require authentication
 router.use(authenticate);
 

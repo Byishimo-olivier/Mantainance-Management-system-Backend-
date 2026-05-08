@@ -1,4 +1,5 @@
 const service = require('./subscription.service');
+const paymentService = require('./payment.service');
 const companySubscriptionService = require('./company-subscription.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 const systemSettingsService = require('../systemSettings/systemSettings.service');
@@ -7,7 +8,7 @@ const prisma = new PrismaClient();
 
 exports.createSubscription = async (req, res) => {
   try {
-    const { userId, email, plan, billingCycle, clientId, secretId, paymentMethod, metadata, companyId, managerEmail } = req.body;
+    const { userId, email, plan, billingCycle, clientId, secretId, paymentMethod, metadata, companyId, managerEmail, employeeCount, employeeLimit } = req.body;
 
     // For company subscriptions, use companyId; for individual, use userId
     const subscriptionClientId = companyId || userId;
@@ -28,10 +29,12 @@ exports.createSubscription = async (req, res) => {
       clientId,
       secretId,
       paymentMethod,
+      employeeCount: employeeCount || employeeLimit,
       metadata: {
         ...metadata,
         isCompanySubscription: !!companyId,
         companyId,
+        employeeCount: employeeCount || employeeLimit || metadata?.employeeCount || metadata?.employeeLimit,
         managerEmail: managerEmail || email
       },
     });
@@ -282,12 +285,14 @@ exports.changeBillingCycle = async (req, res) => {
 exports.getPricing = async (req, res) => {
   try {
     const pricing = service.getPricing();
+    const pricingPolicy = paymentService.getPricingPolicy();
     const settings = await systemSettingsService.getSettings();
 
     res.json({
       message: 'Pricing retrieved successfully',
       data: {
         pricing,
+        pricingPolicy,
         currency: settings?.platform?.subscriptionCurrency || 'RWF',
       },
     });
@@ -378,7 +383,51 @@ exports.updateSubscription = async (req, res) => {
       return res.status(400).json({ error: 'Subscription ID is required' });
     }
 
-    const subscription = await service.updateSubscription(id, req.body);
+    const requester = req.user || {};
+    const role = String(requester.role || '').toLowerCase();
+    const isPrivileged = ['admin', 'superadmin', 'super-admin'].includes(role);
+    const allowedRoles = ['client', 'admin', 'superadmin', 'super-admin'];
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({ error: 'Forbidden: only client and admin can edit subscriptions' });
+    }
+
+    const existing = await service.getSubscriptionById(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+
+    if (!isPrivileged) {
+      const requesterId = String(requester.userId || requester.id || requester._id || '');
+      const ownerId = String(existing.userId || existing.clientId || existing.companyId || '');
+      if (!requesterId || (ownerId && requesterId !== ownerId)) {
+        return res.status(403).json({ error: 'Forbidden: you can only edit your own subscription' });
+      }
+    }
+
+    const payload = {};
+    if (req.body.billingCycle) payload.billingCycle = req.body.billingCycle;
+    if (req.body.email) payload.email = req.body.email;
+    if (req.body.paymentMethod) payload.paymentMethod = req.body.paymentMethod;
+
+    if (isPrivileged) {
+      if (req.body.plan) payload.plan = req.body.plan;
+      if (req.body.status) {
+        if (req.body.status === 'active' && existing.paymentStatus !== 'paid') {
+          return res.status(403).json({
+            error: 'Cannot activate subscription without confirming payment. Payment status must be "paid".',
+          });
+        }
+        payload.status = req.body.status;
+      }
+      if (req.body.metadata) payload.metadata = req.body.metadata;
+    } else if (req.body.plan || req.body.status || req.body.paymentStatus || req.body.features) {
+      return res.status(403).json({
+        error: 'Plan, status, payment status, and feature changes must go through the upgrade/payment flow.',
+      });
+    }
+
+    const subscription = await service.updateSubscription(id, payload);
 
     res.json({
       message: 'Subscription updated successfully',
@@ -655,6 +704,79 @@ exports.canAccessFeatures = async (req, res) => {
     res.json({
       message: 'Feature access checked',
       data: { canAccess },
+    });
+  } catch (error) {
+    console.error('Error checking feature access:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get user's subscription info including accessible features
+ */
+exports.getUserSubscriptionInfo = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const trialService = require('./trial.service');
+    const subscriptionInfo = await trialService.getUserSubscriptionInfo(userId);
+
+    res.json({
+      message: 'User subscription info retrieved',
+      data: subscriptionInfo,
+    });
+  } catch (error) {
+    console.error('Error getting subscription info:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get accessible features for user
+ */
+exports.getAccessibleFeatures = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const trialService = require('./trial.service');
+    const features = await trialService.getUserAccessibleFeatures(userId);
+
+    res.json({
+      message: 'Accessible features retrieved',
+      data: { features },
+    });
+  } catch (error) {
+    console.error('Error getting accessible features:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Check if user has access to specific feature
+ */
+exports.hasFeatureAccess = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    const { feature } = req.query;
+
+    if (!userId || !feature) {
+      return res.status(400).json({ error: 'User ID and feature name required' });
+    }
+
+    const trialService = require('./trial.service');
+    const hasAccess = await trialService.hasFeatureAccess(userId, feature);
+
+    res.json({
+      message: 'Feature access checked',
+      data: { feature, hasAccess },
     });
   } catch (error) {
     console.error('Error checking feature access:', error);

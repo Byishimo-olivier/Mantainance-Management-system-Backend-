@@ -241,6 +241,19 @@ const DEFAULT_PRICING = {
   },
 };
 let PRICING = JSON.parse(JSON.stringify(DEFAULT_PRICING));
+const INCLUDED_EMPLOYEES = 10;
+
+const normalizeEmployeeCount = (employeeCount) => {
+  const count = Number(employeeCount);
+  if (!Number.isFinite(count) || count < 1) return INCLUDED_EMPLOYEES;
+  return Math.max(1, Math.ceil(count));
+};
+
+const calculateSeatAdjustedAmount = (baseAmount, employeeCount = INCLUDED_EMPLOYEES) => {
+  const normalizedCount = normalizeEmployeeCount(employeeCount);
+  const multiplier = Math.max(1, normalizedCount / INCLUDED_EMPLOYEES);
+  return Number((Number(baseAmount || 0) * multiplier).toFixed(2));
+};
 
 const normalizePricing = (pricing = {}) => {
   const next = JSON.parse(JSON.stringify(DEFAULT_PRICING));
@@ -314,6 +327,7 @@ exports.initiatePesaPalPayment = async (paymentData) => {
     if (!subscription) {
       throw new Error('Subscription not found');
     }
+    const payableAmount = Number(subscription.amount || amount);
 
     // Get system settings for currency
     const settings = await systemSettingsService.getSettings();
@@ -323,7 +337,7 @@ exports.initiatePesaPalPayment = async (paymentData) => {
     const payment = await prisma.payment.create({
       data: {
         subscriptionId,
-        amount,
+        amount: payableAmount,
         currency, // Use dynamic currency
         paymentMethod: 'pesapal',
         status: 'pending',
@@ -340,7 +354,7 @@ exports.initiatePesaPalPayment = async (paymentData) => {
 
     // Call PesaPal API to initiate payment
     const pesapalResponse = await initiatePesaPalRequest({
-      amount,
+      amount: payableAmount,
       currency,
       phoneNumber,
       email: email || subscription.email,
@@ -1191,6 +1205,11 @@ async function updateSubscriptionAfterPayment(subscriptionId, paymentId = null) 
     });
 
     if (subscription.companyId) {
+      const employeeLimit = normalizeEmployeeCount(
+        subscription.metadata?.employeeLimit ||
+        subscription.metadata?.employeeCount ||
+        subscription.metadata?.maxUsers
+      );
       await prisma.company.update({
         where: { id: subscription.companyId },
         data: {
@@ -1198,6 +1217,7 @@ async function updateSubscriptionAfterPayment(subscriptionId, paymentId = null) 
           subscriptionPlan: subscription.plan,
           subscriptionStartDate: subscription.startDate || new Date(),
           subscriptionEndDate: nextBillingDate,
+          maxUsers: employeeLimit,
           onFreeTrial: false,
           trialExceeded: false,
         },
@@ -1328,21 +1348,29 @@ exports.getPricing = () => {
   return JSON.parse(JSON.stringify(PRICING));
 };
 
+exports.getPricingPolicy = () => ({
+  includedEmployees: INCLUDED_EMPLOYEES,
+  extraEmployeePricing: 'proportional',
+});
+
 exports.setPricing = (pricing = {}) => {
   PRICING = normalizePricing(pricing);
   return exports.getPricing();
 };
 
 // Calculate amount for plan and billing cycle
-exports.calculateAmount = (plan, billingCycle) => {
+exports.calculateAmount = (plan, billingCycle, employeeCount = INCLUDED_EMPLOYEES) => {
   if (!PRICING[plan]) {
     throw new Error('Invalid plan');
   }
   if (!PRICING[plan][billingCycle]) {
     throw new Error('Invalid billing cycle');
   }
-  return PRICING[plan][billingCycle];
+  return calculateSeatAdjustedAmount(PRICING[plan][billingCycle], employeeCount);
 };
+
+exports.getIncludedEmployees = () => INCLUDED_EMPLOYEES;
+exports.normalizeEmployeeCount = normalizeEmployeeCount;
 
 // Initiate mobile money payment through InTouchPay collection
 exports.initiateMobileMoneyPayment = async (paymentData) => {
@@ -1366,6 +1394,7 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
     // Get system settings for currency
     const settings = await systemSettingsService.getSettings();
     const paymentCurrency = currency || settings?.platform?.subscriptionCurrency || 'RWF';
+    const payableAmount = Number(subscription.amount || amount);
     const normalizedProvider = String(provider || 'intouchpay').trim().toLowerCase() || 'intouchpay';
     const requestTransactionId = generateTransactionId();
 
@@ -1373,7 +1402,7 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
     const payment = await prisma.payment.create({
       data: {
         subscriptionId,
-        amount,
+        amount: payableAmount,
         currency: paymentCurrency,
         paymentMethod: 'intouchpay',
         status: 'pending',
@@ -1392,7 +1421,7 @@ exports.initiateMobileMoneyPayment = async (paymentData) => {
     });
 
     const intouchPayResponse = await initiateIntouchPayCollection({
-      amount,
+      amount: payableAmount,
       phoneNumber,
       requestTransactionId,
     });

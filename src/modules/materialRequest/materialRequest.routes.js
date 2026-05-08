@@ -2,14 +2,15 @@ const express = require('express');
 const router = express.Router();
 const controller = require('./materialRequest.controller');
 const auth = require('../../middleware/auth');
+const { requireFeature, requireFeatureWrite } = require('../../middleware/trial');
 
-router.get('/', auth.optionalAuthenticate, controller.getAll);
-router.get('/tech/:techId', auth.optionalAuthenticate, controller.getByTechnician);
-router.post('/', auth.authenticate, controller.create);
-router.post('/:id/forward', auth.authenticate, controller.forwardToClient);
-router.post('/:id/respond', auth.authenticate, controller.clientRespond);
-router.put('/:id', auth.authenticate, controller.update);
-router.delete('/:id', auth.authenticate, controller.remove);
+router.get('/', auth.optionalAuthenticate, requireFeature('material_requests', { allowAnonymous: true }), controller.getAll);
+router.get('/tech/:techId', auth.optionalAuthenticate, requireFeature('material_requests', { allowAnonymous: true }), controller.getByTechnician);
+router.post('/', auth.authenticate, requireFeatureWrite('material_requests'), controller.create);
+router.post('/:id/forward', auth.authenticate, requireFeatureWrite('material_requests'), controller.forwardToClient);
+router.post('/:id/respond', auth.authenticate, requireFeatureWrite('material_requests'), controller.clientRespond);
+router.put('/:id', auth.authenticate, requireFeatureWrite('material_requests'), controller.update);
+router.delete('/:id', auth.authenticate, requireFeatureWrite('material_requests'), controller.remove);
 
 module.exports = router;
 
