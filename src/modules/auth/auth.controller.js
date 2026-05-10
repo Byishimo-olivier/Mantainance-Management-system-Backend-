@@ -184,7 +184,7 @@ const ensureCompanyTrialForSsoUser = async ({ companyName, userId, email }) => {
   try {
     const companySubscriptionService = require('../subscription/company-subscription.service');
     const trialService = require('../subscription/trial.service');
-    const company = await companySubscriptionService.ensureCompanyExists(companyName, String(userId));
+    const company = await companySubscriptionService.ensureCompanyExists(companyName, String(userId), email);
     const companyId = company?.id ? String(company.id) : null;
 
     if (companyId) {

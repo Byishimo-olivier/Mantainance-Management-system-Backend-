@@ -6,6 +6,9 @@ const prisma = new PrismaClient();
 const normalizeCompanyString = (value) => String(value || '').trim().toLowerCase();
 const normalizeRole = (value) => String(value || '').trim().toLowerCase();
 const isSuperAdminRole = (value) => normalizeRole(value) === 'superadmin';
+const slugifyCompanyName = (value) => normalizeCompanyString(value)
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '');
 const pickBestSubscription = (subscriptions = []) => {
   const candidates = Array.isArray(subscriptions) ? subscriptions : [];
   if (!candidates.length) return null;
@@ -222,22 +225,60 @@ exports.getCompanyTeamMembers = async (userId) => {
 /**
  * Create or get company for a user during registration
  */
-exports.ensureCompanyExists = async (companyName, userId) => {
+exports.ensureCompanyExists = async (companyName, userId, email = '') => {
   try {
-    // Check if company already exists
+    const normalizedCompanyName = String(companyName || '').trim();
+    if (!normalizedCompanyName) {
+      throw new Error('Company name is required');
+    }
+
+    const mongoUser = userId
+      ? await User.findById(userId).select('email').lean().catch(() => null)
+      : null;
+    const normalizedEmail = String(email || mongoUser?.email || '').trim().toLowerCase();
+
+    // Check if company already exists. Name is unique, but older data may differ
+    // by case/spacing, so fall back to email and then a case-insensitive scan.
     let company = await prisma.company.findUnique({
-      where: { name: companyName }
+      where: { name: normalizedCompanyName }
     });
 
+    if (!company && normalizedEmail) {
+      company = await prisma.company.findUnique({
+        where: { email: normalizedEmail }
+      }).catch(() => null);
+    }
+
     if (!company) {
-      // Create new company
+      const recentCompanies = await prisma.company.findMany({
+        take: 300,
+        orderBy: { createdAt: 'desc' },
+      });
+      company = recentCompanies.find(
+        (candidate) => normalizeCompanyString(candidate.name) === normalizeCompanyString(normalizedCompanyName)
+      ) || null;
+    }
+
+    if (!company) {
       company = await prisma.company.create({
         data: {
-          name: companyName,
+          name: normalizedCompanyName,
+          email: normalizedEmail || `${slugifyCompanyName(normalizedCompanyName) || 'company'}-${String(userId || Date.now())}@fixnest.local`,
           adminId: userId,
           totalUsers: 1
         }
       });
+    } else {
+      const updates = {};
+      if (!company.email && normalizedEmail) updates.email = normalizedEmail;
+      if (!company.adminId && userId) updates.adminId = userId;
+
+      if (Object.keys(updates).length) {
+        company = await prisma.company.update({
+          where: { id: company.id },
+          data: updates,
+        }).catch(() => company);
+      }
     }
 
     return company;

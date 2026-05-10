@@ -23,6 +23,12 @@ const roleLabelMap = {
   staff: 'Staff',
 };
 
+const toPrismaRole = (role) => {
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  if (['admin', 'manager', 'technician', 'client'].includes(normalizedRole)) return normalizedRole;
+  return 'client';
+};
+
 const resolveInviteRole = (inputRole, inputAccessLevel) => {
   const raw = String(inputRole || '').trim().toLowerCase();
   const requestedAccess = String(inputAccessLevel || '').trim().toLowerCase();
@@ -65,40 +71,56 @@ exports.registerUser = async (req, res) => {
 
     const normalizedCompanyName = String(user.companyName || '').trim();
     const normalizedCompanyType = String(user.companyType || 'main').trim().toLowerCase();
+    const userRole = String(user.role || '').toLowerCase();
 
-    if (normalizedCompanyName && String(user.role || '').toLowerCase() !== 'superadmin') {
+    // Initialize trial for non-super-admin, non-branch users
+    if (normalizedCompanyName && userRole !== 'superadmin' && normalizedCompanyType !== 'branch') {
       try {
         const companySubscriptionService = require('../subscription/company-subscription.service');
         const trialService = require('../subscription/trial.service');
 
-        const company = await companySubscriptionService.ensureCompanyExists(normalizedCompanyName, String(user._id));
+        console.log(`[SIGNUP] Creating/finding company: ${normalizedCompanyName}`);
+        const company = await companySubscriptionService.ensureCompanyExists(normalizedCompanyName, String(user._id), user.email);
         companyId = company?.id ? String(company.id) : null;
 
-        if (companyId && normalizedCompanyType !== 'branch') {
-          const freshCompany = await prisma.company.findUnique({
-            where: { id: companyId },
-            select: {
-              id: true,
-              trialStartDate: true,
-              trialEndDate: true,
-              subscriptionStatus: true,
-              trialExceeded: true,
-            },
-          });
-
-          const needsTrialInitialization =
-            freshCompany &&
-            !freshCompany.trialStartDate &&
-            !freshCompany.trialEndDate &&
-            String(freshCompany.subscriptionStatus || 'inactive').toLowerCase() === 'inactive' &&
-            freshCompany.trialExceeded !== true;
-
-          if (needsTrialInitialization) {
-            await trialService.initializeFreeTrial(companyId);
+        if (companyId) {
+          console.log(`[SIGNUP] Linking user ${user._id} to company ${companyId}`);
+          
+          // Link user to company in Prisma database
+          try {
+            await prisma.user.upsert({
+              where: { id: String(user._id) },
+              update: {
+                companyId,
+                isCompanyAdmin: true,
+                companyName: normalizedCompanyName,
+              },
+              create: {
+                id: String(user._id),
+                email: user.email,
+                name: user.name,
+                phone: user.phone || '',
+                password: 'managed-in-mongoose',
+                role: toPrismaRole(user.role),
+                status: user.status || 'active',
+                companyName: normalizedCompanyName,
+                companyId,
+                isCompanyAdmin: true,
+              },
+            });
+            console.log(`[SIGNUP] User linked to company successfully`);
+          } catch (linkError) {
+            console.error('[SIGNUP] Error linking user to company:', linkError.message);
           }
+
+          // Initialize trial
+          console.log(`[SIGNUP] Initializing trial for new company: ${companyId}`);
+          await trialService.initializeFreeTrial(companyId);
+          console.log(`[SIGNUP] Trial initialized successfully for company: ${companyId}`);
         }
       } catch (trialError) {
-        console.error('Failed to ensure company trial on signup:', trialError.message);
+        console.error('[SIGNUP] Failed to initialize trial on signup:', trialError.message);
+        // Don't fail signup if trial initialization fails
       }
     }
     
@@ -120,7 +142,6 @@ exports.registerUser = async (req, res) => {
       }
     }
 
-    // Return success message
     res.status(201).json({
       message: 'Account created successfully! Check your email to activate your account.',
       email: user.email,
@@ -226,6 +247,65 @@ exports.completeActivation = async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ error: 'Invalid or expired activation link.' });
+    }
+
+    console.log(`[ACTIVATION] User ${user._id} account activated. Setting up trial...`);
+
+    try {
+      const normalizedCompanyName = String(user.companyName || '').trim();
+      const normalizedCompanyType = String(user.companyType || 'main').trim().toLowerCase();
+      const userRole = String(user.role || '').toLowerCase();
+
+      // Ensure trial for non-super-admin, non-branch users
+      if (normalizedCompanyName && userRole !== 'superadmin' && normalizedCompanyType !== 'branch') {
+        const companySubscriptionService = require('../subscription/company-subscription.service');
+        const trialService = require('../subscription/trial.service');
+        
+        console.log(`[ACTIVATION] Finding/creating company: ${normalizedCompanyName}`);
+        const company = await companySubscriptionService.ensureCompanyExists(normalizedCompanyName, String(user._id), user.email);
+        const companyId = company?.id ? String(company.id) : null;
+
+        if (companyId) {
+          console.log(`[ACTIVATION] Linking user ${user._id} to company ${companyId}`);
+          
+          // Link user to company in Prisma database if not already linked
+          try {
+            await prisma.user.upsert({
+              where: { id: String(user._id) },
+              update: {
+                companyId,
+                isCompanyAdmin: true,
+                companyName: normalizedCompanyName,
+              },
+              create: {
+                id: String(user._id),
+                email: user.email,
+                name: user.name,
+                phone: user.phone || '',
+                password: 'managed-in-mongoose',
+                role: toPrismaRole(user.role),
+                status: user.status || 'active',
+                companyName: normalizedCompanyName,
+                companyId,
+                isCompanyAdmin: true,
+              },
+            });
+            console.log(`[ACTIVATION] User linked to company successfully`);
+          } catch (linkError) {
+            console.error('[ACTIVATION] Error linking user to company:', linkError.message);
+          }
+
+          console.log(`[ACTIVATION] Ensuring trial for company: ${companyId}`);
+          
+          // Always initialize/reinitialize trial on activation to ensure it's set up
+          await trialService.initializeFreeTrial(companyId);
+          
+          console.log(`[ACTIVATION] Trial confirmed for company: ${companyId}`);
+        }
+      }
+    } catch (trialError) {
+      console.error('[ACTIVATION] Failed to ensure trial on activation:', trialError.message);
+      // Don't fail activation if trial setup fails - user account is already activated
     }
 
     res.status(200).json({

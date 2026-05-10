@@ -18,6 +18,18 @@ const isCurrentlyActiveSubscription = (subscription, now = new Date()) => {
   return !Number.isNaN(endDate.getTime()) && endDate > now;
 };
 
+const shouldInitializeMissingTrialDates = (company) => {
+  if (!company) return false;
+  if (company.trialExceeded === true) return false;
+  if (company.trialEndDate) return false;
+
+  const status = String(company.subscriptionStatus || 'inactive').toLowerCase();
+  const paidOrBlockedStatuses = ['active', 'cancelled', 'suspended'];
+  if (paidOrBlockedStatuses.includes(status)) return false;
+
+  return company.onFreeTrial === true || status === 'trial' || status === 'inactive';
+};
+
 const getUserCompany = async (userId) => {
   if (!userId) return null;
 
@@ -119,6 +131,28 @@ exports.initializeFreeTrial = async (companyId) => {
     const trialEndDate = new Date(now);
     trialEndDate.setDate(trialEndDate.getDate() + TRIAL_DURATION_DAYS);
 
+    const existingCompany = await prisma.company.findUnique({
+      where: { id: companyId },
+      include: {
+        subscriptions: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!existingCompany) {
+      throw new Error('Company not found');
+    }
+
+    const hasPaidActiveSubscription = existingCompany.subscriptions.some((subscription) => (
+      String(subscription.status || '').toLowerCase() === 'active' &&
+      subscription.isTrialPeriod !== true
+    ));
+
+    if (hasPaidActiveSubscription) {
+      return existingCompany;
+    }
+
     const updatedCompany = await prisma.company.update({
       where: { id: companyId },
       data: {
@@ -132,25 +166,35 @@ exports.initializeFreeTrial = async (companyId) => {
       include: { subscriptions: true, users: true },
     });
 
-    // Also create a trial subscription record
-    await prisma.subscription.create({
-      data: {
-        companyId,
-        email: updatedCompany.email,
-        plan: 'basic', // Default to basic plan
-        billingCycle: 'monthly',
-        amount: 0, // Free during trial
-        status: 'trial',
-        paymentStatus: 'pending',
-        isTrialPeriod: true,
-        trialStartDate: now,
-        trialEndDate,
-        trialDaysRemaining: TRIAL_DURATION_DAYS,
-        features: getTrialFeatures(),
-        startDate: now,
-        nextBillingDate: trialEndDate,
-      },
-    });
+    const existingTrialSubscription = existingCompany.subscriptions.find((subscription) => subscription.isTrialPeriod === true);
+    const trialSubscriptionData = {
+      companyId,
+      email: updatedCompany.email || `${updatedCompany.name.replace(/[^a-z0-9]+/gi, '').toLowerCase() || 'company'}-${companyId}@fixnest.local`,
+      plan: 'basic',
+      billingCycle: 'monthly',
+      amount: 0,
+      status: 'trial',
+      paymentStatus: 'pending',
+      isTrialPeriod: true,
+      trialStartDate: now,
+      trialEndDate,
+      trialDaysRemaining: TRIAL_DURATION_DAYS,
+      features: getTrialFeatures(),
+      startDate: now,
+      nextBillingDate: trialEndDate,
+      endDate: trialEndDate,
+    };
+
+    if (existingTrialSubscription) {
+      await prisma.subscription.update({
+        where: { id: existingTrialSubscription.id },
+        data: trialSubscriptionData,
+      });
+    } else {
+      await prisma.subscription.create({
+        data: trialSubscriptionData,
+      });
+    }
 
     return updatedCompany;
   } catch (error) {
@@ -299,6 +343,7 @@ exports.getTrialStatus = async (companyId) => {
     if (!company) {
       // Company doesn't exist in Prisma database
       // This might be a legacy company or not yet synced
+      console.log(`[TRIAL] Company ${companyId} not found in database`);
       return {
         isInTrial: false,
         daysRemaining: 0,
@@ -307,7 +352,14 @@ exports.getTrialStatus = async (companyId) => {
       };
     }
 
+    if (shouldInitializeMissingTrialDates(company)) {
+      console.log(`[TRIAL] Initializing missing trial dates for company ${companyId}`);
+      await exports.initializeFreeTrial(companyId);
+      return exports.getTrialStatus(companyId);
+    }
+
     if (!company.onFreeTrial || !company.trialEndDate) {
+      console.log(`[TRIAL] Company ${companyId} not on trial. onFreeTrial=${company.onFreeTrial}, status=${company.subscriptionStatus}`);
       return {
         isInTrial: false,
         onFreeTrial: company.onFreeTrial,
@@ -320,9 +372,12 @@ exports.getTrialStatus = async (companyId) => {
     const trialEnd = new Date(company.trialEndDate);
     const daysRemaining = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
 
+    console.log(`[TRIAL] Company ${companyId} trial status: daysRemaining=${daysRemaining}, trialEnd=${trialEnd.toISOString()}, now=${now.toISOString()}`);
+
     // Check if trial has expired
     if (daysRemaining <= 0 && !company.trialExceeded) {
       // Trial has expired, mark company accordingly
+      console.log(`[TRIAL] Trial expired for company ${companyId}`);
       await exports.expireTrial(companyId);
       return {
         isInTrial: false,
@@ -343,6 +398,7 @@ exports.getTrialStatus = async (companyId) => {
       subscriptionStatus: company.subscriptionStatus,
     };
   } catch (error) {
+    console.error(`[TRIAL] Error getting trial status for company ${companyId}:`, error);
     throw new Error(`Failed to get trial status: ${error.message}`);
   }
 };

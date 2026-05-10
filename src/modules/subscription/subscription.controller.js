@@ -592,23 +592,25 @@ exports.getTrialStatus = async (req, res) => {
           trialEndDate: true,
           subscriptionStatus: true,
           trialExceeded: true,
+          onFreeTrial: true,
         },
       }).catch(() => null);
 
       const needsTrialInitialization =
         companyRecord &&
-        !companyRecord.trialStartDate &&
         !companyRecord.trialEndDate &&
-        String(companyRecord.subscriptionStatus || 'inactive').toLowerCase() === 'inactive' &&
-        companyRecord.trialExceeded !== true;
+        companyRecord.trialExceeded !== true &&
+        !['active', 'cancelled', 'suspended'].includes(String(companyRecord.subscriptionStatus || 'inactive').toLowerCase());
 
       if (needsTrialInitialization) {
+        console.log(`[TRIAL] Initializing trial for company ${resolvedCompanyId} (user: ${userId})`);
         await trialService.initializeFreeTrial(resolvedCompanyId);
       }
     }
     
     if (!resolvedCompanyId) {
       // Return default trial status if no company attached
+      console.log(`[TRIAL] No company found for user ${userId}`);
       return res.json({
         message: 'No company associated with user',
         data: {
@@ -621,6 +623,7 @@ exports.getTrialStatus = async (req, res) => {
     }
 
     const trialStatus = await trialService.getTrialStatus(resolvedCompanyId);
+    console.log(`[TRIAL] Trial status for company ${resolvedCompanyId}:`, trialStatus);
 
     res.json({
       message: 'Trial status retrieved successfully',
