@@ -241,7 +241,10 @@ const DEFAULT_PRICING = {
   },
 };
 let PRICING = JSON.parse(JSON.stringify(DEFAULT_PRICING));
-const INCLUDED_EMPLOYEES = 10;
+const INCLUDED_EMPLOYEES = 2;
+
+const normalizePlanKey = (plan) => String(plan || 'basic').trim().toLowerCase();
+const normalizeBillingCycleKey = (billingCycle) => String(billingCycle || 'monthly').trim().toLowerCase();
 
 const normalizeEmployeeCount = (employeeCount) => {
   const count = Number(employeeCount);
@@ -251,8 +254,10 @@ const normalizeEmployeeCount = (employeeCount) => {
 
 const calculateSeatAdjustedAmount = (baseAmount, employeeCount = INCLUDED_EMPLOYEES) => {
   const normalizedCount = normalizeEmployeeCount(employeeCount);
-  const multiplier = Math.max(1, normalizedCount / INCLUDED_EMPLOYEES);
-  return Number((Number(baseAmount || 0) * multiplier).toFixed(2));
+  const normalizedBaseAmount = Number(baseAmount || 0);
+  const extraEmployees = Math.max(0, normalizedCount - INCLUDED_EMPLOYEES);
+  const extraEmployeeAmount = normalizedBaseAmount;
+  return Number((normalizedBaseAmount + (extraEmployees * extraEmployeeAmount)).toFixed(2));
 };
 
 const normalizePricing = (pricing = {}) => {
@@ -1204,11 +1209,16 @@ async function updateSubscriptionAfterPayment(subscriptionId, paymentId = null) 
       },
     });
 
+    const targetEmployeeLimit = normalizeEmployeeCount(
+      subscription.metadata?.targetEmployeeLimit ||
+      subscription.metadata?.employeeLimit ||
+      subscription.metadata?.employeeCount ||
+      subscription.metadata?.maxUsers
+    );
+
     if (subscription.companyId) {
       const employeeLimit = normalizeEmployeeCount(
-        subscription.metadata?.employeeLimit ||
-        subscription.metadata?.employeeCount ||
-        subscription.metadata?.maxUsers
+        targetEmployeeLimit
       );
       await prisma.company.update({
         where: { id: subscription.companyId },
@@ -1226,12 +1236,88 @@ async function updateSubscriptionAfterPayment(subscriptionId, paymentId = null) 
       });
     }
 
+    await sendPendingSeatInvitesAfterPayment(subscription);
+
     // Create invoice
     await createInvoice(subscriptionId, updatedSubscription);
 
     return updatedSubscription;
   } catch (error) {
     console.error('Error updating subscription after payment:', error);
+  }
+}
+
+async function sendPendingSeatInvitesAfterPayment(subscription) {
+  const pendingInvites = Array.isArray(subscription?.metadata?.pendingSeatInvites)
+    ? subscription.metadata.pendingSeatInvites
+    : [];
+  if (!pendingInvites.length) return;
+
+  const companyName = String(subscription?.metadata?.companyName || '').trim();
+  if (!companyName) {
+    console.warn('Skipping paid seat invites: missing companyName in subscription metadata.');
+    return;
+  }
+
+  const UserInvite = require('../user/userInvite.model');
+  const emailService = require('../emailService/email.service');
+  const resolveInviteRole = (inputRole) => {
+    const raw = String(inputRole || '').trim().toLowerCase();
+    if (raw === 'administrator') return { role: 'manager', accessLevel: 'full', label: 'Administrator' };
+    if (raw === 'limited_administrator') return { role: 'manager', accessLevel: 'limited', label: 'Limited Administrator' };
+    if (raw === 'technician') return { role: 'technician', accessLevel: 'full', label: 'Technician' };
+    if (raw === 'limited_technician') return { role: 'technician', accessLevel: 'limited', label: 'Limited Technician' };
+    if (raw === 'requestor') return { role: 'requestor', accessLevel: 'full', label: 'Requester' };
+    if (raw === 'client') return { role: 'client', accessLevel: 'full', label: 'View Only' };
+    return { role: 'technician', accessLevel: 'full', label: 'Technician' };
+  };
+
+  const invitedByUserId = subscription?.metadata?.invitedByUserId || null;
+  const defaultHours = parseInt(process.env.USER_INVITE_EXPIRES_HOURS, 10) || 168;
+  const expiresAt = new Date(Date.now() + defaultHours * 3600 * 1000);
+  const now = new Date();
+
+  for (const pendingInvite of pendingInvites) {
+    const email = String(pendingInvite?.email || '').trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+
+    const { role, accessLevel, label } = resolveInviteRole(pendingInvite.role);
+    let invite = await UserInvite.findOne({
+      email,
+      companyName,
+      used: false,
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+    });
+
+    if (!invite) {
+      invite = await UserInvite.create({
+        email,
+        role,
+        accessLevel,
+        companyName,
+        invitedByUserId,
+        token: crypto.randomBytes(24).toString('hex'),
+        expiresAt,
+      });
+    } else {
+      invite.role = role;
+      invite.accessLevel = accessLevel;
+      invite.invitedByUserId = invitedByUserId;
+      invite.expiresAt = expiresAt;
+      await invite.save();
+    }
+
+    try {
+      await emailService.sendUserInvite({
+        email,
+        token: invite.token,
+        roleLabel: label,
+        companyName,
+        expiresAt,
+      });
+    } catch (emailErr) {
+      console.error('[seat payment invite] failed to send email:', emailErr.message);
+    }
   }
 }
 
@@ -1350,7 +1436,7 @@ exports.getPricing = () => {
 
 exports.getPricingPolicy = () => ({
   includedEmployees: INCLUDED_EMPLOYEES,
-  extraEmployeePricing: 'proportional',
+  extraEmployeePricing: 'full_plan_amount_per_extra_employee',
 });
 
 exports.setPricing = (pricing = {}) => {
@@ -1360,13 +1446,28 @@ exports.setPricing = (pricing = {}) => {
 
 // Calculate amount for plan and billing cycle
 exports.calculateAmount = (plan, billingCycle, employeeCount = INCLUDED_EMPLOYEES) => {
-  if (!PRICING[plan]) {
+  const normalizedPlan = normalizePlanKey(plan);
+  const normalizedBillingCycle = normalizeBillingCycleKey(billingCycle);
+  if (!PRICING[normalizedPlan]) {
     throw new Error('Invalid plan');
   }
-  if (!PRICING[plan][billingCycle]) {
+  if (!PRICING[normalizedPlan][normalizedBillingCycle]) {
     throw new Error('Invalid billing cycle');
   }
-  return calculateSeatAdjustedAmount(PRICING[plan][billingCycle], employeeCount);
+  return calculateSeatAdjustedAmount(PRICING[normalizedPlan][normalizedBillingCycle], employeeCount);
+};
+
+exports.calculateSeatUpgradeAmount = (plan, billingCycle, extraSeats = 1) => {
+  const normalizedPlan = normalizePlanKey(plan);
+  const normalizedBillingCycle = normalizeBillingCycleKey(billingCycle);
+  if (!PRICING[normalizedPlan]) {
+    throw new Error('Invalid plan');
+  }
+  if (!PRICING[normalizedPlan][normalizedBillingCycle]) {
+    throw new Error('Invalid billing cycle');
+  }
+  const normalizedExtraSeats = Math.max(1, Math.ceil(Number(extraSeats || 1)));
+  return Number((Number(PRICING[normalizedPlan][normalizedBillingCycle] || 0) * normalizedExtraSeats).toFixed(2));
 };
 
 exports.getIncludedEmployees = () => INCLUDED_EMPLOYEES;

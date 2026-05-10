@@ -6,6 +6,19 @@ const prisma = new PrismaClient();
 const normalizeCompanyString = (value) => String(value || '').trim().toLowerCase();
 const normalizeRole = (value) => String(value || '').trim().toLowerCase();
 const isSuperAdminRole = (value) => normalizeRole(value) === 'superadmin';
+const pickBestSubscription = (subscriptions = []) => {
+  const candidates = Array.isArray(subscriptions) ? subscriptions : [];
+  if (!candidates.length) return null;
+
+  const now = new Date();
+  const activeCandidate = candidates.find((subscription) => isCurrentlyActiveSubscription(subscription, now));
+  if (activeCandidate) return activeCandidate;
+
+  return candidates.find(
+    (subscription) => String(subscription?.status || '').toLowerCase() !== 'cancelled'
+  ) || candidates[0] || null;
+};
+
 const reconcilePendingPaymentsInBackground = (subscriptionIds = []) => {
   const ids = [...new Set((subscriptionIds || []).filter(Boolean).map(String))];
   if (!ids.length) {
@@ -56,22 +69,27 @@ exports.getCompanySubscription = async (userId) => {
         return companyNameMatch || metadataCompanyMatch;
       });
 
-      const now = new Date();
-      const activeCandidate = matchingCandidates.find((subscription) => isCurrentlyActiveSubscription(subscription, now));
-      if (activeCandidate) {
-        return activeCandidate;
+      const bestLinkedCandidate = pickBestSubscription(matchingCandidates);
+      if (bestLinkedCandidate) {
+        return bestLinkedCandidate;
       }
 
-      const latestNonCancelledCandidate = matchingCandidates.find(
-        (subscription) => String(subscription?.status || '').toLowerCase() !== 'cancelled'
-      );
+      const recentSubscriptions = await prisma.subscription.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: { company: true },
+        take: 300,
+      });
 
-      if (latestNonCancelledCandidate) {
-        return latestNonCancelledCandidate;
-      }
+      reconcilePendingPaymentsInBackground(recentSubscriptions.map((subscription) => subscription.id));
 
-      if (matchingCandidates.length) {
-        return matchingCandidates[0];
+      const metadataMatches = recentSubscriptions.filter((subscription) => (
+        normalizeCompanyString(subscription?.company?.name) === normalizeCompanyString(normalizedCompanyName) ||
+        normalizeCompanyString(subscription?.metadata?.companyName) === normalizeCompanyString(normalizedCompanyName)
+      ));
+
+      const bestMetadataCandidate = pickBestSubscription(metadataMatches);
+      if (bestMetadataCandidate) {
+        return bestMetadataCandidate;
       }
     }
 
@@ -83,14 +101,9 @@ exports.getCompanySubscription = async (userId) => {
         take: 20,
       });
 
-      const now = new Date();
-      const activeEmailCandidate = emailCandidates.find((subscription) => isCurrentlyActiveSubscription(subscription, now));
-      if (activeEmailCandidate) {
-        return activeEmailCandidate;
-      }
-
-      if (emailCandidates.length) {
-        return emailCandidates[0];
+      const bestEmailCandidate = pickBestSubscription(emailCandidates);
+      if (bestEmailCandidate) {
+        return bestEmailCandidate;
       }
     }
 

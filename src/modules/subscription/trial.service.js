@@ -31,17 +31,51 @@ const getUserCompany = async (userId) => {
   }
 
   const mongoUser = await User.findById(userId)
-    .select('companyName role email')
+    .select('companyName companyId company role email')
     .lean()
     .catch(() => null);
 
-  if (!mongoUser?.companyName || isSuperAdminRole(mongoUser?.role)) {
+  if (isSuperAdminRole(mongoUser?.role)) {
     return null;
   }
 
-  return companySubscriptionService
-    .ensureCompanyExists(String(mongoUser.companyName).trim(), String(userId))
-    .catch(() => null);
+  const mongoCompanyId = String(
+    mongoUser?.companyId ||
+    mongoUser?.company?._id ||
+    mongoUser?.company?.id ||
+    ''
+  ).trim();
+
+  if (mongoCompanyId) {
+    const companyById = await prisma.company.findUnique({
+      where: { id: mongoCompanyId },
+    }).catch(() => null);
+
+    if (companyById) {
+      return companyById;
+    }
+  }
+
+  const companyName = String(mongoUser?.companyName || '').trim();
+  if (companyName) {
+    return companySubscriptionService
+      .ensureCompanyExists(companyName, String(userId))
+      .catch(() => null);
+  }
+
+  const subscription = await companySubscriptionService.getCompanySubscription(userId).catch(() => null);
+  if (subscription?.company) {
+    return subscription.company;
+  }
+
+  const subscriptionCompanyName = String(subscription?.metadata?.companyName || '').trim();
+  if (subscriptionCompanyName) {
+    return companySubscriptionService
+      .ensureCompanyExists(subscriptionCompanyName, String(userId))
+      .catch(() => null);
+  }
+
+  return null;
 };
 
 const getUserRole = async (userId) => {
@@ -456,18 +490,15 @@ exports.canAccessFeatures = async (userId) => {
     }
 
     const company = await getUserCompany(userId);
-    if (!company) {
-      return false;
-    }
 
     // Check if in active trial
-    const inActiveTrial = await exports.isUserInActiveTrial(userId);
+    const inActiveTrial = company ? await exports.isUserInActiveTrial(userId) : false;
     if (inActiveTrial) {
       return true;
     }
 
     // Check if has active paid subscription
-    const activeSubscription = await getActiveSubscriptionForUser(userId, company.id);
+    const activeSubscription = await getActiveSubscriptionForUser(userId, company?.id);
     return !!activeSubscription;
   } catch (error) {
     console.error('Error checking feature access:', error);
@@ -589,18 +620,15 @@ exports.getUserAccessibleFeatures = async (userId) => {
     }
 
     const company = await getUserCompany(userId);
-    if (!company) {
-      return [];
-    }
 
     // Check if user is in active trial
-    const isInTrial = await exports.isUserInActiveTrial(userId);
+    const isInTrial = company ? await exports.isUserInActiveTrial(userId) : false;
     if (isInTrial) {
       return getTrialFeatures(); // Return ALL features for trial users
     }
 
     // Get user's subscription plan
-    const subscription = await getActiveSubscriptionForUser(userId, company.id);
+    const subscription = await getActiveSubscriptionForUser(userId, company?.id);
 
     if (!subscription) {
       return [];
@@ -642,6 +670,7 @@ exports.hasFeatureAccess = async (userId, feature) => {
  */
 exports.hasWriteAccess = async (userId, feature) => {
   try {
+    const normalizedFeature = normalizeFeature(feature);
     const info = await exports.getUserSubscriptionInfo(userId);
     
     // 1. Trial users get full write access to everything
@@ -656,12 +685,12 @@ exports.hasWriteAccess = async (userId, feature) => {
       'preventive_maintenance'
     ];
 
-    if (info.plan === 'basic' && readOnlyForBasic.includes(feature)) {
+    if (info.plan === 'basic' && readOnlyForBasic.includes(normalizedFeature)) {
       return false;
     }
 
     // 3. For other plans/features, if they have the feature, they can write
-    return info.features.includes(feature);
+    return info.features.includes(normalizedFeature);
   } catch (error) {
     return false;
   }
@@ -679,12 +708,9 @@ exports.getUserSubscriptionInfo = async (userId) => {
     }
 
     const company = await getUserCompany(userId);
-    if (!company) {
-      return { plan: 'none', isTrialPeriod: false, features: [] };
-    }
 
     // Check if user is in active trial
-    const isInTrial = await exports.isUserInActiveTrial(userId);
+    const isInTrial = company ? await exports.isUserInActiveTrial(userId) : false;
     if (isInTrial) {
       return {
         plan: 'trial',
@@ -694,7 +720,7 @@ exports.getUserSubscriptionInfo = async (userId) => {
     }
 
     // Get user's subscription plan
-    const subscription = await getActiveSubscriptionForUser(userId, company.id);
+    const subscription = await getActiveSubscriptionForUser(userId, company?.id);
 
     if (!subscription) {
       return { plan: 'none', isTrialPeriod: false, features: [] };

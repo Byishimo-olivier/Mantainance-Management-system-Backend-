@@ -80,9 +80,25 @@ module.exports = {
 
         if (user.companyName || user.role === 'admin' || user.role === 'client' || user.role === 'requestor' || user.role === 'manager' || user.role === 'technician' || user.role === 'staff') {
           if (scopedPropertyIds.length === 0) {
-            return res.json([]);
+            if (user.companyName) {
+              filter.OR = [
+                { identifiers: { path: ['companyName'], equals: user.companyName } },
+                { identifiers: { path: ['createdByUserId'], equals: user.userId } },
+                { userId: user.userId },
+              ];
+            } else {
+              return res.json([]);
+            }
+          } else if (user.companyName) {
+            filter.OR = [
+              { propertyId: { in: scopedPropertyIds } },
+              { identifiers: { path: ['companyName'], equals: user.companyName } },
+              { identifiers: { path: ['createdByUserId'], equals: user.userId } },
+              { userId: user.userId },
+            ];
+          } else {
+            filter.propertyId = { in: scopedPropertyIds };
           }
-          filter.propertyId = { in: scopedPropertyIds };
         }
       }
       const assets = await assetModel.findAll(filter);

@@ -6,6 +6,14 @@ const prisma = new PrismaClient();
 const normalizeCompanyString = (value) => String(value || '').trim().toLowerCase();
 const looksLikeObjectId = (value) => /^[a-fA-F0-9]{24}$/.test(String(value || '').trim());
 
+const resolveSubscriptionEmployeeLimit = (subscription) => paymentService.normalizeEmployeeCount(
+  subscription?.employeeLimit ||
+  subscription?.employeeCount ||
+  subscription?.metadata?.employeeLimit ||
+  subscription?.metadata?.employeeCount ||
+  subscription?.metadata?.maxUsers
+);
+
 // Credentials for authorization
 const CLIENT_ID = process.env.SUBSCRIPTION_CLIENT_ID || 'ee00cab6-155a-11f1-a1f5-deadd43720af';
 const SECRET_ID = process.env.SUBSCRIPTION_SECRET_ID || '630eecbbb285bd9d5760f299a7231c9eda39a3ee5e6b4b0d3255bfef95601890afd80709';
@@ -87,8 +95,8 @@ exports.createSubscription = async (subscriptionData) => {
     }
 
     const credentialHash = hashCredentials(subscriptionData.clientId, subscriptionData.secretId);
-    const billingCycle = subscriptionData.billingCycle || 'monthly';
-    const plan = subscriptionData.plan || 'basic';
+    const billingCycle = String(subscriptionData.billingCycle || 'monthly').trim().toLowerCase();
+    const plan = String(subscriptionData.plan || 'basic').trim().toLowerCase();
     const propertyId = subscriptionData.metadata?.propertyId;
     const companyId = subscriptionData.metadata?.companyId; // Extract company ID from metadata
     const employeeLimit = paymentService.normalizeEmployeeCount(
@@ -100,15 +108,24 @@ exports.createSubscription = async (subscriptionData) => {
     );
     const includedEmployees = paymentService.getIncludedEmployees();
     const extraEmployees = Math.max(0, employeeLimit - includedEmployees);
+    const seatUpgradeOnly = subscriptionData.metadata?.seatUpgradeOnly === true || subscriptionData.metadata?.seatUpgradeOnly === 'true';
+    const extraSeats = paymentService.normalizeEmployeeCount(
+      subscriptionData.metadata?.extraEmployees ||
+      subscriptionData.metadata?.extraSeats ||
+      extraEmployees
+    );
 
-    const amount = paymentService.calculateAmount(plan, billingCycle, employeeLimit);
+    const amount = seatUpgradeOnly
+      ? paymentService.calculateSeatUpgradeAmount(plan, billingCycle, extraSeats)
+      : paymentService.calculateAmount(plan, billingCycle, employeeLimit);
     const nextBillingDate = calculateNextBillingDate(billingCycle);
     const metadata = {
       ...(subscriptionData.metadata || {}),
       includedEmployees,
       employeeLimit,
       extraEmployees,
-      pricingModel: 'base_includes_10_employees',
+      seatUpgradeOnly,
+      pricingModel: seatUpgradeOnly ? 'seat_upgrade_extra_full_plan_amount' : 'base_includes_2_employees_extra_full_plan_amount',
     };
 
     const subscription = await prisma.subscription.create({
@@ -188,7 +205,11 @@ exports.getSubscriptionByClientId = async (clientId) => {
     // always recalc amount on read in case pricing constants changed
     if (subscription) {
       try {
-        subscription.amount = paymentService.calculateAmount(subscription.plan, subscription.billingCycle);
+        subscription.amount = paymentService.calculateAmount(
+          subscription.plan,
+          subscription.billingCycle,
+          resolveSubscriptionEmployeeLimit(subscription)
+        );
       } catch (e) {
         console.warn('Could not recalc amount for subscription', subscription.id, e.message);
       }
@@ -216,7 +237,11 @@ exports.getSubscriptionById = async (subscriptionId) => {
 
     if (subscription) {
       try {
-        subscription.amount = paymentService.calculateAmount(subscription.plan, subscription.billingCycle);
+        subscription.amount = paymentService.calculateAmount(
+          subscription.plan,
+          subscription.billingCycle,
+          resolveSubscriptionEmployeeLimit(subscription)
+        );
       } catch (e) {
         console.warn('Could not recalc amount for subscription', subscriptionId, e.message);
       }
@@ -250,7 +275,11 @@ exports.getAllSubscriptions = async (filters = {}) => {
     // recalc amounts for all returned subscriptions
     subscriptions.forEach(sub => {
       try {
-        sub.amount = paymentService.calculateAmount(sub.plan, sub.billingCycle);
+        sub.amount = paymentService.calculateAmount(
+          sub.plan,
+          sub.billingCycle,
+          resolveSubscriptionEmployeeLimit(sub)
+        );
       } catch (e) {
         console.warn('Failed to recalc amount for subscription', sub.id, e.message);
       }
@@ -390,7 +419,11 @@ exports.upgradeSubscription = async (subscriptionId, newPlan) => {
       throw new Error('Subscription not found');
     }
 
-    const newAmount = paymentService.calculateAmount(newPlan, subscription.billingCycle);
+    const newAmount = paymentService.calculateAmount(
+      newPlan,
+      subscription.billingCycle,
+      resolveSubscriptionEmployeeLimit(subscription)
+    );
 
     const updated = await prisma.subscription.update({
       where: { id: subscriptionId },
@@ -421,7 +454,11 @@ exports.changeBillingCycle = async (subscriptionId, newBillingCycle) => {
       throw new Error('Subscription not found');
     }
 
-    const newAmount = paymentService.calculateAmount(subscription.plan, newBillingCycle);
+    const newAmount = paymentService.calculateAmount(
+      subscription.plan,
+      newBillingCycle,
+      resolveSubscriptionEmployeeLimit(subscription)
+    );
     const nextBillingDate = calculateNextBillingDate(newBillingCycle);
 
     const updated = await prisma.subscription.update({

@@ -126,12 +126,14 @@ exports.refundPayment = async (req, res) => {
 exports.getPricing = async (req, res) => {
   try {
     const pricing = paymentService.getPricing();
+    const pricingPolicy = paymentService.getPricingPolicy();
     const settings = await systemSettingsService.getSettings();
 
     res.json({
       message: 'Pricing retrieved',
       data: {
         pricing,
+        pricingPolicy,
         currency: settings?.platform?.subscriptionCurrency || 'RWF',
       },
     });
@@ -142,7 +144,7 @@ exports.getPricing = async (req, res) => {
 
 exports.calculateAmount = async (req, res) => {
   try {
-    const { plan, billingCycle } = req.query;
+    const { plan, billingCycle, employeeCount, employees } = req.query;
 
     if (!plan || !billingCycle) {
       return res.status(400).json({
@@ -150,13 +152,16 @@ exports.calculateAmount = async (req, res) => {
       });
     }
 
-    const amount = paymentService.calculateAmount(plan, billingCycle);
+    const normalizedEmployeeCount = paymentService.normalizeEmployeeCount(employeeCount || employees);
+    const amount = paymentService.calculateAmount(plan, billingCycle, normalizedEmployeeCount);
     const settings = await systemSettingsService.getSettings();
 
     res.json({
       message: 'Amount calculated',
       plan,
       billingCycle,
+      employeeCount: normalizedEmployeeCount,
+      pricingPolicy: paymentService.getPricingPolicy(),
       amount,
       currency: settings?.platform?.subscriptionCurrency || 'USD',
     });

@@ -50,6 +50,49 @@ const normalizeAssetWhere = (where) => {
   return out;
 };
 
+const translateAssetFilterToMongo = (filter = {}) => {
+  if (!filter || typeof filter !== 'object') return {};
+  if (Array.isArray(filter)) return filter.map(translateAssetFilterToMongo);
+
+  const translated = {};
+  Object.entries(filter).forEach(([key, value]) => {
+    if (key === 'OR' && Array.isArray(value)) {
+      translated.$or = value.map(translateAssetFilterToMongo);
+      return;
+    }
+
+    if (key === 'AND' && Array.isArray(value)) {
+      translated.$and = value.map(translateAssetFilterToMongo);
+      return;
+    }
+
+    if (key === 'propertyId') {
+      translated.propertyId = value && typeof value === 'object' && Array.isArray(value.in)
+        ? { $in: value.in }
+        : value;
+      return;
+    }
+
+    if (key === 'userId') {
+      translated.userId = value && typeof value === 'object' && Array.isArray(value.in)
+        ? { $in: value.in }
+        : value;
+      return;
+    }
+
+    if (key === 'identifiers' && value?.path && Object.prototype.hasOwnProperty.call(value, 'equals')) {
+      translated[`identifiers.${value.path.join('.')}`] = value.equals;
+      return;
+    }
+
+    translated[key] = value && typeof value === 'object' && Array.isArray(value.in)
+      ? { $in: value.in }
+      : value;
+  });
+
+  return translated;
+};
+
 const toTrimmedString = (value) => {
   if (value === undefined || value === null) return undefined;
   const stringValue = String(value).trim();
@@ -97,6 +140,8 @@ const normalizeIdentifiersPayload = (identifiers) => {
     customerId: toTrimmedString(identifiers.customerId),
     operatingScheduleId: toTrimmedString(identifiers.operatingScheduleId),
     additionalInformation: toTrimmedString(identifiers.additionalInformation),
+    companyName: toTrimmedString(identifiers.companyName),
+    createdByUserId: toTrimmedString(identifiers.createdByUserId),
     serviceDate: toOptionalDate(identifiers.serviceDate),
     trackCheckInOut: Boolean(identifiers.trackCheckInOut),
     additionalWorkerIds: toStringArray(identifiers.additionalWorkerIds),
@@ -131,6 +176,7 @@ const normalizeIdentifiersPayload = (identifiers) => {
 module.exports = {
   create: async (data) => {
     const payload = { ...data };
+    const companyName = toTrimmedString(payload.companyName);
     delete payload.companyName;
 
     payload.name = toTrimmedString(payload.name);
@@ -146,7 +192,11 @@ module.exports = {
     payload.warrantyUntil = toOptionalDate(payload.warrantyUntil);
     payload.photos = toStringArray(payload.photos);
     payload.documents = toStringArray(payload.documents);
-    payload.identifiers = normalizeIdentifiersPayload(payload.identifiers);
+    payload.identifiers = normalizeIdentifiersPayload({
+      ...(payload.identifiers || {}),
+      companyName: payload.identifiers?.companyName || companyName,
+      createdByUserId: payload.identifiers?.createdByUserId || payload.userId,
+    });
 
     // Prisma checked inputs don't accept relation scalar FKs (propertyId/userId).
     // Convert them into relation connects for compatibility across client versions.
@@ -162,7 +212,14 @@ module.exports = {
       const userId = payload.userId;
       delete payload.userId;
       if (userId && !payload.user) {
-        rel.user = { connect: { id: String(userId) } };
+        const prismaUser = await prisma.user.findUnique({
+          where: { id: String(userId) },
+          select: { id: true },
+        }).catch(() => null);
+
+        if (prismaUser) {
+          rel.user = { connect: { id: String(userId) } };
+        }
       }
     }
 
@@ -235,18 +292,16 @@ module.exports = {
       const where = normalizeAssetWhere(filter);
       return await prisma.asset.findMany({ where, include: { property: true, spareParts: true } });
     } catch (err) {
-      if (err.message.includes('userId') || err.message.includes('converting')) {
+      if (
+        err.message.includes('userId') ||
+        err.message.includes('converting') ||
+        err.message.includes('Unknown argument') ||
+        err.message.includes('path')
+      ) {
         console.error('CRITICAL: Prisma conversion error detected for Asset. Falling back to raw MongoDB query.');
         const col = getRawCollection('Asset');
         if (!col) throw err;
-        const translated = {};
-        for (const key in filter) {
-          if (filter[key] && typeof filter[key] === 'object' && filter[key].in) {
-            translated[key] = { $in: filter[key].in };
-          } else {
-            translated[key] = filter[key];
-          }
-        }
+        const translated = translateAssetFilterToMongo(filter);
         const assets = await col.find(translated).toArray();
         return assets.map(mapRecord);
       }
