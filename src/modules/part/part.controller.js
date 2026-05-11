@@ -133,6 +133,11 @@ module.exports = {
       if (!part) return res.status(404).json({ error: 'Not found' });
 
       const quantity = Number(req.body?.quantity || 0);
+      const allocatedBy = req.body?.allocatedBy || '';
+      const requestedBy = req.body?.requestedBy || '';
+      const givenBy = req.body?.givenBy || '';
+      const receivedBy = req.body?.receivedBy || '';
+      const hasAllocationDetails = [allocatedBy, requestedBy, givenBy, receivedBy].some((value) => String(value || '').trim());
       const previousAvailable = Number(part.available || 0);
       const previousOnHand = Number(part.onHand || 0);
       const newAvailable = previousAvailable + quantity;
@@ -148,6 +153,45 @@ module.exports = {
         newAvailable,
         createdBy: req.body?.createdBy || '',
         createdAt: new Date()
+      });
+      if (hasAllocationDetails) {
+        part.allocationHistory = Array.isArray(part.allocationHistory) ? part.allocationHistory : [];
+        part.allocationHistory.unshift({
+          allocatedBy,
+          requestedBy,
+          givenBy,
+          receivedBy,
+          quantity: Math.abs(quantity),
+          reason: req.body?.reason || '',
+          workOrderId: req.body?.workOrderId || '',
+          notes: req.body?.notes || '',
+          date: new Date()
+        });
+      }
+
+      await part.save();
+      res.json(part);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  async recordAllocation(req, res) {
+    try {
+      const part = await Part.findById(req.params.id);
+      if (!part) return res.status(404).json({ error: 'Not found' });
+
+      part.allocationHistory = Array.isArray(part.allocationHistory) ? part.allocationHistory : [];
+      part.allocationHistory.unshift({
+        allocatedBy: req.body?.allocatedBy || '',
+        requestedBy: req.body?.requestedBy || '',
+        givenBy: req.body?.givenBy || '',
+        receivedBy: req.body?.receivedBy || '',
+        quantity: Number(req.body?.quantity || 0),
+        reason: req.body?.reason || '',
+        workOrderId: req.body?.workOrderId || '',
+        notes: req.body?.notes || '',
+        date: new Date()
       });
 
       await part.save();

@@ -36,6 +36,17 @@ const PartSchema = new mongoose.Schema(
       newAvailable: { type: Number, default: 0 },
       createdBy: { type: String, default: '' },
       createdAt: { type: Date, default: Date.now }
+    }],
+    allocationHistory: [{
+      allocatedBy: { type: String, default: '' },
+      requestedBy: { type: String, default: '' },
+      givenBy: { type: String, default: '' },
+      receivedBy: { type: String, default: '' },
+      quantity: { type: Number, default: 0 },
+      reason: { type: String, default: '' },
+      workOrderId: { type: String, default: '' },
+      notes: { type: String, default: '' },
+      date: { type: Date, default: Date.now }
     }]
   },
   { timestamps: true }

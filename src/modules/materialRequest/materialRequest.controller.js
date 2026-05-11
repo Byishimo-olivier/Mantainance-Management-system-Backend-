@@ -1,5 +1,6 @@
 const service = require('./materialRequest.service');
 const notificationService = require('../notification/notification.service');
+const { PurchaseOrder, computeTotal } = require('../purchaseOrder/purchaseOrder.model');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -213,6 +214,67 @@ function enrichRequest(r) {
   return out;
 }
 
+const buildPurchaseOrderItemsFromStock = (stockItems = [], includeAll = false) => (
+  (Array.isArray(stockItems) ? stockItems : [])
+    .filter((item) => includeAll || item?.needsPurchase)
+    .map((item) => ({
+      name: item.materialName || item.materialId || 'Material',
+      quantity: Math.max(1, Number((item.needsPurchase ? item.shortage : item.quantityNeeded) || item.quantityNeeded || 1)),
+      unitCost: Number(item.unitCost || 0),
+      partId: /^[a-f\d]{24}$/i.test(String(item.partId || '')) ? item.partId : undefined,
+      notes: `Raised from approved material request. Needed ${Number(item.quantityNeeded || 1)}, available ${Number(item.availableStock || 0)}.`
+    }))
+);
+
+async function ensureProcurementPurchaseOrder(materialRequest, stockCheck, req) {
+  const materialRequestId = String(materialRequest?.id || '');
+  if (!materialRequestId) return null;
+
+  const existing = await PurchaseOrder.findOne({
+    materialRequestId,
+    source: { $in: ['MATERIAL_REQUEST_APPROVAL', 'MATERIAL_REQUEST_SHORTAGE', 'MATERIAL_REQUEST_AUTO_APPROVAL'] }
+  }).lean();
+
+  if (existing) return existing;
+
+  const items = buildPurchaseOrderItemsFromStock(stockCheck?.items, !stockCheck?.requiresPO);
+  if (items.length === 0) return null;
+
+  const po = await PurchaseOrder.create({
+    title: `Material Request ${materialRequest.requestId || materialRequestId.slice(-6)} Procurement`,
+    status: 'PROCUREMENT_PENDING',
+    items,
+    totalCost: computeTotal(items),
+    currency: 'RWF',
+    materialRequestId,
+    issueId: materialRequest.issueId || '',
+    workOrderId: materialRequest.workOrderId || materialRequest.issueId || '',
+    source: 'MATERIAL_REQUEST_APPROVAL',
+    category: 'Material Request',
+    notes: 'Created from an approved material request. Procurement should select a vendor, review quantities and costs, then send the purchase order.',
+    requisitioner: materialRequest.technicianName || req.user?.name || '',
+    companyName: req.user?.companyName || '',
+    createdBy: {
+      id: req.user?.userId,
+      role: req.user?.role,
+      name: req.user?.name,
+      email: req.user?.email
+    }
+  });
+
+  const shortageSummary = stockCheck.items
+    .filter((item) => !stockCheck.requiresPO || item?.needsPurchase)
+    .map((item) => `${item.materialName || item.materialId || 'Material'} (needed ${Number(item.quantityNeeded || 1)}, available ${Number(item.availableStock || 0)})`)
+    .join(', ');
+
+  await service.update(materialRequestId, {
+    status: 'PROCUREMENT_PENDING',
+    description: `${materialRequest.description || ''}${materialRequest.description ? '\n\n' : ''}Approved. Procurement purchase order ${po.poNumber} created for: ${shortageSummary}.`
+  });
+
+  return po.toObject ? po.toObject() : po;
+}
+
 async function update(req, res) {
   try {
     const { id } = req.params;
@@ -236,7 +298,90 @@ async function remove(req, res) {
   }
 }
 
-module.exports = { getAll, getByTechnician, create, forwardToClient, clientRespond, update, remove };
+/**
+ * Approve material request with automatic stock checking and PO generation
+ * If stock is low, returns PO data that should be used to create a purchase order
+ * GET /api/material-requests/:id/approve-with-stock-check
+ */
+async function approveWithStockCheck(req, res) {
+  try {
+    const { id } = req.params;
+    const { note } = req.body || {};
+
+    const targetRequest = await service.getById(id);
+    if (!targetRequest) {
+      return res.status(404).json({ error: 'Material request not found' });
+    }
+
+    // Approve the request
+    const updated = await service.clientRespond(id, 'APPROVED');
+
+    // Add approval note if provided
+    if (note) {
+      await service.update(id, {
+        description: `${targetRequest.description || ''}${targetRequest.description ? '\n\n' : ''}Admin approval note: ${note}`,
+      });
+    }
+
+    // Check stock requirements
+    const autoPOService = require('./materialRequest.autoPO.service');
+    const stockCheck = await autoPOService.checkStockRequirement(id, {
+      companyName: req.user?.companyName || ''
+    });
+    const purchaseOrder = await ensureProcurementPurchaseOrder(targetRequest, stockCheck, req);
+
+    // Enrich the response
+    const enriched = enrichRequest(updated);
+
+    return sendJson(res, {
+      success: true,
+      materialRequest: enriched,
+      stockAnalysis: stockCheck,
+      requiresPO: stockCheck.requiresPO,
+      purchaseOrder,
+      message: purchaseOrder
+        ? 'Material request approved. A procurement purchase order was created.'
+        : stockCheck.requiresPO
+          ? 'Material request approved. Stock is insufficient - a purchase order is required.'
+          : 'Material request approved. Sufficient stock is available.'
+    });
+  } catch (err) {
+    console.error('[materialRequest.approveWithStockCheck]', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * Get PO generation data for a material request
+ * This prepares the data needed to create a purchase order
+ * GET /api/material-requests/:id/generate-po-data
+ */
+async function generatePOData(req, res) {
+  try {
+    const { id } = req.params;
+    const { vendorId, vendorName, vendorEmail } = req.body || {};
+
+    const request = await service.getById(id);
+    if (!request) {
+      return res.status(404).json({ error: 'Material request not found' });
+    }
+
+    const autoPOService = require('./materialRequest.autoPO.service');
+    const poData = await autoPOService.autogeneratePOForApprovedRequest(id, {
+      companyName: req.user?.companyName || '',
+      vendorId,
+      vendorName,
+      vendorEmail
+    });
+
+    return sendJson(res, poData);
+  } catch (err) {
+    console.error('[materialRequest.generatePOData]', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+module.exports = { getAll, getByTechnician, create, forwardToClient, clientRespond, update, remove, approveWithStockCheck, generatePOData };
 
 
 
