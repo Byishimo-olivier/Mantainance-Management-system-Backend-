@@ -4,8 +4,8 @@ const prisma = new PrismaClient();
 
 // Service now manages external technicians via Prisma `Technician` model.
 module.exports = {
-  getAll: async () => {
-    return await prisma.technician.findMany();
+  getAll: async (filter = {}) => {
+    return await prisma.technician.findMany({ where: filter });
   },
   getById: async (id) => {
     return await prisma.technician.findUnique({ where: { id } });

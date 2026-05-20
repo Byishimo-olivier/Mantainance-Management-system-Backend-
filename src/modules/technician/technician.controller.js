@@ -48,7 +48,8 @@ exports.invite = async (req, res) => {
 // Returns external technicians (from Prisma Technician model)
 exports.getAll = async (req, res) => {
   try {
-    const technicians = await service.getAll();
+    const companyName = String(req.user?.companyName || req.query?.companyName || '').trim();
+    const technicians = await service.getAll(companyName ? { companyName } : {});
     const mapped = technicians.map(t => {
       const obj = t.toObject ? t.toObject() : t;
       const id = obj._id ? obj._id.toString() : obj.id;
@@ -143,7 +144,8 @@ exports.delete = async (req, res) => {
 // Manager/admin: get minimal tech list for assignment (external only)
 exports.getForAssignment = async (req, res) => {
   try {
-    const all = await service.getAll();
+    const companyName = String(req.user?.companyName || '').trim();
+    const all = await service.getAll(companyName ? { companyName } : {});
     const mapped = (all || []).map(t => {
       const id = t._id ? t._id.toString() : t.id;
       return {

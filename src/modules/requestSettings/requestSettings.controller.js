@@ -452,7 +452,13 @@ const sanitizePortal = (doc) => ({
   updatedAt: doc?.updatedAt || null,
 });
 
-const getCompanyName = (req) => String(req.user?.companyName || '').trim();
+const getCompanyName = (req) => String(
+  req.user?.companyName ||
+  req.body?.companyName ||
+  req.user?.userId ||
+  req.user?.email ||
+  ''
+).trim();
 
 const ensureSettings = async (companyName) => {
   let settings = await RequestSettings.findOne({ companyName });
@@ -467,6 +473,14 @@ const ensureSettings = async (companyName) => {
   };
   settings.tags = settings.tags || { ...defaultTagSettings };
   return settings;
+};
+
+const findOrCreateSettings = async (user = {}) => {
+  const companyName = String(user?.companyName || user?.userId || user?.email || '').trim();
+  if (!companyName) {
+    throw new Error('Company not found on user token.');
+  }
+  return ensureWorkOrderCategoryDefaults(await ensureSettings(companyName));
 };
 
 const buildRoleRows = (users = [], customRoles = []) => {
@@ -638,9 +652,9 @@ exports.updateApiSettings = async (req, res) => {
 
 exports.updateAuthenticationSettings = async (req, res) => {
   try {
-    const provider = String(req.body?.provider || '').trim().toLowerCase();
+    const provider = String(req.body?.provider || req.body?.saml?.provider || '').trim().toLowerCase();
     if (!allowedAuthenticationProviders.includes(provider)) {
-      return res.status(400).json({ message: 'Invalid authentication provider' });
+      return res.status(400).json({ error: 'Invalid authentication provider', message: 'Invalid authentication provider' });
     }
 
     const settings = await findOrCreateSettings(req.user);
@@ -654,7 +668,7 @@ exports.updateAuthenticationSettings = async (req, res) => {
     return res.json({ authentication: sanitizeSettings(settings).authentication });
   } catch (error) {
     console.error('updateAuthenticationSettings error:', error);
-    return res.status(500).json({ message: 'Failed to update authentication settings' });
+    return res.status(500).json({ error: error.message || 'Failed to update authentication settings', message: 'Failed to update authentication settings' });
   }
 };
 

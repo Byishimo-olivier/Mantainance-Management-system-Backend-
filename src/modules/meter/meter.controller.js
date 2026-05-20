@@ -91,6 +91,17 @@ exports.update = async (req, res) => {
   }
 };
 
+exports.addReading = async (req, res) => {
+  try {
+    const updated = await service.addReading(req.params.id, req.body || {}, req.user?.companyName || '');
+    if (!updated) return res.status(404).json({ error: 'Not found' });
+    res.status(201).json(normalizeExtendedJSON(updated));
+  } catch (err) {
+    console.error('[meter.addReading]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.delete = async (req, res) => {
   try {
     const result = await service.delete(req.params.id, req.user?.companyName || '');

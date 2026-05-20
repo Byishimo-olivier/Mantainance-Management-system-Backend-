@@ -1019,23 +1019,46 @@ async function initiateIntouchPayCollection({ amount, phoneNumber, requestTransa
     callbackurl: INTOUCHPAY_CALLBACK_URL,
   });
 
-  const response = await axios.post(
-    `${INTOUCHPAY_BASE_URL}/api/requestpayment/`,
-    payload.toString(),
-    {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      timeout: 65000,
-    }
-  );
-
-  return {
-    raw: response.data || {},
-    normalizedPhone,
+  console.log('[InTouchPay Request]', {
+    url: `${INTOUCHPAY_BASE_URL}/api/requestpayment/`,
+    username: INTOUCHPAY_USERNAME,
+    accountno: INTOUCHPAY_ACCOUNT_NO,
+    amount: String(amount),
+    phoneNumber: normalizedPhone,
+    requestId: String(requestTransactionId),
+    callbackurl: INTOUCHPAY_CALLBACK_URL,
     timestamp,
-  };
+  });
+
+  try {
+    const response = await axios.post(
+      `${INTOUCHPAY_BASE_URL}/api/requestpayment/`,
+      payload.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        timeout: 65000,
+      }
+    );
+
+    console.log('[InTouchPay Response Success]', response.data);
+
+    return {
+      raw: response.data || {},
+      normalizedPhone,
+      timestamp,
+    };
+  } catch (error) {
+    console.error('[InTouchPay Request Failed]', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      message: error.message,
+    });
+    throw error;
+  }
 }
 
 async function initiateIntouchPayDeposit({

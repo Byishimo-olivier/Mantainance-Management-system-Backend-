@@ -58,6 +58,10 @@ const normalizeChecklistItem = (item, index = 0) => ({
   required: typeof item?.required === 'string'
     ? ['true', 'yes', '1', 'required'].includes(String(item.required).trim().toLowerCase())
     : !!item?.required,
+  notesRequired: !!item?.notesRequired,
+  photoRequired: !!item?.photoRequired,
+  urlRequired: !!item?.urlRequired,
+  selectedOutcome: String(item?.selectedOutcome || '').trim(),
 });
 
 const normalizeChecklistDoc = (doc = {}) => {
