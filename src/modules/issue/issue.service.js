@@ -167,7 +167,15 @@ const summarizeIssueCosts = (issue = {}) => {
 };
 
 const COST_FIELD_NAMES = ['labor', 'laborEntries', 'parts', 'materials', 'lineItems', 'costs', 'additionalCosts'];
-const MONGO_ONLY_ISSUE_FIELDS = ['closeoutNotes', 'closeoutNote', 'closeout'];
+const MONGO_ONLY_ISSUE_FIELDS = [
+  'closeoutNotes',
+  'closeoutNote',
+  'closeout',
+  'dueDate',
+  'assignedToName',
+  'assignedTechnicianName',
+  'technicianName',
+];
 
 const mergeRawIssueCostFields = (issue = {}, rawIssue = null) => {
   if (!rawIssue) return issue;
@@ -182,6 +190,9 @@ const mergeRawIssueCostFields = (issue = {}, rawIssue = null) => {
       merged[field] = rawIssue[field];
     }
   });
+  if ((merged.fixDeadline === undefined || merged.fixDeadline === null || merged.fixDeadline === '') && rawIssue.dueDate !== undefined) {
+    merged.fixDeadline = rawIssue.dueDate;
+  }
   return merged;
 };
 

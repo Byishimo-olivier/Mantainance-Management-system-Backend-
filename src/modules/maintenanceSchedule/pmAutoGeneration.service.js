@@ -6,6 +6,8 @@
 const pmRecurrenceService = require('./pmRecurrence.service');
 const mongoose = require('mongoose');
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const sameMoment = (left, right) => {
   const leftTime = left instanceof Date ? left.getTime() : new Date(left).getTime();
   const rightTime = right instanceof Date ? right.getTime() : new Date(right).getTime();
@@ -29,6 +31,127 @@ const dayRange = (value) => {
   return { start: date, end: new Date(date.getTime() + 86400000) };
 };
 
+const addRecipient = (recipients, value, fallbackName = '') => {
+  if (!value && value !== 0) return;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => addRecipient(recipients, entry, fallbackName));
+    return;
+  }
+
+  if (typeof value === 'object') {
+    const email = String(value.email || value.mail || '').trim();
+    const id = String(value.id || value._id || value.userId || value.value || '').trim();
+    const name = String(value.name || value.fullName || value.label || fallbackName || '').trim();
+    if (email && EMAIL_REGEX.test(email)) {
+      recipients.set(email.toLowerCase(), { email, id, name });
+    }
+    return;
+  }
+
+  const raw = String(value).trim();
+  if (EMAIL_REGEX.test(raw)) {
+    recipients.set(raw.toLowerCase(), { email: raw, id: '', name: fallbackName || raw });
+  }
+};
+
+const resolvePersonById = async (db, id) => {
+  const raw = String(id || '').trim();
+  if (!raw || raw === 'N/A') return null;
+  if (EMAIL_REGEX.test(raw)) return { email: raw, id: '', name: raw };
+
+  const candidates = [];
+  const isObjectId = /^[a-fA-F0-9]{24}$/.test(raw);
+  if (isObjectId) {
+    try {
+      const { ObjectId } = require('mongodb');
+      candidates.push(new ObjectId(raw));
+    } catch (error) {
+      // keep string-only lookup
+    }
+  }
+  candidates.push(raw);
+
+  const collections = ['User', 'users', 'InternalTechnician', 'internaltechnicians', 'Technician', 'technicians'];
+  for (const collectionName of collections) {
+    const collection = db.collection(collectionName);
+    for (const candidate of candidates) {
+      const person = await collection.findOne({
+        $or: [
+          { _id: candidate },
+          { id: raw },
+          { userId: raw },
+          { email: raw },
+        ],
+      });
+      if (person?.email) {
+        return {
+          id: String(person._id || person.id || person.userId || raw),
+          name: person.name || person.fullName || person.email,
+          email: person.email,
+        };
+      }
+    }
+  }
+
+  return null;
+};
+
+const resolveWorkOrderNotificationRecipients = async (db, schedule) => {
+  const recipients = new Map();
+  const ids = new Set();
+  const collectId = (value) => {
+    if (!value && value !== 0) return;
+    if (Array.isArray(value)) {
+      value.forEach(collectId);
+      return;
+    }
+    if (typeof value === 'object') {
+      addRecipient(recipients, value);
+      const id = value.id || value._id || value.userId || value.value;
+      if (id) ids.add(String(id).trim());
+      return;
+    }
+    const raw = String(value).trim();
+    if (!raw) return;
+    if (EMAIL_REGEX.test(raw)) addRecipient(recipients, raw);
+    else ids.add(raw);
+  };
+
+  addRecipient(recipients, schedule.woNotifyUsers);
+  addRecipient(recipients, schedule.assignedToEmail, schedule.assignedToName);
+  addRecipient(recipients, schedule.technicianEmail, schedule.technicianName);
+  addRecipient(recipients, schedule.email);
+  addRecipient(recipients, schedule.assignees);
+  addRecipient(recipients, schedule.woAssignees);
+
+  collectId(schedule.woNotifyUsers);
+  collectId(schedule.assignees);
+  collectId(schedule.woAssignees);
+  collectId(schedule.assignedTo);
+  collectId(schedule.technicianUserId);
+  collectId(schedule.technicianId);
+
+  if (schedule.employees) {
+    String(schedule.employees)
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .forEach(collectId);
+  }
+
+  (schedule.assetsRows || []).forEach((row) => {
+    addRecipient(recipients, row?.assigneeEmail || row?.assignedToEmail || row?.technicianEmail || row?.email, row?.assigneeName || row?.assignedToName);
+    collectId(row?.assignee || row?.assignedTo || row?.technicianId || row?.userId);
+  });
+
+  for (const id of ids) {
+    const person = await resolvePersonById(db, id);
+    addRecipient(recipients, person);
+  }
+
+  return Array.from(recipients.values());
+};
+
 /**
  * Auto-generate work order for a PM instance
  */
@@ -49,6 +172,7 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
     const scheduleId = schedule.id || schedule._id;
     const scheduleKey = String(scheduleId);
     const dueDate = pmInstance.dueDate || schedule.nextDate;
+    const normalizedDueDate = dueDate ? new Date(dueDate) : null;
     const { start: dueStart, end: dueEnd } = dayRange(dueDate);
     const pmOccurrenceKey = `${scheduleKey}:${occurrenceDateKey(dueDate)}`;
     await db.collection('Issue').createIndex(
@@ -107,10 +231,14 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
       propertyId: schedule.assetsRows?.[0]?.propertyId || schedule.assetsRows?.[0]?.locationId || schedule.propertyId || null,
       assetId: schedule.assetsRows?.[0]?.assetId || null,
       tags: ['recurring-pm', 'auto-generated'],
-      assignees: schedule.woAssignees || schedule.assignedTo ? [{
-        id: schedule.assignedTo || schedule.technicianUserId,
-        name: schedule.assignedToName || schedule.technicianName || 'Assigned',
-      }] : [],
+      assignedTo: schedule.assignedTo || schedule.technicianUserId || null,
+      assignedToName: schedule.assignedToName || schedule.technicianName || null,
+      assignees: Array.isArray(schedule.woAssignees)
+        ? schedule.woAssignees
+        : (schedule.assignedTo || schedule.technicianUserId ? [{
+            id: schedule.assignedTo || schedule.technicianUserId,
+            name: schedule.assignedToName || schedule.technicianName || 'Assigned',
+          }] : []),
       time: 'Scheduled',
       userId: schedule.userId || null,
       clientId: schedule.clientId || schedule.userId || null,
@@ -131,7 +259,8 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
       pmOccurrenceKey,
       pmTrigger: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
       preventiveMaintenanceName: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
-      dueDate: pmInstance.dueDate || schedule.nextDate,
+      dueDate: normalizedDueDate,
+      fixDeadline: normalizedDueDate,
       createdAt: new Date(),
       updatedAt: new Date(),
       createdBySchedule: true,
@@ -143,6 +272,8 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
     if (schedule.woAssignees && Array.isArray(schedule.woAssignees)) {
       issueData.assignees = schedule.woAssignees;
     } else if (schedule.assignedTo || schedule.technicianUserId) {
+      issueData.assignedTo = schedule.assignedTo || schedule.technicianUserId;
+      issueData.assignedToName = schedule.assignedToName || schedule.technicianName || 'Assigned';
       issueData.assignees = [
         {
           id: schedule.assignedTo || schedule.technicianUserId,
@@ -160,37 +291,45 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
     const workOrderId = String(savedIssue?._id || result.lastErrorObject?.upserted || '');
     console.log('[PM Auto Gen] Work order created:', workOrderId);
 
-    // Send notification if enabled
-    if (sendNotification && schedule.woNotifyUsers && Array.isArray(schedule.woNotifyUsers) && schedule.woNotifyUsers.length > 0) {
+    // Send work-order generated notification if enabled.
+    if (sendNotification) {
       try {
         const notificationService = require('../notification/notification.service');
         const emailService = require('../emailService/email.service');
+        const resolvedRecipients = await resolveWorkOrderNotificationRecipients(db, schedule);
+        const recipientMap = new Map(resolvedRecipients.map((entry) => [String(entry.email || '').toLowerCase(), entry]));
+        const companyEmails = await emailService.getAdminManagerClientEmails(schedule.companyName || schedule.company);
+        companyEmails.forEach((email) => addRecipient(recipientMap, email));
+        const recipients = Array.from(recipientMap.values());
         
-        for (const notifyUser of schedule.woNotifyUsers) {
-          await notificationService.createNotification({
-            userId: notifyUser.id,
-            type: 'workorder-created',
-            title: `Work Order Created: ${issueData.title}`,
-            message: `A new work order has been created for PM schedule: ${schedule.name}`,
-            relatedItemId: workOrderId,
-            relatedItemType: 'WorkOrder',
-          });
+        if (recipients.length === 0) {
+          console.log('[PM Auto Gen] No recipients found for work-order generated email:', scheduleId);
+        }
 
-          // Send email
-          if (notifyUser.email) {
-            await emailService.sendEmail({
-              to: notifyUser.email,
-              subject: `Work Order Created: ${issueData.title}`,
-              html: `
-                <h2>Work Order Created</h2>
-                <p>A new work order has been created for the PM schedule: <strong>${schedule.name}</strong></p>
-                <p><strong>Title:</strong> ${issueData.title}</p>
-                <p><strong>Due Date:</strong> ${new Date(issueData.dueDate).toLocaleDateString()}</p>
-                <p><strong>Priority:</strong> ${issueData.priority}</p>
-                <p><strong>Description:</strong> ${issueData.description}</p>
-              `,
+        for (const notifyUser of recipients) {
+          if (notifyUser.id) {
+            await notificationService.createNotification({
+              userId: notifyUser.id,
+              type: 'workorder-created',
+              title: `Work Order Created: ${issueData.title}`,
+              message: `A new work order has been created for PM schedule: ${schedule.name}`,
+              relatedItemId: workOrderId,
+              relatedItemType: 'WorkOrder',
             });
           }
+
+          await emailService.sendEmail({
+            to: notifyUser.email,
+            subject: `Work Order Created: ${issueData.title}`,
+            html: `
+              <h2>Work Order Created</h2>
+              <p>A new work order has been created for the PM schedule: <strong>${schedule.name || 'Preventive Maintenance'}</strong></p>
+              <p><strong>Title:</strong> ${issueData.title}</p>
+              <p><strong>Due Date:</strong> ${issueData.dueDate ? new Date(issueData.dueDate).toLocaleString() : 'Not set'}</p>
+              <p><strong>Priority:</strong> ${issueData.priority}</p>
+              <p><strong>Description:</strong> ${issueData.description}</p>
+            `,
+          });
         }
       } catch (notificationError) {
         console.warn('[PM Auto Gen] Failed to send notification:', notificationError.message);

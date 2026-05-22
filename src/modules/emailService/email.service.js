@@ -792,12 +792,20 @@ module.exports = {
 
   // Helper function to get admin and manager emails
  async getAdminManagerEmails(companyName = null) {
+    return this.getCompanyRoleEmails(companyName, ['admin', 'manager']);
+  },
+
+ async getAdminManagerClientEmails(companyName = null) {
+    return this.getCompanyRoleEmails(companyName, ['admin', 'manager', 'client']);
+  },
+
+ async getCompanyRoleEmails(companyName = null, roles = ['admin', 'manager']) {
    try {
      const { PrismaClient } = require('@prisma/client');
      const prisma = new PrismaClient();
      
      const filter = {
-       role: { in: ['admin', 'manager'] },
+       role: { in: roles },
        status: 'active'
      };
      
@@ -810,9 +818,9 @@ module.exports = {
        select: { email: true }
      });
 
-     return admins.map(admin => admin.email);
+     return [...new Set(admins.map(admin => admin.email).filter(Boolean).map(email => String(email).trim()))];
     } catch (error) {
-      console.error('Error fetching admin/manager emails:', error);
+      console.error('Error fetching company role emails:', error);
       return [];
     }
   },

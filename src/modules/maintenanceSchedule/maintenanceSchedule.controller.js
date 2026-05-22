@@ -377,7 +377,14 @@ module.exports = {
               propertyId: data.assetsRows?.[0]?.propertyId || data.assetsRows?.[0]?.locationId || data.propertyId || null,
               assetId: data.assetsRows?.[0]?.assetId || null,
               tags: ['preventive', 'recurring-pm', 'auto-generated'],
-              assignees: [],
+              assignedTo: data.assignedTo || data.technicianUserId || null,
+              assignedToName: data.assignedToName || data.technicianName || null,
+              assignees: Array.isArray(data.assignees)
+                ? data.assignees
+                : (data.assignedTo || data.technicianUserId ? [{
+                    id: data.assignedTo || data.technicianUserId,
+                    name: data.assignedToName || data.technicianName || 'Assigned',
+                  }] : []),
               time: 'Scheduled',
               userId: data.userId || null,
               clientId: data.clientId || data.userId || null,
@@ -396,6 +403,7 @@ module.exports = {
               pmTrigger: data.name || data.workOrderTitle || 'Preventive Maintenance',
               preventiveMaintenanceName: data.name || data.workOrderTitle || 'Preventive Maintenance',
               dueDate: initialDueDate,
+              fixDeadline: initialDueDate,
               createdAt: new Date(),
               updatedAt: new Date(),
               createdBySchedule: true,

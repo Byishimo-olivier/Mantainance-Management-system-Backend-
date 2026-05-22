@@ -13,6 +13,11 @@ const prisma = new PrismaClient();
 
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim().toLowerCase());
+const getFrontendOrigin = () => {
+  const raw = String(process.env.FRONTEND_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
+  if (raw === 'https://fixnest.rw') return 'https://www.fixnest.rw';
+  return raw;
+};
 const roleLabelMap = {
   superadmin: 'Super Admin',
   admin: 'Administrator',
@@ -127,7 +132,7 @@ exports.registerUser = async (req, res) => {
     // Send activation email to new user
     if (user.email) {
       try {
-        const activationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/activate/${user._activationToken}`;
+        const activationLink = `${getFrontendOrigin()}/activate/${user._activationToken}`;
         await emailService.sendActivationEmail({
           to: user.email,
           userName: user.name || user.companyName,
@@ -353,7 +358,7 @@ exports.resendActivationEmail = async (req, res) => {
     });
 
     // Generate activation link
-    const activationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/activate/${activationToken}`;
+    const activationLink = `${getFrontendOrigin()}/activate/${activationToken}`;
 
     // Send activation email
     await emailService.sendActivationEmail({

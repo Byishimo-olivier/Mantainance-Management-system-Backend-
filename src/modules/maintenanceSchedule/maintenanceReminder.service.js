@@ -47,7 +47,17 @@ class MaintenanceReminderService {
         if (!reminderInfo.shouldSend) continue;
 
         const recipients = await this.resolveRecipients(schedule);
+        const companyRecipients = await emailService.getAdminManagerClientEmails(schedule.companyName || schedule.company);
+        companyRecipients.forEach((email) => {
+          if (email) recipients.push({ email, name: email, role: 'company' });
+        });
         if (recipients.length === 0) continue;
+        const recipientEmails = [...new Set(
+          recipients
+            .map((recipient) => recipient.email)
+            .filter(Boolean)
+            .map((email) => String(email).trim())
+        )];
 
         await emailService.sendMaintenanceReminder(
           {
@@ -55,7 +65,7 @@ class MaintenanceReminderService {
             nextDate: reminderInfo.occurrenceAt.toISOString(),
             reminderLeadMinutes: reminderInfo.leadMinutes,
           },
-          recipients.map((recipient) => recipient.email)
+          recipientEmails
         );
 
         await maintenanceScheduleModel.update(schedule.id || schedule._id, {
