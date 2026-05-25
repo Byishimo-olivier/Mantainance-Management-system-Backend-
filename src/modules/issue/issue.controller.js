@@ -305,6 +305,33 @@ function normalizeDateInput(value) {
   return undefined;
 }
 
+function normalizeIssueDeadlineAliases(data = {}) {
+  if (!data || typeof data !== 'object') return data;
+
+  const hasFixDeadline = Object.prototype.hasOwnProperty.call(data, 'fixDeadline');
+  const hasDueDate = Object.prototype.hasOwnProperty.call(data, 'dueDate');
+
+  if (hasFixDeadline) {
+    const normalizedFixDeadline = normalizeDateInput(data.fixDeadline);
+    if (normalizedFixDeadline === undefined) {
+      delete data.fixDeadline;
+    } else {
+      data.fixDeadline = normalizedFixDeadline;
+    }
+  }
+
+  if ((!hasFixDeadline || data.fixDeadline === undefined || data.fixDeadline === null || data.fixDeadline === '') && hasDueDate) {
+    const normalizedDueDate = normalizeDateInput(data.dueDate);
+    if (normalizedDueDate === undefined) {
+      delete data.dueDate;
+    } else {
+      data.fixDeadline = normalizedDueDate;
+    }
+  }
+
+  return data;
+}
+
 function buildAssigneePayload(entry = {}, fallbackRole = '') {
   if (!entry) return null;
   const id = entry.id || entry._id || entry.userId || null;
@@ -626,7 +653,7 @@ exports.uploadAfterEvidence = [
 // Assign an issue to a technician
 exports.assignToTech = async (req, res) => {
   const { id } = req.params; // issue id
-  const { techId, priority, dueDate, status } = req.body; // technician user id
+  const { techId, priority, dueDate, fixDeadline, status } = req.body; // technician user id
   if (!techId) return res.status(400).json({ error: 'techId is required' });
   if (req.user && (req.user.role === 'technician' || req.user.role === 'internal')) {
     const currentUserId = normalizeId(req.user.userId || req.user.id || req.user._id);
@@ -700,7 +727,8 @@ exports.assignToTech = async (req, res) => {
     assignees: resolvedAssignee ? [resolvedAssignee] : [],
   };
   if (priority) updateData.priority = priority;
-  if (dueDate) updateData.fixDeadline = new Date(dueDate);
+  const assignmentDeadline = fixDeadline || dueDate;
+  if (assignmentDeadline) updateData.fixDeadline = new Date(assignmentDeadline);
   if (status) updateData.status = status;
 
   const updated = await service.update(id, updateData);
@@ -750,7 +778,7 @@ exports.assignToTech = async (req, res) => {
 // Assign an issue to an internal technician (property staff)
 exports.assignToInternal = async (req, res) => {
   const { id } = req.params; // issue id
-  const { internalTechId, dueDate } = req.body;
+  const { internalTechId, dueDate, fixDeadline } = req.body;
   if (!internalTechId) return res.status(400).json({ error: 'internalTechId is required' });
   try {
     const internalTechModel = require('../internalTechnician/internalTechnician.model');
@@ -817,7 +845,8 @@ exports.assignToInternal = async (req, res) => {
       assignees: internalAssignee ? [internalAssignee] : [],
       status: 'IN PROGRESS'
     };
-    if (dueDate) updatePayload.fixDeadline = new Date(dueDate);
+    const assignmentDeadline = fixDeadline || dueDate;
+    if (assignmentDeadline) updatePayload.fixDeadline = new Date(assignmentDeadline);
 
 
     // If a linked User exists, set assignedTo to that user's id so they can fetch assigned issues
@@ -1092,14 +1121,7 @@ exports.create = async (req, res) => {
       try { data.additionalResponsibleWorkers = JSON.parse(data.additionalResponsibleWorkers); } catch (e) { data.additionalResponsibleWorkers = [data.additionalResponsibleWorkers]; }
     }
     if (data.estimatedTime) data.estimatedTime = parseFloat(data.estimatedTime);
-    if ('fixDeadline' in data) {
-      const normalizedFixDeadline = normalizeDateInput(data.fixDeadline);
-      if (normalizedFixDeadline === undefined) {
-        delete data.fixDeadline;
-      } else {
-        data.fixDeadline = normalizedFixDeadline;
-      }
-    }
+    normalizeIssueDeadlineAliases(data);
     if (!Array.isArray(data.chat) || data.chat.length === 0) {
       const senderName = data.name || data.email || await resolveActorName(req.user, 'Requester');
       const senderRole = req.user?.role || 'requestor';
@@ -1124,17 +1146,28 @@ exports.create = async (req, res) => {
       data.companyName = resolvedPublicCompany.companyName;
     }
     // Attach image path if file uploaded
-    // handle single 'photo' or multiple 'file' attachments (from WorkOrder)
+    // handle single 'photo', multiple 'photos', and generic file attachments
     if (req.file) {
       data.photo = `/uploads/${req.file.filename}`;
     }
     if (req.files) {
-      // multer fields: req.files.photo => [file], req.files.file => [file,...]
+      const filePaths = [];
       if (req.files.photo && req.files.photo.length) {
         data.photo = `/uploads/${req.files.photo[0].filename}`;
       }
+      if (req.files.photos && req.files.photos.length) {
+        const photoPaths = req.files.photos.map(f => `/uploads/${f.filename}`);
+        if (!data.photo) data.photo = photoPaths[0];
+        filePaths.push(...photoPaths);
+      }
       if (req.files.file && req.files.file.length) {
-        data.files = (req.files.file || []).map(f => `/uploads/${f.filename}`);
+        filePaths.push(...req.files.file.map(f => `/uploads/${f.filename}`));
+      }
+      if (req.files.files && req.files.files.length) {
+        filePaths.push(...req.files.files.map(f => `/uploads/${f.filename}`));
+      }
+      if (filePaths.length) {
+        data.files = filePaths;
       }
     }
     // Attach user/company from auth (guard when anonymous requests are allowed)
@@ -1626,14 +1659,7 @@ exports.update = async (req, res) => {
     try { incoming.additionalResponsibleWorkers = JSON.parse(incoming.additionalResponsibleWorkers); } catch (e) { /* keep as-is */ }
   }
   if (incoming.estimatedTime) incoming.estimatedTime = parseFloat(incoming.estimatedTime);
-  if ('fixDeadline' in incoming) {
-    const normalizedFixDeadline = normalizeDateInput(incoming.fixDeadline);
-    if (normalizedFixDeadline === undefined) {
-      delete incoming.fixDeadline;
-    } else {
-      incoming.fixDeadline = normalizedFixDeadline;
-    }
-  }
+  normalizeIssueDeadlineAliases(incoming);
 
   const statusFromIncoming = typeof incoming.status === 'string' ? incoming.status.toUpperCase() : null;
   if (oldIssue && statusFromIncoming && oldIssue.status !== statusFromIncoming) {
@@ -2106,14 +2132,7 @@ exports.approveIssue = async (req, res) => {
           .filter(Boolean);
       }
     }
-    if ('fixDeadline' in incoming) {
-      const normalizedFixDeadline = normalizeDateInput(incoming.fixDeadline);
-      if (normalizedFixDeadline === undefined) {
-        delete incoming.fixDeadline;
-      } else {
-        incoming.fixDeadline = normalizedFixDeadline;
-      }
-    }
+    normalizeIssueDeadlineAliases(incoming);
     const allowedFields = [
       'title',
       'description',

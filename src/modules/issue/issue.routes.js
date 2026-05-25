@@ -47,7 +47,9 @@ router.get('/:id', optionalAuthenticate, ctrl.getById);
 // Accept one 'photo' and multiple 'file' attachments from public form
 const issueUpload = upload.fields([
 	{ name: 'photo', maxCount: 1 },
-	{ name: 'file', maxCount: 5 }
+	{ name: 'photos', maxCount: 10 },
+	{ name: 'file', maxCount: 5 },
+	{ name: 'files', maxCount: 10 }
 ]);
 router.post('/', optionalAuthenticate, issueUpload, ctrl.create);
 router.put('/:id', authenticate, ctrl.update);
