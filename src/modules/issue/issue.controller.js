@@ -1577,8 +1577,25 @@ exports.create = async (req, res) => {
     })();
     return;
   } catch (err) {
-    console.error('[CREATE ISSUE CRASH PREVENTED]', err);
-    res.status(500).json({ error: 'Failed to create issue: ' + err.message });
+    console.error('[CREATE ISSUE CRASH PREVENTED]', {
+      message: err?.message,
+      stack: err?.stack,
+      code: err?.code,
+      details: err?.details,
+      prismaCode: err?.code,
+      meta: err?.meta,
+    });
+    console.error('[CREATE ISSUE ERROR DETAILS] Data that was being created:', {
+      title: data?.title,
+      description: data?.description,
+      location: data?.location,
+      status: data?.status,
+      time: data?.time,
+      assignees: data?.assignees,
+      companyName: data?.companyName,
+      userId: data?.userId,
+    });
+    res.status(500).json({ error: 'Failed to create issue: ' + err.message, details: process.env.NODE_ENV === 'development' ? err.message : undefined });
   }
 };
 

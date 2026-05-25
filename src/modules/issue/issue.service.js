@@ -682,6 +682,18 @@ module.exports = {
     const filesArray = Array.isArray(d.files) ? d.files : (d.files ? [d.files] : []);
     if (Object.prototype.hasOwnProperty.call(d, 'files')) delete d.files;
 
+    console.log('[issue.service.create] Creating issue with data:', {
+      title: d.title,
+      description: d.description,
+      location: d.location,
+      time: d.time,
+      assignees: d.assignees,
+      companyName: d.companyName,
+      status: d.status,
+      userId: d.userId,
+      allFields: Object.keys(d),
+    });
+
     const created = await prisma.issue.create({ data: d });
 
     // If files were provided, persist them directly into Mongo (avoids Prisma schema change)
