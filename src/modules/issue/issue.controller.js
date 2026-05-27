@@ -1105,9 +1105,11 @@ exports.getById = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
+  let data;
+  let resolvedPublicCompany;
   try {
-    let data = req.body;
-    let resolvedPublicCompany = null;
+    data = req.body;
+    resolvedPublicCompany = null;
 
     console.log('[CREATE ISSUE] Received request with userId from auth:', req.user?.userId);
     console.log('[CREATE ISSUE] Received data fields:', Object.keys(data).slice(0, 10));
