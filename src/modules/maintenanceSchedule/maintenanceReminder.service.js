@@ -222,15 +222,30 @@ class MaintenanceReminderService {
       if (row?.assignee) ids.add(String(row.assignee));
     });
 
-    if (schedule.assignedTo) ids.add(String(schedule.assignedTo));
-    if (schedule.technicianId) ids.add(String(schedule.technicianId));
+    const extractIds = (value) => {
+      if (!value) return [];
+      if (Array.isArray(value)) {
+        return value.flat().map(v => (typeof v === 'object' && v.id) ? String(v.id).trim() : String(v).trim()).filter(Boolean);
+      }
+      if (typeof value === 'object' && value.id) {
+        return [String(value.id).trim()];
+      }
+      return [String(value).trim()];
+    };
 
+    extractIds(schedule.assignedTo).forEach(id => ids.add(id));
+    extractIds(schedule.technicianId).forEach(id => ids.add(id));
+    
     if (schedule.employees) {
-      String(schedule.employees)
-        .split(',')
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .forEach((value) => ids.add(value));
+      if (typeof schedule.employees === 'string') {
+        schedule.employees
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .forEach((value) => ids.add(value));
+      } else {
+        extractIds(schedule.employees).forEach(id => ids.add(id));
+      }
     }
 
     const resolved = [];
@@ -249,19 +264,22 @@ class MaintenanceReminderService {
 
   async resolvePersonById(id) {
     if (!id || id === 'N/A' || id === '') return null;
+    
+    const idStr = String(id).trim();
+    if (!idStr) return null;
 
     // Check if it's a valid MongoDB ObjectID format (24 hex characters)
-    const isValidObjectId = /^[0-9a-f]{24}$/i.test(id);
+    const isValidObjectId = /^[0-9a-f]{24}$/i.test(idStr);
     
     if (isValidObjectId) {
       // Try Mongoose collections first
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        const user = await User.findById(id).select('name email');
+      if (mongoose.Types.ObjectId.isValid(idStr)) {
+        const user = await User.findById(idStr).select('name email');
         if (user?.email) return { id: String(user._id), name: user.name, email: user.email };
 
         const internalCollection = mongoose.connection?.db?.collection('InternalTechnician');
         if (internalCollection) {
-          const internalTech = await internalCollection.findOne({ _id: new mongoose.Types.ObjectId(id) });
+          const internalTech = await internalCollection.findOne({ _id: new mongoose.Types.ObjectId(idStr) });
           if (internalTech?.email) {
             return { id: String(internalTech._id), name: internalTech.name, email: internalTech.email };
           }
@@ -271,16 +289,16 @@ class MaintenanceReminderService {
       // Try Prisma for valid ObjectIDs
       try {
         const technician = await prisma.technician.findUnique({
-          where: { id },
+          where: { id: idStr },
           select: { id: true, name: true, email: true },
         });
         if (technician?.email) return technician;
       } catch (error) {
-        console.warn('[PM Reminder] Technician lookup failed for id', id, error?.message || error);
+        console.warn('[PM Reminder] Technician lookup failed for id', idStr, error?.message || error);
       }
     } else {
       // Invalid format - log and skip
-      console.warn('[PM Reminder] Skipped invalid technician ID:', id);
+      console.debug('[PM Reminder] Skipped invalid technician ID format:', idStr);
     }
 
     return null;

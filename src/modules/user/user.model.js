@@ -40,6 +40,6 @@ userSchema.index({ companyName: 1 });
 userSchema.index({ email: 1, companyName: 1 }, { unique: true });
 // Compound unique index: same phone allowed in different companies (different technician records), but not within same company
 userSchema.index({ phone: 1, companyName: 1 }, { unique: true });
-userSchema.index({ googleId: 1 }, { unique: true, sparse: true });
+userSchema.index({ googleId: 1 }, { unique: true });
 
 module.exports = mongoose.model('User', userSchema);
