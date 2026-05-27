@@ -29,7 +29,7 @@ const PurchaseOrderSchema = new mongoose.Schema(
     status: { type: String, default: 'Draft' }, // Draft, Submitted, Approved, Received
     items: { type: [ItemSchema], default: [] },
     totalCost: { type: Number, default: 0 },
-    currency: { type: String, default: 'USD' },
+    currency: { type: String, default: 'RWF' },
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor' },
     vendor: { type: String, default: '' }, // denormalized vendor name
     materialRequestId: { type: String, default: '', index: true },

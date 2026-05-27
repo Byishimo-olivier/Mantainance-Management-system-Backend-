@@ -376,7 +376,7 @@ async function create(req, res) {
       status: data.status || 'Draft',
       items,
       totalCost: data.totalCost || computeTotal(items),
-      currency: data.currency || 'USD',
+      currency: data.currency || 'RWF',
       vendorId,
       vendor: vendorName,
       materialRequestId: data.materialRequestId || '',

@@ -31,6 +31,123 @@ const dayRange = (value) => {
   return { start: date, end: new Date(date.getTime() + 86400000) };
 };
 
+const addDays = (date, days) => new Date(date.getTime() + days * 86400000);
+
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+const formatEmailDate = (value, options = {}) => {
+  if (!value) return 'N/A';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return date.toLocaleString('en-US', options);
+};
+
+const formatDisplayText = (value, fallback = 'N/A') => {
+  const text = String(value || fallback).trim();
+  if (!text) return fallback;
+  return text
+    .toLowerCase()
+    .split(/([\s_-]+)/)
+    .map((part) => (/^[a-z]/.test(part) ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join('');
+};
+
+const buildTriggeredWorkOrderEmail = ({ issueData, schedule, notifyUser, workOrderId }) => {
+  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  const workOrderUrl = `${frontendUrl}/manager-dashboard?tab=manage-issue&id=${encodeURIComponent(workOrderId || '')}`;
+  const title = issueData.title || schedule?.name || 'Preventive Maintenance';
+  const createdBy = schedule?.createdByName || schedule?.userName || schedule?.ownerName || schedule?.createdBy || 'Fixnest';
+  const location = issueData.location || schedule?.location || schedule?.propertyName || schedule?.branchLocation || 'N/A';
+  const workOrderNumber = workOrderId ? `#${String(workOrderId).slice(-6).toUpperCase()}` : 'N/A';
+  const status = formatDisplayText(issueData.status || 'Open');
+  const priority = formatDisplayText(issueData.priority || 'Medium');
+  const duration = issueData.estimatedTime || issueData.durationHours || issueData.duration;
+  const time = duration ? `${duration} hours` : 'N/A';
+
+  return `
+    <div style="margin:0;padding:0;background:#111111;color:#d1d5db;font-family:Arial,Helvetica,sans-serif;">
+      <div style="max-width:620px;margin:0 auto;background:#171717;padding:28px 22px;">
+        <div style="text-align:center;padding:26px 0 22px;">
+          <div style="font-size:28px;font-weight:800;color:#ef4444;letter-spacing:.2px;">Fixnest</div>
+        </div>
+
+        <div style="border:1px solid #9ca3af;">
+          <div style="padding:28px 24px;border-bottom:1px solid #9ca3af;">
+            <p style="margin:0 0 20px;font-size:18px;line-height:1.5;color:#9ca3af;">Hey ${escapeHtml(notifyUser?.name || 'there')},</p>
+            <p style="margin:0 0 20px;font-size:18px;line-height:1.45;color:#9ca3af;">
+              <strong style="color:#c7c7c7;">${escapeHtml(title)}</strong><br/>
+              was Created!
+            </p>
+            <p style="margin:0;font-size:18px;line-height:1.45;color:#9ca3af;">
+              You are being notified because this preventive maintenance work order was triggered by Fixnest.
+            </p>
+          </div>
+
+          <div style="padding:22px 18px;border-bottom:1px solid #9ca3af;">
+            <h2 style="margin:0 0 26px;font-size:26px;line-height:1.25;font-weight:400;color:#bdbdbd;">${escapeHtml(title)}</h2>
+            <p style="margin:0 0 28px;font-size:18px;line-height:1.45;color:#bdbdbd;">${escapeHtml(issueData.description || schedule?.description || 'No description provided.')}</p>
+            <div style="font-size:20px;font-weight:700;color:#ef4444;">${escapeHtml(status)}</div>
+          </div>
+
+          <div style="padding:28px 18px;">
+            <div style="margin-bottom:22px;">
+              <div style="font-size:16px;color:#8b8b8b;">Work Order #</div>
+              <div style="font-size:17px;color:#f3f4f6;font-weight:700;">${escapeHtml(workOrderNumber)}</div>
+            </div>
+            <div style="margin-bottom:22px;">
+              <div style="font-size:16px;color:#8b8b8b;">Created by</div>
+              <div style="font-size:17px;color:#f3f4f6;">${escapeHtml(createdBy)}</div>
+            </div>
+            <div style="margin-bottom:22px;">
+              <div style="font-size:16px;color:#8b8b8b;">Created On</div>
+              <div style="font-size:17px;color:#f3f4f6;">${escapeHtml(formatEmailDate(issueData.createdAt, { month: '2-digit', day: '2-digit', year: 'numeric' }))}</div>
+            </div>
+            <div style="margin-bottom:42px;">
+              <div style="font-size:16px;color:#8b8b8b;">Location</div>
+              <div style="font-size:17px;color:#f3f4f6;">${escapeHtml(location)}</div>
+            </div>
+            <div style="margin-bottom:22px;">
+              <div style="font-size:16px;color:#8b8b8b;">Due Date</div>
+              <div style="font-size:17px;color:#f3f4f6;">${escapeHtml(formatEmailDate(issueData.dueDate))}</div>
+            </div>
+            <div style="margin-bottom:22px;">
+              <div style="font-size:16px;color:#8b8b8b;">Priority</div>
+              <div style="font-size:17px;color:#fbbf24;">${escapeHtml(priority)}</div>
+            </div>
+            <div style="margin-bottom:22px;">
+              <div style="font-size:16px;color:#8b8b8b;">Last Updated</div>
+              <div style="font-size:17px;color:#f3f4f6;">${escapeHtml(formatEmailDate(issueData.updatedAt, { month: '2-digit', day: '2-digit', year: 'numeric' }))}</div>
+            </div>
+            <div>
+              <div style="font-size:16px;color:#8b8b8b;">Time</div>
+              <div style="font-size:17px;color:#f3f4f6;">${escapeHtml(time)}</div>
+            </div>
+          </div>
+
+          <div style="padding:36px 18px;text-align:center;border-top:1px solid #9ca3af;">
+            <a href="${workOrderUrl}" style="display:inline-block;min-width:320px;max-width:90%;background:#dc2626;color:#ffffff;text-decoration:none;font-size:22px;border-radius:36px;padding:18px 28px;">View Work Order</a>
+          </div>
+        </div>
+
+        <div style="padding:28px 8px 4px;text-align:center;">
+          <p style="margin:0 0 18px;font-size:16px;line-height:1.55;color:#d1d5db;">Have a question or need help? Fixnest support is here for you.</p>
+          <p style="margin:0 0 22px;font-size:16px;"><a href="${frontendUrl}" style="color:#ef4444;text-decoration:none;">Use Web App</a></p>
+          <p style="margin:0;font-size:14px;color:#8b8b8b;">&copy; ${new Date().getFullYear()} Fixnest.</p>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const buildTriggeredWorkOrderSubject = (issueData, schedule) => (
+  `Triggered Work Order: ${issueData.title || schedule?.name || 'Preventive Maintenance'}`
+);
+
 const addRecipient = (recipients, value, fallbackName = '') => {
   if (!value && value !== 0) return;
   if (Array.isArray(value)) {
@@ -172,7 +289,8 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
     const scheduleId = schedule.id || schedule._id;
     const scheduleKey = String(scheduleId);
     const dueDate = pmInstance.dueDate || schedule.nextDate;
-    const normalizedDueDate = dueDate ? new Date(dueDate) : null;
+    const workOrderCreatedAt = new Date();
+    const workOrderDueDate = addDays(workOrderCreatedAt, 1);
     const { start: dueStart, end: dueEnd } = dayRange(dueDate);
     const pmOccurrenceKey = `${scheduleKey}:${occurrenceDateKey(dueDate)}`;
     await db.collection('Issue').createIndex(
@@ -259,10 +377,10 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
       pmOccurrenceKey,
       pmTrigger: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
       preventiveMaintenanceName: schedule.name || schedule.workOrderTitle || 'Preventive Maintenance',
-      dueDate: normalizedDueDate,
-      fixDeadline: normalizedDueDate,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      dueDate: workOrderDueDate,
+      fixDeadline: workOrderDueDate,
+      createdAt: workOrderCreatedAt,
+      updatedAt: workOrderCreatedAt,
       createdBySchedule: true,
       companyName: schedule.companyName || schedule.company || null,
       referenceType: schedule.woReferenceType || 'workOrder',
@@ -320,15 +438,9 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
 
           await emailService.sendEmail({
             to: notifyUser.email,
-            subject: `Work Order Created: ${issueData.title}`,
-            html: `
-              <h2>Work Order Created</h2>
-              <p>A new work order has been created for the PM schedule: <strong>${schedule.name || 'Preventive Maintenance'}</strong></p>
-              <p><strong>Title:</strong> ${issueData.title}</p>
-              <p><strong>Due Date:</strong> ${issueData.dueDate ? new Date(issueData.dueDate).toLocaleString() : 'Not set'}</p>
-              <p><strong>Priority:</strong> ${issueData.priority}</p>
-              <p><strong>Description:</strong> ${issueData.description}</p>
-            `,
+            fromName: 'Fixnest',
+            subject: buildTriggeredWorkOrderSubject(issueData, schedule),
+            html: buildTriggeredWorkOrderEmail({ issueData, schedule, notifyUser, workOrderId }),
           });
         }
       } catch (notificationError) {

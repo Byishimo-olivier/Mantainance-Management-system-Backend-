@@ -629,6 +629,17 @@ module.exports = {
 
   create: async (data) => {
     const d = { ...data };
+    ['assetId', 'propertyId', 'inspectorId'].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(d, field) && String(d[field] || '').trim() === '') {
+        delete d[field];
+      }
+    });
+    ['fixDeadline', 'approvedAt', 'rejectedAt', 'resubmittedAt', 'createdAt', 'updatedAt'].forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(d, field)) return;
+      const normalized = normalizeDateValue(d[field]);
+      if (normalized === undefined || normalized === null) delete d[field];
+      else d[field] = normalized;
+    });
     // Handle optional asset connection
     if (d.assetId) {
       d.asset = { connect: { id: d.assetId } };

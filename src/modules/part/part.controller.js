@@ -1,12 +1,23 @@
 const Part = require('./part.model');
 
+const derivePartStatus = (data = {}) => {
+  if (data.nonStock) return 'NON_STOCK';
+  const available = Number(data.available ?? data.availableQty ?? data.quantity ?? 0);
+  const minQty = Number(data.minQtyThreshold ?? data.minQty ?? 0);
+  const rawStatus = String(data.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+
+  if (available <= 0) return 'STOCK_OUT';
+  if (minQty > 0 && available < minQty) return 'LOW_STOCK';
+  if (rawStatus === 'LOW_STOCK' && minQty > 0 && available < minQty) return 'LOW_STOCK';
+  return 'STOCK_IN';
+};
+
 const buildPartPayload = (data = {}, companyName = '') => ({
   name: data.name,
   partNumber: data.partNumber || '',
   category: data.category || '',
   tags: Array.isArray(data.tags) ? data.tags : [],
   description: data.description || '',
-  status: data.status || 'STOCK_IN',
   available: Number(data.available || 0),
   allocated: Number(data.allocated || 0),
   onHand: Number(data.onHand || 0),
@@ -29,6 +40,12 @@ const buildPartPayload = (data = {}, companyName = '') => ({
     barcode: line.barcode || ''
   })) : []
 });
+
+const buildPartPayloadWithStatus = (data = {}, companyName = '') => {
+  const payload = buildPartPayload(data, companyName);
+  payload.status = derivePartStatus(payload);
+  return payload;
+};
 
 module.exports = {
   async list(req, res) {
@@ -67,7 +84,7 @@ module.exports = {
       if (!companyName) {
         return res.status(400).json({ error: 'User has no company assigned' });
       }
-      const created = await Part.create(buildPartPayload(data, companyName));
+      const created = await Part.create(buildPartPayloadWithStatus(data, companyName));
       res.status(201).json(created);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -95,7 +112,6 @@ module.exports = {
         .filter(i => i && i.name)
         .map(i => ({
           name: i.name,
-          status: i.status || 'STOCK_IN',
           available: Number(i.available || 0),
           allocated: Number(i.allocated || 0),
           onHand: Number(i.onHand || 0),
@@ -105,8 +121,13 @@ module.exports = {
           partNumber: i.partNumber || '',
           category: i.category || '',
           description: i.description || '',
+          minQtyThreshold: Number(i.minQtyThreshold || i.minQty || 0),
+          maxQtyThreshold: Number(i.maxQtyThreshold || i.maxQty || 0),
           companyName: i.companyName || companyName
         }));
+      docs.forEach((doc) => {
+        doc.status = derivePartStatus(doc);
+      });
       const created = await Part.insertMany(docs);
       res.status(201).json(created || []);
     } catch (err) {
@@ -119,7 +140,7 @@ module.exports = {
       const data = req.body || {};
       if (!data.name) return res.status(400).json({ error: 'name is required' });
       const companyName = req.user?.companyName || '';
-      const updated = await Part.findByIdAndUpdate(req.params.id, buildPartPayload(data, companyName), { new: true, runValidators: true });
+      const updated = await Part.findByIdAndUpdate(req.params.id, buildPartPayloadWithStatus(data, companyName), { new: true, runValidators: true });
       if (!updated) return res.status(404).json({ error: 'Not found' });
       res.json(updated);
     } catch (err) {
@@ -145,6 +166,7 @@ module.exports = {
 
       part.available = newAvailable;
       part.onHand = newOnHand;
+      part.status = derivePartStatus(part);
       part.adjustments = Array.isArray(part.adjustments) ? part.adjustments : [];
       part.adjustments.unshift({
         quantity,

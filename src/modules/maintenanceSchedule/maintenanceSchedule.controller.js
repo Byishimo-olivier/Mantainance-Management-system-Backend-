@@ -351,8 +351,10 @@ module.exports = {
           const db = mongoose.connection.db;
           if (db) {
             const scheduleId = schedule.id || schedule._id;
-            const initialDueDate = data.nextDate ? new Date(data.nextDate) : new Date();
-            const dueStart = new Date(initialDueDate);
+            const initialOccurrenceDate = data.nextDate ? new Date(data.nextDate) : new Date();
+            const initialCreatedAt = new Date();
+            const initialDueDate = new Date(initialCreatedAt.getTime() + 86400000);
+            const dueStart = new Date(initialOccurrenceDate);
             dueStart.setSeconds(0, 0);
             const dueEnd = new Date(dueStart.getTime() + 60000);
             const existingInitialIssue = await db.collection('Issue').findOne({
@@ -404,8 +406,8 @@ module.exports = {
               preventiveMaintenanceName: data.name || data.workOrderTitle || 'Preventive Maintenance',
               dueDate: initialDueDate,
               fixDeadline: initialDueDate,
-              createdAt: new Date(),
-              updatedAt: new Date(),
+              createdAt: initialCreatedAt,
+              updatedAt: initialCreatedAt,
               createdBySchedule: true,
               companyName: data.companyName || data.company || null,
               referenceType: 'workOrder',

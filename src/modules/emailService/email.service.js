@@ -129,11 +129,13 @@ const templates = {
         </div>
       `
   }),
-  newRequest: (data) => ({
-    subject: `New Maintenance Request: ${data.title}`,
+  newRequest: (data) => {
+    const label = getCreatedEmailLabel({ ...data, recordType: data.recordType || 'Request' });
+    return {
+    subject: `${label.subjectPrefix}: ${data.title}`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">New Maintenance Request Submitted</h2>
+        <h2 style="color: #2563eb;">${label.heading}</h2>
         <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <h3>${data.title}</h3>
           <p><strong>Description:</strong> ${data.description}</p>
@@ -143,11 +145,12 @@ const templates = {
           <p><strong>Submitted by:</strong> ${data.clientName} (${data.clientEmail})</p>
           <p><strong>Submitted on:</strong> ${new Date().toLocaleString()}</p>
         </div>
-        <p>Please review and assign this request to an appropriate technician.</p>
-        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Request</a>
+        <p>Please review this ${label.noun} and assign it to an appropriate technician.</p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">${label.actionLabel}</a>
       </div>
     `
-  }),
+    };
+  },
 
   requestApproved: (data) => ({
     subject: `Maintenance Request Approved: ${data.title}`,
@@ -185,6 +188,39 @@ const templates = {
       </div>
     `
   }),
+
+  workOrderCreated: (data) => {
+    const label = getCreatedEmailLabel({ ...data, recordType: data.recordType || 'Work Order' });
+    return {
+    subject: `${label.subjectPrefix}: ${data.title}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #059669;">${label.heading}</h2>
+        <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #059669;">
+          <h3 style="margin-top: 0;">${data.title}</h3>
+          <p><strong>Work Order ID:</strong> <span style="color: #059669; font-weight: bold; font-size: 16px;">#${data.workOrderId || 'TBD'}</span></p>
+          <p><strong>Description:</strong> ${data.description || 'No description'}</p>
+          <p><strong>Location:</strong> ${data.location || 'Not specified'}</p>
+          <p><strong>Category:</strong> ${data.category || 'General Maintenance'}</p>
+          <p><strong>Priority:</strong> ${data.priority || 'Medium'}</p>
+          ${data.estimatedTime ? `<p><strong>Estimated Time:</strong> ${data.estimatedTime} hours</p>` : ''}
+          ${data.fixDeadline ? `<p><strong>Target Completion:</strong> ${new Date(data.fixDeadline).toLocaleString()}</p>` : ''}
+          ${data.assignedTo ? `<p><strong>Assigned To:</strong> ${data.assignedTo}</p>` : ''}
+          <p><strong>Status:</strong> <span style="background: #dcfce7; color: #059669; padding: 4px 8px; border-radius: 4px; font-weight: bold;">ACTIVE</span></p>
+          <p><strong>Created on:</strong> ${new Date().toLocaleString()}</p>
+        </div>
+        <p>This ${label.noun} has been created and is ready for review.</p>
+        <div style="text-align: center; margin: 25px 0;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue&id=${data.id || ''}" style="background: #059669; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">${label.actionLabel}</a>
+        </div>
+        <p style="color: #6b7280; font-size: 12px; margin-top: 20px;">
+          Company: <strong>${data.companyName || 'Unknown'}</strong><br/>
+          Request ID: <strong>${data.id || 'N/A'}</strong>
+        </p>
+      </div>
+    `
+    };
+  },
 
   issueInProgress: (data) => ({
     subject: `Maintenance Work Started: ${data.title}`,
@@ -391,20 +427,70 @@ templates.operationalSummaryReport = (data) => {
   };
 };
 
+const uniqueEmails = (...groups) => {
+  const recipients = new Map();
+  groups.flat().forEach((email) => {
+    const normalized = String(email || '').trim();
+    if (normalized) recipients.set(normalized.toLowerCase(), normalized);
+  });
+  return Array.from(recipients.values());
+};
+
+const getCreatedEmailLabel = (data = {}) => {
+  const referenceType = String(data.referenceType || data.recordType || data.type || '').toLowerCase();
+  const status = String(data.status || '').toUpperCase();
+  const tags = Array.isArray(data.tags) ? data.tags.map((tag) => String(tag || '').toLowerCase()) : [];
+  const isTriggered = Boolean(data.createdBySchedule || data.isPreventive || data.pmTrigger || tags.some((tag) => tag.includes('prevent') || tag.includes('recurring-pm')));
+  const isWorkOrder = referenceType.includes('workorder')
+    || referenceType.includes('work order')
+    || data.approved === true
+    || ['APPROVED', 'OPEN', 'IN PROGRESS', 'COMPLETED', 'COMPLETE'].includes(status);
+
+  if (isTriggered) {
+    return {
+      subjectPrefix: 'Triggered Work Order',
+      heading: 'Triggered Work Order',
+      actionLabel: 'View Work Order',
+      noun: 'work order',
+    };
+  }
+
+  if (isWorkOrder) {
+    return {
+      subjectPrefix: 'New Work Order Created',
+      heading: 'New Work Order Created',
+      actionLabel: 'View Work Order',
+      noun: 'work order',
+    };
+  }
+
+  return {
+    subjectPrefix: 'New Request Created',
+    heading: 'New Request Created',
+    actionLabel: 'Review Request',
+    noun: 'request',
+  };
+};
+
 // Email service methods will be exported below via module.exports = { ... }
 
 module.exports = {
   /**
    * Generic sendEmail method - flexible for any email need
    */
-  async sendEmail({ to, subject, html, text } = {}) {
+  async sendEmail({ to, subject, html, text, fromName } = {}) {
     try {
       if (!to) throw new Error('Recipient email (to) is required');
       if (!subject) throw new Error('Email subject is required');
       if (!html && !text) throw new Error('Email body (html or text) is required');
 
+      const senderName = fromName || process.env.EMAIL_FROM_NAME;
+      const from = senderName
+        ? `"${String(senderName).replace(/"/g, '')}" <${process.env.EMAIL_USER}>`
+        : process.env.EMAIL_USER;
+
       await transporter.sendMail({
-        from: process.env.EMAIL_USER,
+        from,
         to,
         subject,
         html: html || undefined,
@@ -609,33 +695,31 @@ module.exports = {
     }
   },
 
-  // Send progress notification
+  // Send progress notification to admins/managers/client
   async sendIssueInProgressNotification(issueData, technicianData, ownerData) {
     try {
       const template = templates.issueInProgress(issueData);
 
-      // Notify Owner
-      if (ownerData && ownerData.email) {
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: ownerData.email,
-          subject: template.subject,
-          html: template.html
-        });
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const allRecipients = uniqueEmails(
+        await this.getAdminManagerClientEmails(issueData.companyName),
+        ownerData?.email,
+        issueData?.email
+      );
+
+      if (allRecipients.length === 0) {
+        console.log('No recipients for work started notification');
+        return;
       }
 
-      // Notify Admins
-      const managerEmails = await this.getAdminManagerEmails();
-      if (managerEmails.length > 0) {
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: managerEmails.join(','),
-          subject: template.subject,
-          html: template.html
-        });
-      }
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: allRecipients.join(','),
+        subject: template.subject,
+        html: template.html
+      });
 
-      console.log('Work started notification sent for', issueData.title);
+      console.log('Work started notification sent to', allRecipients.length, 'recipient(s)');
     } catch (err) {
       console.error('Error sending progress notification email:', err);
     }
@@ -665,10 +749,10 @@ module.exports = {
       console.error('Error sending issue assigned notification:', error);
     }
   },
-  // Send email to admin/manager when new request is created
+  // Send email to admin/manager/client when new request is created
   async sendNewRequestNotification(requestData, clientData, companyName = null) {
     try {
-      console.log('📧 Sending new request notification to admins/managers');
+      console.log('📧 Sending new request notification to admins/managers/client');
       console.log('Request data:', requestData);
       console.log('Client data:', clientData);
 
@@ -678,18 +762,20 @@ module.exports = {
         clientEmail: clientData.email
       });
 
-      // Get all admin and manager emails
-      const adminEmails = await this.getAdminManagerEmails(companyName);
-      console.log('Admin/Manager emails found:', adminEmails);
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const companyEmails = await this.getAdminManagerClientEmails(companyName);
+      const allRecipients = uniqueEmails(companyEmails, clientData?.email, requestData?.email);
+      
+      console.log('Recipients found:', allRecipients.length, '(admins/managers/client)');
 
-      if (adminEmails.length === 0) {
-        console.log('❌ No admin/manager emails found for notification');
+      if (allRecipients.length === 0) {
+        console.log('❌ No recipients found for notification');
         return;
       }
 
       const mailOptions = {
         from: process.env.EMAIL_USER,
-        to: adminEmails.join(','),
+        to: allRecipients.join(','),
         subject: template.subject,
         html: template.html
       };
@@ -702,13 +788,13 @@ module.exports = {
 
       await transporter.sendMail(mailOptions);
 
-      console.log('✅ New request notification sent to admins/managers');
+      console.log('✅ New request notification sent to', allRecipients.length, 'recipient(s)');
     } catch (error) {
       console.error('❌ Error sending new request notification:', error);
     }
   },
 
-  // Send email to client when request is approved
+  // Send email to client/admins/managers when request is approved
   async sendRequestApprovedNotification(requestData, clientData, managerData) {
     try {
       const template = templates.requestApproved({
@@ -716,27 +802,35 @@ module.exports = {
         managerName: managerData.name
       });
 
-      console.log('[EMAIL DEBUG] Preparing to send APPROVED notification to client.');
+      console.log('[EMAIL DEBUG] Preparing to send APPROVED notification to all stakeholders.');
       console.log('[EMAIL DEBUG] clientData:', clientData);
-      console.log('[EMAIL DEBUG] Sending from:', process.env.EMAIL_USER);
-      console.log('[EMAIL DEBUG] Sending to:', clientData.email);
+
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const companyEmails = await this.getAdminManagerClientEmails(requestData.companyName);
+      const allRecipients = uniqueEmails(companyEmails, clientData?.email, requestData?.email);
+
+      console.log('[EMAIL DEBUG] Sending to:', allRecipients.join(', '));
       console.log('[EMAIL DEBUG] Subject:', template.subject);
-      console.log('[EMAIL DEBUG] HTML:', template.html);
+
+      if (allRecipients.length === 0) {
+        console.log('[EMAIL DEBUG] No recipients found');
+        return;
+      }
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
-        to: clientData.email,
+        to: allRecipients.join(','),
         subject: template.subject,
         html: template.html
       });
 
-      console.log('Request approved notification sent to client');
+      console.log('Request approved notification sent to', allRecipients.length, 'recipient(s)');
     } catch (error) {
       console.error('Error sending request approved notification:', error);
     }
   },
 
-  // Send email to client when request is declined
+  // Send email to client/admins/managers when request is declined
   async sendRequestDeclinedNotification(requestData, clientData, managerData, reason) {
     try {
       const template = templates.requestDeclined({
@@ -745,20 +839,71 @@ module.exports = {
         reason: reason
       });
 
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const companyEmails = await this.getAdminManagerClientEmails(requestData.companyName);
+      const allRecipients = uniqueEmails(companyEmails, clientData?.email, requestData?.email);
+
+      console.log('[EMAIL DEBUG] Sending declined notification to:', allRecipients.join(', '));
+
+      if (allRecipients.length === 0) {
+        console.log('[EMAIL DEBUG] No recipients found');
+        return;
+      }
+
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
-        to: clientData.email,
+        to: allRecipients.join(','),
         subject: template.subject,
         html: template.html
       });
 
-      console.log('Request declined notification sent to client');
+      console.log('Request declined notification sent to', allRecipients.length, 'recipient(s)');
     } catch (error) {
       console.error('Error sending request declined notification:', error);
     }
   },
 
-  // Send email to manager and client when issue is completed
+  // Send email to admins/managers/client when a work order is created (request approved)
+  async sendWorkOrderCreatedNotification(issueData, clientData = null, companyName = null) {
+    try {
+      console.log('📧 Sending work order created notification to all stakeholders');
+      console.log('Issue data:', { id: issueData.id, title: issueData.title, status: issueData.status });
+
+      const template = templates.workOrderCreated({
+        ...issueData,
+        workOrderId: issueData.id?.toString().slice(-6) || 'NEW',
+        companyName: companyName || issueData.companyName
+      });
+
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const companyEmails = await this.getAdminManagerClientEmails(companyName || issueData.companyName);
+      const allRecipients = uniqueEmails(companyEmails, clientData?.email, issueData?.email);
+      
+      console.log('Recipients found:', allRecipients.length, '(admins/managers/client)');
+
+      if (allRecipients.length === 0) {
+        console.log('⚠️ No recipients found for work order notification');
+        return;
+      }
+
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: allRecipients.join(','),
+        subject: template.subject,
+        html: template.html
+      };
+
+      await transporter.sendMail(mailOptions);
+
+      console.log('✅ Work order created notification sent to', allRecipients.length, 'recipient(s)');
+      return { success: true, recipients: allRecipients.length };
+    } catch (error) {
+      console.error('❌ Error sending work order created notification:', error);
+      throw error;
+    }
+  },
+
+  // Send email to manager/admin and client when issue is completed
   async sendIssueCompletedNotification(issueData, technicianData, clientData) {
     try {
       const template = templates.issueCompleted({
@@ -769,12 +914,13 @@ module.exports = {
         afterImage: issueData.afterImage || null // Added for side-by-side
       });
 
-      // Get manager emails
-      const managerEmails = await this.getAdminManagerEmails();
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const companyEmails = await this.getAdminManagerClientEmails(issueData.companyName);
+      const recipients = uniqueEmails(companyEmails, clientData?.email, issueData?.email);
 
-      const recipients = [...managerEmails];
-      if (clientData && clientData.email) {
-        recipients.push(clientData.email);
+      if (recipients.length === 0) {
+        console.log('No recipients for issue completed notification');
+        return;
       }
 
       await transporter.sendMail({
@@ -784,7 +930,7 @@ module.exports = {
         html: template.html
       });
 
-      console.log('Issue completed notification sent to managers and client');
+      console.log('Issue completed notification sent to', recipients.length, 'recipient(s)');
     } catch (error) {
       console.error('Error sending issue completed notification:', error);
     }
@@ -1175,9 +1321,12 @@ module.exports = {
       const companyName = issueData.companyName;
       if (!companyName) return;
 
-      // Get all admins and managers for this company
-      const adminEmails = await this.getAdminManagerEmails(companyName);
-      if (adminEmails.length === 0) return;
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const recipients = uniqueEmails(
+        await this.getAdminManagerClientEmails(companyName),
+        issueData.email
+      );
+      if (recipients.length === 0) return;
 
       const statusColor = {
         'PENDING': '#f59e0b',
@@ -1197,11 +1346,12 @@ module.exports = {
         'DECLINED': '#fef2f2'
       };
 
+      const label = getCreatedEmailLabel(issueData);
       const template = {
-        subject: `🆕 New Request Created: ${issueData.title}`,
+        subject: `${label.subjectPrefix}: ${issueData.title}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;color: #1f2937;">
-            <h2 style="color: #2563eb;border-bottom: 3px solid #2563eb;padding-bottom: 10px;">New Maintenance Request</h2>
+            <h2 style="color: #2563eb;border-bottom: 3px solid #2563eb;padding-bottom: 10px;">${label.heading}</h2>
             
             <div style="background: ${statusBgColor[issueData.status] || '#f9fafb'};padding: 20px;border-radius: 8px;margin: 20px 0;border-left: 4px solid ${statusColor[issueData.status] || '#ccc'};">
               <h3 style="margin: 0 0 15px 0;color: #111827;">${issueData.title}</h3>
@@ -1217,12 +1367,12 @@ module.exports = {
             </div>
 
             <p style="line-height: 1.6;margin: 20px 0;">
-              <strong>Action Required:</strong> Please review this request and assign it to an appropriate technician.
+              <strong>Action Required:</strong> Please review this ${label.noun} and assign it to an appropriate technician.
             </p>
 
             <div style="text-align: center;margin: 30px 0;">
               <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/manager-dashboard?tab=manage-issue&id=${issueData.id || ''}" style="background: #2563eb;color: white;padding: 12px 30px;text-decoration: none;border-radius: 6px;font-weight: bold;display: inline-block;">
-                Review Request
+                ${label.actionLabel}
               </a>
             </div>
 
@@ -1235,12 +1385,12 @@ module.exports = {
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
-        to: adminEmails.join(','),
+        to: recipients.join(','),
         subject: template.subject,
         html: template.html
       });
 
-      console.log(`✅ Request created notification sent to ${adminEmails.length} admin(s)`);
+      console.log(`✅ Request created notification sent to ${recipients.length} stakeholder(s)`);
     } catch (error) {
       console.error('❌ Error sending request created notification:', error);
     }
@@ -1255,11 +1405,12 @@ module.exports = {
       const newStatus = issueData.status;
       if (!newStatus || newStatus === oldStatus) return;
 
-      // Get admin emails
-      const adminEmails = await this.getAdminManagerEmails(companyName);
+      // Send to the same stakeholder set: admins, managers, and clients.
+      const allRecipients = uniqueEmails(
+        await this.getAdminManagerClientEmails(companyName),
+        issueData.email
+      );
       
-      // Get client email if available
-      const allRecipients = [...new Set(adminEmails)];
       if (allRecipients.length === 0) return;
 
       const statusMessages = {
@@ -1337,8 +1488,8 @@ module.exports = {
       const companyName = String(recordData.companyName || '').trim();
       if (!companyName) return;
 
-      const adminEmails = await this.getAdminManagerEmails(companyName);
-      if (adminEmails.length === 0) return;
+      const recipients = await this.getAdminManagerClientEmails(companyName);
+      if (recipients.length === 0) return;
 
       const recordType = String(recordData.recordType || 'Work Item').trim();
       const title = recordData.title || recordData.name || recordType;
@@ -1367,7 +1518,7 @@ module.exports = {
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
-        to: adminEmails.join(','),
+        to: recipients.join(','),
         subject,
         html
       });
@@ -1382,8 +1533,8 @@ module.exports = {
       const companyName = scheduleData.companyName;
       if (!companyName) return;
 
-      const adminEmails = await this.getAdminManagerEmails(companyName);
-      if (adminEmails.length === 0) return;
+      const recipients = await this.getAdminManagerClientEmails(companyName);
+      if (recipients.length === 0) return;
 
       const template = {
         subject: `📅 Preventive Maintenance Schedule Created: ${scheduleData.title}`,
@@ -1423,12 +1574,12 @@ module.exports = {
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
-        to: adminEmails.join(','),
+        to: recipients.join(','),
         subject: template.subject,
         html: template.html
       });
 
-      console.log(`✅ PM created notification sent to ${adminEmails.length} admin(s)`);
+      console.log(`✅ PM created notification sent to ${recipients.length} stakeholder(s)`);
     } catch (error) {
       console.error('❌ Error sending PM created notification:', error);
     }

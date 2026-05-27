@@ -130,6 +130,14 @@ const issueHasAssignment = (issue) => {
 };
 
 const getIssueRecordType = (issue) => {
+  const referenceType = String(issue?.referenceType || issue?.recordType || '').toLowerCase();
+  const tags = Array.isArray(issue?.tags) ? issue.tags.map((tag) => String(tag || '').toLowerCase()) : [];
+  if (issue?.createdBySchedule || issue?.isPreventive || issue?.pmTrigger || tags.some((tag) => tag.includes('prevent') || tag.includes('recurring-pm'))) {
+    return 'Triggered Work Order';
+  }
+  if (referenceType.includes('workorder') || referenceType.includes('work order')) {
+    return 'Work Order';
+  }
   const normalizedStatus = String(issue?.status || '').toUpperCase();
   if (issue?.approved || normalizedStatus === 'APPROVED' || normalizedStatus.includes('PROGRESS') || normalizedStatus.includes('COMPLETE')) {
     return 'Work Order';
@@ -1390,7 +1398,14 @@ exports.create = async (req, res) => {
           companyName: created.companyName,
           name: created.name,
           email: created.email,
-          phone: created.phone
+          phone: created.phone,
+          recordType: getIssueRecordType(created),
+          referenceType: created.referenceType,
+          createdBySchedule: created.createdBySchedule,
+          isPreventive: created.isPreventive,
+          pmTrigger: created.pmTrigger,
+          tags: created.tags,
+          approved: created.approved
         });
 
         if (!issueHasAssignment(created)) {
@@ -1431,7 +1446,15 @@ exports.create = async (req, res) => {
         description: data.description,
         location: data.location,
         category: data.category || data.tags?.[0] || 'General',
-        priority: data.priority || 'Normal'
+        priority: data.priority || 'Normal',
+        status: created?.status || data.status,
+        recordType: getIssueRecordType(created || data),
+        referenceType: created?.referenceType || data.referenceType,
+        createdBySchedule: created?.createdBySchedule || data.createdBySchedule,
+        isPreventive: created?.isPreventive || data.isPreventive,
+        pmTrigger: created?.pmTrigger || data.pmTrigger,
+        tags: created?.tags || data.tags,
+        approved: created?.approved || data.approved
       };
       const notificationCompanyName = created?.companyName || data.companyName || client?.companyName || resolvedPublicCompany?.companyName || null;
 
@@ -1747,11 +1770,29 @@ exports.update = async (req, res) => {
 
         if (client && manager) {
           if (updated.status === 'APPROVED') {
+            // Send request approved email to client/admins/managers
             await emailService.sendRequestApprovedNotification({
               title: updated.title,
               description: updated.description,
-              location: updated.location
+              location: updated.location,
+              companyName: updated.companyName
             }, client, manager);
+
+            // Send work order created email to admins/managers/client
+            await emailService.sendWorkOrderCreatedNotification({
+              id: updated.id,
+              title: updated.title,
+              description: updated.description,
+              location: updated.location || updated.address,
+              category: updated.category,
+              priority: updated.priority,
+              estimatedTime: updated.estimatedTime,
+              fixDeadline: updated.fixDeadline,
+              assignedTo: updated.assignedTo,
+              companyName: updated.companyName,
+              email: updated.email
+            }, client, updated.companyName);
+
             await sendSmsToUser(
               client,
               `Your request ${formatIssueSmsContext(updated)} has been approved by ${manager.name || 'your manager'}.`,
@@ -1761,7 +1802,8 @@ exports.update = async (req, res) => {
             await emailService.sendRequestDeclinedNotification({
               title: updated.title,
               description: updated.description,
-              location: updated.location
+              location: updated.location,
+              companyName: updated.companyName
             }, client, manager, req.body.reason || 'No reason provided');
             await sendSmsToUser(
               client,
