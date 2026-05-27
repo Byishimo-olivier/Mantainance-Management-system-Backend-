@@ -29,7 +29,7 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
-  googleId: { type: String, trim: true, sparse: true },
+  googleId: { type: String, trim: true },
   authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
   avatar: { type: String, trim: true }
 });

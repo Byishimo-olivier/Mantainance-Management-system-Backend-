@@ -191,7 +191,12 @@ async function repairTechnicianIndexes() {
       console.log('[Index Repair] ✓ Technician email+companyName unique constraint removed');
     }
   } catch (err) {
-    console.error('[Index Repair] Error repairing technician indexes:', err.message);
+    // Silently ignore errors if collection doesn't exist yet (normal during first run)
+    if (err.message && err.message.includes('ns does not exist')) {
+      console.log('[Index Repair] Technician collection not yet created, skipping index repair');
+    } else {
+      console.error('[Index Repair] Error repairing technician indexes:', err.message);
+    }
   }
 }
 
