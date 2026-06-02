@@ -57,9 +57,31 @@ const formatDisplayText = (value, fallback = 'N/A') => {
     .join('');
 };
 
+const isEmailLikeName = (value) => EMAIL_REGEX.test(String(value || '').trim());
+
+const getRecipientDisplayName = (recipient = {}) => {
+  const name = String(recipient.name || recipient.fullName || '').trim();
+  return name && !isEmailLikeName(name) ? name : 'there';
+};
+
+const isTechnicianRecipient = (recipient = {}) => {
+  const role = String(recipient.role || recipient.userRole || recipient.recipientRole || '').toLowerCase();
+  const source = String(recipient.source || recipient.sourceLabel || '').toLowerCase();
+  return role.includes('technician') || source.includes('technician');
+};
+
+const buildWorkOrderUrl = (recipient, workOrderId) => {
+  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  const encodedId = encodeURIComponent(workOrderId || '');
+  if (isTechnicianRecipient(recipient)) {
+    return `${frontendUrl}/technician-dashboard?section=workOrders&id=${encodedId}`;
+  }
+  return `${frontendUrl}/manager-dashboard?tab=issues&id=${encodedId}`;
+};
+
 const buildTriggeredWorkOrderEmail = ({ issueData, schedule, notifyUser, workOrderId }) => {
   const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
-  const workOrderUrl = `${frontendUrl}/manager-dashboard?tab=manage-issue&id=${encodeURIComponent(workOrderId || '')}`;
+  const workOrderUrl = buildWorkOrderUrl(notifyUser, workOrderId);
   const title = issueData.title || schedule?.name || 'Preventive Maintenance';
   const createdBy = schedule?.createdByName || schedule?.userName || schedule?.ownerName || schedule?.createdBy || 'Fixnest';
   const location = issueData.location || schedule?.location || schedule?.propertyName || schedule?.branchLocation || 'N/A';
@@ -78,7 +100,7 @@ const buildTriggeredWorkOrderEmail = ({ issueData, schedule, notifyUser, workOrd
 
         <div style="border:1px solid #9ca3af;">
           <div style="padding:28px 24px;border-bottom:1px solid #9ca3af;">
-            <p style="margin:0 0 20px;font-size:18px;line-height:1.5;color:#9ca3af;">Hey ${escapeHtml(notifyUser?.name || 'there')},</p>
+            <p style="margin:0 0 20px;font-size:18px;line-height:1.5;color:#9ca3af;">Hey ${escapeHtml(getRecipientDisplayName(notifyUser))},</p>
             <p style="margin:0 0 20px;font-size:18px;line-height:1.45;color:#9ca3af;">
               <strong style="color:#c7c7c7;">${escapeHtml(title)}</strong><br/>
               was Created!
@@ -159,22 +181,56 @@ const addRecipient = (recipients, value, fallbackName = '') => {
     const email = String(value.email || value.mail || '').trim();
     const id = String(value.id || value._id || value.userId || value.value || '').trim();
     const name = String(value.name || value.fullName || value.label || fallbackName || '').trim();
+    const role = String(value.role || value.userRole || value.recipientRole || '').trim();
+    const source = String(value.source || value.sourceLabel || '').trim();
     if (email && EMAIL_REGEX.test(email)) {
-      recipients.set(email.toLowerCase(), { email, id, name });
+      const key = email.toLowerCase();
+      const existing = recipients.get(key) || {};
+      recipients.set(key, {
+        ...existing,
+        email,
+        id: id || existing.id || '',
+        name: name && !isEmailLikeName(name) ? name : (existing.name || ''),
+        role: role || existing.role || '',
+        source: source || existing.source || '',
+      });
     }
     return;
   }
 
   const raw = String(value).trim();
   if (EMAIL_REGEX.test(raw)) {
-    recipients.set(raw.toLowerCase(), { email: raw, id: '', name: fallbackName || raw });
+    const key = raw.toLowerCase();
+    const existing = recipients.get(key) || {};
+    recipients.set(key, {
+      ...existing,
+      email: raw,
+      id: existing.id || '',
+      name: fallbackName && !isEmailLikeName(fallbackName) ? fallbackName : (existing.name || ''),
+      role: existing.role || '',
+      source: existing.source || '',
+    });
   }
 };
 
 const resolvePersonById = async (db, id) => {
   const raw = String(id || '').trim();
   if (!raw || raw === 'N/A') return null;
-  if (EMAIL_REGEX.test(raw)) return { email: raw, id: '', name: raw };
+  if (EMAIL_REGEX.test(raw)) {
+    const collections = ['User', 'users', 'InternalTechnician', 'internaltechnicians', 'Technician', 'technicians'];
+    for (const collectionName of collections) {
+      const person = await db.collection(collectionName).findOne({ email: raw });
+      if (person?.email) {
+        return {
+          id: String(person._id || person.id || person.userId || ''),
+          name: person.name || person.fullName || '',
+          email: person.email,
+          role: person.role || (collectionName.toLowerCase().includes('technician') ? 'technician' : ''),
+        };
+      }
+    }
+    return { email: raw, id: '', name: '' };
+  }
 
   const candidates = [];
   const isObjectId = /^[a-fA-F0-9]{24}$/.test(raw);
@@ -203,8 +259,9 @@ const resolvePersonById = async (db, id) => {
       if (person?.email) {
         return {
           id: String(person._id || person.id || person.userId || raw),
-          name: person.name || person.fullName || person.email,
+          name: person.name || person.fullName || '',
           email: person.email,
+          role: person.role || (collectionName.toLowerCase().includes('technician') ? 'technician' : ''),
         };
       }
     }
@@ -264,6 +321,13 @@ const resolveWorkOrderNotificationRecipients = async (db, schedule) => {
   for (const id of ids) {
     const person = await resolvePersonById(db, id);
     addRecipient(recipients, person);
+  }
+
+  for (const recipient of Array.from(recipients.values())) {
+    if (!recipient.name || isEmailLikeName(recipient.name) || !recipient.role) {
+      const person = await resolvePersonById(db, recipient.email);
+      addRecipient(recipients, person);
+    }
   }
 
   return Array.from(recipients.values());

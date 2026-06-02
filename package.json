@@ -16,7 +16,8 @@
     "seed:properties": "node scripts/seed-properties.js",
     "patch-data": "node scripts/patch-legacy-data.js",
     "repair-data": "node scripts/repair-data-mongoose.js",
-    "setup:mtn-collection": "node scripts/setup-mtn-collection.js"
+    "setup:mtn-collection": "node scripts/setup-mtn-collection.js",
+    "test:openai": "node scripts/test-openai.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",

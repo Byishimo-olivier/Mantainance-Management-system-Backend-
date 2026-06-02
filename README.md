@@ -68,6 +68,7 @@ Useful scripts:
 - `npm run seed:properties`: seed sample properties.
 - `npm run send:monthly-reports`: manually run monthly report sending.
 - `npm run setup:mtn-collection`: configure MTN collection integration.
+- `npm run test:openai`: run a quick OpenAI Responses API smoke test.
 - `npm run patch-data` / `npm run repair-data`: legacy data repair helpers.
 
 ## Environment Variables
@@ -109,6 +110,8 @@ TEAM_EMAIL=team@example.com
 DEMO_REQUEST_RECIPIENTS=team@example.com,sales@example.com
 
 # AI
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.5
 ANTHROPIC_API_KEY=...
 GEMINI_API_KEY=...
 
@@ -165,6 +168,8 @@ INTOUCHPAY_CALLBACK_URL=...
 SUBSCRIPTION_CLIENT_ID=...
 SUBSCRIPTION_SECRET_ID=...
 ```
+
+The AI chat module uses the OpenAI Responses API when `OPENAI_API_KEY` is present. This follows the official OpenAI quickstart shape: create an OpenAI client, call `client.responses.create(...)`, and read `response.output_text`.
 
 ## App Startup Behavior
 
