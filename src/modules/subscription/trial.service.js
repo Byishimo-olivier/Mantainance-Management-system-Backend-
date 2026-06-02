@@ -231,6 +231,25 @@ exports.extendFreeTrial = async (companyId, extensionDays, metadata = {}) => {
     trialEndDate.setDate(trialEndDate.getDate() + daysToAdd);
     const trialStartDate = company.trialStartDate || now;
     const trialDaysRemaining = Math.max(0, Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24)));
+    const shouldUpdateFreeStaffInvites = typeof metadata.allowFreeStaffInvites === 'boolean';
+    const freeStaffInviteMetadata = shouldUpdateFreeStaffInvites
+      ? {
+          allowFreeStaffInvites: metadata.allowFreeStaffInvites,
+          freeStaffInvites: metadata.allowFreeStaffInvites,
+          allowFreeInvite: metadata.allowFreeStaffInvites,
+          freeStaffInviteUpdatedAt: now.toISOString(),
+          freeStaffInviteUpdatedBy: metadata.extendedBy || null,
+        }
+      : {};
+    const extensionMetadata = {
+      lastTrialExtension: {
+        daysAdded: daysToAdd,
+        extendedAt: now.toISOString(),
+        extendedBy: metadata.extendedBy || null,
+        reason: metadata.reason || '',
+      },
+      ...freeStaffInviteMetadata,
+    };
 
     const updatedCompany = await prisma.company.update({
       where: { id: companyId },
@@ -243,12 +262,7 @@ exports.extendFreeTrial = async (companyId, extensionDays, metadata = {}) => {
         subscriptionStatus: 'trial',
         metadata: {
           ...(company.metadata && typeof company.metadata === 'object' ? company.metadata : {}),
-          lastTrialExtension: {
-            daysAdded: daysToAdd,
-            extendedAt: now.toISOString(),
-            extendedBy: metadata.extendedBy || null,
-            reason: metadata.reason || '',
-          },
+          ...extensionMetadata,
         },
       },
       include: { subscriptions: true, users: true },
@@ -268,12 +282,7 @@ exports.extendFreeTrial = async (companyId, extensionDays, metadata = {}) => {
           nextBillingDate: trialEndDate,
           metadata: {
             ...(existingTrialSubscription.metadata && typeof existingTrialSubscription.metadata === 'object' ? existingTrialSubscription.metadata : {}),
-            lastTrialExtension: {
-              daysAdded: daysToAdd,
-              extendedAt: now.toISOString(),
-              extendedBy: metadata.extendedBy || null,
-              reason: metadata.reason || '',
-            },
+            ...extensionMetadata,
           },
         },
       });
@@ -297,12 +306,7 @@ exports.extendFreeTrial = async (companyId, extensionDays, metadata = {}) => {
           nextBillingDate: trialEndDate,
           metadata: {
             createdByTrialExtension: true,
-            lastTrialExtension: {
-              daysAdded: daysToAdd,
-              extendedAt: now.toISOString(),
-              extendedBy: metadata.extendedBy || null,
-              reason: metadata.reason || '',
-            },
+            ...extensionMetadata,
           },
         },
       });

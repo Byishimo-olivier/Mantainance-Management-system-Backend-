@@ -812,6 +812,18 @@ exports.getTrialCompanies = async (req, res) => {
       const daysRemaining = trialEndDate
         ? Math.max(0, Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24)))
         : 0;
+      const companyMetadata = company.metadata && typeof company.metadata === 'object' ? company.metadata : {};
+      const subscriptionMetadata = company.subscriptions?.[0]?.metadata && typeof company.subscriptions[0].metadata === 'object'
+        ? company.subscriptions[0].metadata
+        : {};
+      const allowFreeStaffInvites = Boolean(
+        companyMetadata.allowFreeStaffInvites === true ||
+        companyMetadata.freeStaffInvites === true ||
+        companyMetadata.allowFreeInvite === true ||
+        subscriptionMetadata.allowFreeStaffInvites === true ||
+        subscriptionMetadata.freeStaffInvites === true ||
+        subscriptionMetadata.allowFreeInvite === true
+      );
 
       return {
         id: company.id,
@@ -826,7 +838,11 @@ exports.getTrialCompanies = async (req, res) => {
         trialDaysRemaining: daysRemaining,
         trialExceeded: company.trialExceeded,
         totalUsers: company.totalUsers,
+        allowFreeStaffInvites,
+        freeStaffInvites: allowFreeStaffInvites,
+        allowFreeInvite: allowFreeStaffInvites,
         latestTrialSubscription: company.subscriptions?.[0] || null,
+        metadata: companyMetadata,
         updatedAt: company.updatedAt,
       };
     });
@@ -852,6 +868,9 @@ exports.extendFreeTrial = async (req, res) => {
     const { companyId } = req.params;
     const extensionDays = Number(req.body?.extensionDays || req.body?.days || 0);
     const reason = String(req.body?.reason || '').trim();
+    const allowFreeStaffInvites = typeof req.body?.allowFreeStaffInvites === 'boolean'
+      ? req.body.allowFreeStaffInvites
+      : undefined;
 
     if (!companyId || !extensionDays || extensionDays < 1) {
       return res.status(400).json({ error: 'Company ID and extension days are required' });
@@ -861,6 +880,7 @@ exports.extendFreeTrial = async (req, res) => {
     const updated = await trialService.extendFreeTrial(companyId, extensionDays, {
       reason,
       extendedBy: req.user?.userId || req.user?.id || req.user?.email || 'system',
+      allowFreeStaffInvites,
     });
 
     res.json({
@@ -871,5 +891,84 @@ exports.extendFreeTrial = async (req, res) => {
   } catch (error) {
     console.error('Error extending free trial:', error);
     res.status(400).json({ error: error.message || 'Failed to extend free trial' });
+  }
+};
+
+exports.updateCompanyFreeStaffInvites = async (req, res) => {
+  try {
+    const role = String(req.user?.role || '').toLowerCase();
+    if (!['superadmin', 'super-admin', 'admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: 'Forbidden: insufficient role' });
+    }
+
+    const { companyId } = req.params;
+    const allowFreeStaffInvites = req.body?.allowFreeStaffInvites === true;
+
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID is required' });
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      include: {
+        subscriptions: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' });
+    }
+
+    const now = new Date();
+    const grantedBy = req.user?.userId || req.user?.id || req.user?.email || 'system';
+    const privilegeMetadata = {
+      allowFreeStaffInvites,
+      freeStaffInvites: allowFreeStaffInvites,
+      allowFreeInvite: allowFreeStaffInvites,
+      freeStaffInviteUpdatedAt: now.toISOString(),
+      freeStaffInviteUpdatedBy: grantedBy,
+    };
+
+    const updatedCompany = await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        metadata: {
+          ...(company.metadata && typeof company.metadata === 'object' ? company.metadata : {}),
+          ...privilegeMetadata,
+        },
+      },
+    });
+
+    const subscription = company.subscriptions?.[0];
+    if (subscription) {
+      await prisma.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          metadata: {
+            ...(subscription.metadata && typeof subscription.metadata === 'object' ? subscription.metadata : {}),
+            ...privilegeMetadata,
+          },
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: allowFreeStaffInvites
+        ? 'Free staff-invite privilege granted'
+        : 'Free staff-invite privilege removed',
+      data: normalizeExtendedJSON({
+        ...updatedCompany,
+        allowFreeStaffInvites,
+        freeStaffInvites: allowFreeStaffInvites,
+        allowFreeInvite: allowFreeStaffInvites,
+      }),
+    });
+  } catch (error) {
+    console.error('Error updating free staff-invite privilege:', error);
+    res.status(400).json({ error: error.message || 'Failed to update free staff-invite privilege' });
   }
 };

@@ -94,14 +94,15 @@ SUPERADMIN_ROTATE_PASSWORD=false
 BCRYPT_SALT_ROUNDS=10
 
 # Email / SMTP
-EMAIL_SERVICE=gmail
-EMAIL_USER=your-email@example.com
-EMAIL_PASS=app-password
-EMAIL_PASSWORD=app-password
+EMAIL_SERVICE=cpanel
+EMAIL_USER=info@your-domain.com
+SMTP_AUTH_USER=info@your-domain.com
+EMAIL_PASS=your-cpanel-mailbox-password
+EMAIL_PASSWORD=your-cpanel-mailbox-password
 EMAIL_FROM_NAME=FixNest
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_SECURE=false
+SMTP_HOST=mail.your-domain.com
+SMTP_PORT=465
+SMTP_SECURE=true
 SKIP_MAIL_VERIFY=false
 RESET_PASSWORD_URL=http://localhost:5173/reset-password
 TEAM_EMAIL=team@example.com
@@ -232,4 +233,3 @@ Large JSON and form bodies are accepted up to `25mb`.
 - [Email Service Documentation](./EMAIL_SERVICE_README.md)
 - [Daily Report Implementation](./DAILY_REPORT_IMPLEMENTATION.md)
 - [PesaPal Testing Guide](./PESAPAL_TESTING_GUIDE.md)
-

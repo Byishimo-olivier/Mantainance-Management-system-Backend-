@@ -386,6 +386,17 @@ exports.getUserSubscriptionStatus = async (userId) => {
       include: { company: true }
     });
 
+    const companyMetadata = user?.company?.metadata && typeof user.company.metadata === 'object' ? user.company.metadata : {};
+    const subscriptionMetadata = subscription?.metadata && typeof subscription.metadata === 'object' ? subscription.metadata : {};
+    const allowFreeStaffInvites = Boolean(
+      companyMetadata.allowFreeStaffInvites === true ||
+      companyMetadata.freeStaffInvites === true ||
+      companyMetadata.allowFreeInvite === true ||
+      subscriptionMetadata.allowFreeStaffInvites === true ||
+      subscriptionMetadata.freeStaffInvites === true ||
+      subscriptionMetadata.allowFreeInvite === true
+    );
+
     return {
       hasActiveSubscription: hasActive,
       subscription: subscription ? {
@@ -398,7 +409,12 @@ exports.getUserSubscriptionStatus = async (userId) => {
         startDate: subscription.startDate,
         endDate: subscription.endDate,
         nextBillingDate: subscription.nextBillingDate,
-        metadata: subscription.metadata || {},
+        metadata: {
+          ...subscriptionMetadata,
+          allowFreeStaffInvites,
+          freeStaffInvites: allowFreeStaffInvites,
+          allowFreeInvite: allowFreeStaffInvites,
+        },
       } : null,
       company: user?.company ? {
         id: user.company.id,
@@ -406,7 +422,11 @@ exports.getUserSubscriptionStatus = async (userId) => {
         totalUsers: user.company.totalUsers,
         maxUsers: user.company.maxUsers,
         subscriptionStatus: user.company.subscriptionStatus,
-        subscriptionPlan: user.company.subscriptionPlan
+        subscriptionPlan: user.company.subscriptionPlan,
+        metadata: companyMetadata,
+        allowFreeStaffInvites,
+        freeStaffInvites: allowFreeStaffInvites,
+        allowFreeInvite: allowFreeStaffInvites,
       } : (mongoUser?.companyName ? {
         id: null,
         name: mongoUser.companyName,
@@ -414,6 +434,9 @@ exports.getUserSubscriptionStatus = async (userId) => {
         maxUsers: null,
         subscriptionStatus: subscription?.status || 'inactive',
         subscriptionPlan: subscription?.plan || null,
+        allowFreeStaffInvites,
+        freeStaffInvites: allowFreeStaffInvites,
+        allowFreeInvite: allowFreeStaffInvites,
       } : null),
       teamMembers: teamMembers,
       isCompanyAdmin: user?.isCompanyAdmin || false

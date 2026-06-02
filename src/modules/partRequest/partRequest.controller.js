@@ -1,5 +1,7 @@
 const PartRequest = require('./partRequest.model');
 const Part = require('../part/part.model');
+const { PurchaseOrder, generatePoNumber } = require('../purchaseOrder/purchaseOrder.model');
+const mongoose = require('mongoose');
 
 const normalizeCompanyName = (value = '') => String(value || '').toLowerCase().trim();
 const escapeRegExp = (value = '') => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -19,6 +21,103 @@ const buildPartRequestPayload = (data = {}, companyName = '') => ({
   companyName: normalizeCompanyName(data.companyName || companyName),
   status: data.status || 'PENDING'
 });
+
+const derivePartStatus = (part = {}) => {
+  if (part.nonStock) return 'NON_STOCK';
+  const available = Number(part.available || 0);
+  const minQty = Number(part.minQtyThreshold || 0);
+  if (available <= 0) return 'STOCK_OUT';
+  if (minQty > 0 && available < minQty) return 'LOW_STOCK';
+  return 'STOCK_IN';
+};
+
+const buildActor = (req) => req.user?.name || req.user?.email || 'Unknown';
+
+const companyFilter = (companyName = '') => ({
+  companyName: {
+    $regex: `^${escapeRegExp(normalizeCompanyName(companyName))}$`,
+    $options: 'i'
+  }
+});
+
+const getLinkedWorkId = (partRequest) => partRequest.workOrderId || partRequest.pmId || '';
+
+const allocateApprovedRequestFromStock = async (partRequest, part, actor) => {
+  const quantityRequested = Number(partRequest.quantityRequested || 0);
+  const previousAvailable = Number(part.available || 0);
+  const previousOnHand = Number(part.onHand || previousAvailable);
+
+  part.available = Math.max(0, previousAvailable - quantityRequested);
+  part.onHand = Math.max(0, previousOnHand - quantityRequested);
+  part.allocated = Number(part.allocated || 0) + quantityRequested;
+  part.status = derivePartStatus(part);
+  part.allocationHistory = Array.isArray(part.allocationHistory) ? part.allocationHistory : [];
+  part.allocationHistory.unshift({
+    allocatedBy: actor,
+    requestedBy: partRequest.requestedBy || '',
+    quantity: quantityRequested,
+    reason: partRequest.reason || `Approved ${partRequest.requestedFrom || 'part'} request`,
+    workOrderId: getLinkedWorkId(partRequest),
+    notes: `Auto-allocated from approved part request ${partRequest._id}`,
+    date: new Date()
+  });
+
+  await part.save();
+
+  partRequest.stockDecision = 'ALLOCATED_FROM_STOCK';
+  partRequest.set('allocations.allocatedBy', actor);
+  partRequest.set('allocations.allocatedAt', new Date());
+  partRequest.set('allocations.quantityAllocated', quantityRequested);
+  partRequest.history.push({
+    action: 'ALLOCATED',
+    actionBy: actor,
+    actionAt: new Date(),
+    notes: `${quantityRequested} ${partRequest.partName} allocated from inventory.`
+  });
+};
+
+const createPurchaseOrderForApprovedRequest = async (partRequest, actor, req) => {
+  const quantityRequested = Number(partRequest.quantityRequested || 1);
+  const validPartId = mongoose.Types.ObjectId.isValid(partRequest.partId) ? partRequest.partId : undefined;
+  const po = await PurchaseOrder.create({
+    title: `Purchase ${partRequest.partName}`,
+    poNumber: generatePoNumber(),
+    status: 'Draft',
+    items: [{
+      name: partRequest.partName,
+      quantity: quantityRequested,
+      partId: validPartId,
+      notes: partRequest.reason || partRequest.notes || `Generated from part request ${partRequest._id}`
+    }],
+    currency: 'RWF',
+    materialRequestId: String(partRequest._id),
+    issueId: partRequest.workOrderId || '',
+    workOrderId: partRequest.workOrderId || '',
+    source: partRequest.requestedFrom === 'PM' ? 'PM_PART_REQUEST' : 'WORK_ORDER_PART_REQUEST',
+    category: partRequest.category || '',
+    requisitioner: partRequest.requestedBy || '',
+    notes: `Auto-created because requested quantity was not available in stock.${partRequest.pmId ? ` PM: ${partRequest.pmId}.` : ''}`,
+    companyName: partRequest.companyName,
+    createdBy: {
+      id: req.user?.userId || req.user?.id || '',
+      role: req.user?.role || '',
+      name: req.user?.name || actor,
+      email: req.user?.email || ''
+    }
+  });
+
+  partRequest.stockDecision = 'PURCHASE_ORDER_CREATED';
+  partRequest.purchaseOrderId = String(po._id);
+  partRequest.purchaseOrderNumber = po.poNumber || '';
+  partRequest.history.push({
+    action: 'PURCHASE_ORDER_CREATED',
+    actionBy: actor,
+    actionAt: new Date(),
+    notes: `Purchase order ${po.poNumber} created because stock is unavailable or insufficient.`
+  });
+
+  return po;
+};
 
 module.exports = {
   async list(req, res) {
@@ -82,6 +181,17 @@ module.exports = {
       }
       
       const payload = buildPartRequestPayload(data, companyName);
+      if (mongoose.Types.ObjectId.isValid(payload.partId)) {
+        const part = await Part.findOne({
+          _id: payload.partId,
+          ...companyFilter(companyName)
+        }).lean();
+        if (part) {
+          payload.partName = payload.partName || part.name || part.partNumber || 'Part';
+          payload.partNumber = payload.partNumber || part.partNumber || '';
+          payload.category = payload.category || part.category || '';
+        }
+      }
       
       // Add initial history entry
       payload.history = [{
@@ -139,22 +249,41 @@ module.exports = {
         return res.status(400).json({ error: `Cannot approve request with status: ${partRequest.status}` });
       }
       
-      const approver = req.user?.name || req.user?.email || 'Unknown';
+      const approver = buildActor(req);
       
       partRequest.status = 'APPROVED';
       partRequest.approvedBy = approver;
       partRequest.approvedAt = new Date();
-      
       partRequest.history = partRequest.history || [];
+      
       partRequest.history.push({
         action: 'APPROVED',
         actionBy: approver,
         actionAt: new Date(),
         notes: 'Part request approved'
       });
+
+      const quantityRequested = Number(partRequest.quantityRequested || 0);
+      const part = mongoose.Types.ObjectId.isValid(partRequest.partId)
+        ? await Part.findOne({
+          _id: partRequest.partId,
+          ...companyFilter(partRequest.companyName)
+        })
+        : null;
+
+      let purchaseOrder = null;
+      if (part && !part.nonStock && Number(part.available || 0) >= quantityRequested) {
+        await allocateApprovedRequestFromStock(partRequest, part, approver);
+      } else {
+        purchaseOrder = await createPurchaseOrderForApprovedRequest(partRequest, approver, req);
+      }
       
       const updated = await partRequest.save();
-      res.json(updated);
+      res.json({
+        partRequest: updated,
+        purchaseOrder,
+        action: updated.stockDecision
+      });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -239,10 +368,7 @@ module.exports = {
         return res.status(400).json({ error: 'Request must be APPROVED to record given status' });
       }
       
-      const giver = req.body?.givenBy || '';
-      if (!giver) {
-        return res.status(400).json({ error: 'givenBy is required' });
-      }
+      const giver = buildActor(req);
       
       const quantityGiven = Number(req.body?.quantityGiven || 0);
       

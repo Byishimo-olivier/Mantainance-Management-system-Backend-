@@ -43,6 +43,14 @@ const PartRequestSchema = new mongoose.Schema(
       quantityGiven: { type: Number, default: 0 },
       quantityReceived: { type: Number, default: 0 }
     },
+
+    stockDecision: {
+      type: String,
+      enum: ['', 'ALLOCATED_FROM_STOCK', 'PURCHASE_ORDER_CREATED'],
+      default: ''
+    },
+    purchaseOrderId: { type: String, default: '', index: true },
+    purchaseOrderNumber: { type: String, default: '' },
     
     // History of changes
     history: [{

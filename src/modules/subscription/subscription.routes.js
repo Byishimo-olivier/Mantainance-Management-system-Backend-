@@ -24,6 +24,7 @@ router.post('/trial/upgrade-to-paid', authenticate, ctrl.upgradeToPaid);
 router.get('/trial/can-access', authenticate, ctrl.canAccessFeatures);
 router.get('/trial/companies', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.getTrialCompanies);
 router.post('/trial/companies/:companyId/extend', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.extendFreeTrial);
+router.patch('/company/:companyId/free-staff-invites', authenticate, authorizeRoles('superadmin', 'super-admin', 'admin', 'manager'), ctrl.updateCompanyFreeStaffInvites);
 
 // ============================================
 // FEATURE ACCESS ROUTES

@@ -9,38 +9,42 @@ console.log('EMAIL_USER:', process.env.EMAIL_USER ? 'Set' : 'NOT SET');
 console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET');
 console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'gmail');
 
+const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 465 } = {}) => {
+  const host = process.env.SMTP_HOST || defaultHost;
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : defaultPort;
+  const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
+
+  console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure})`);
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user: process.env.SMTP_AUTH_USER || process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD
+    },
+    tls: {
+      rejectUnauthorized: false,
+      minVersion: 'TLSv1.2'
+    },
+    debug: process.env.NODE_ENV !== 'production',
+    logger: process.env.NODE_ENV !== 'production',
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
+  });
+};
+
 // Create transporter with service-specific configuration
 let transporter;
 
 const emailService = process.env.EMAIL_SERVICE || 'gmail';
 
 if (emailService === 'gmail') {
-  // Gmail configuration
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  // Use port 465 and secure: true as default for production/cloud environments
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465;
-  const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
-
-  console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure})`);
-
-  transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    },
-    tls: {
-      rejectUnauthorized: false,
-      minVersion: 'TLSv1.2'
-    },
-    debug: true,
-    logger: true,
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000
-  });
+  transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
+} else if (emailService === 'cpanel' || emailService === 'smtp') {
+  transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
 } else if (emailService === 'outlook' || emailService === 'hotmail') {
   // Outlook/Hotmail configuration
   transporter = nodemailer.createTransport({

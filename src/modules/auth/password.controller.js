@@ -9,18 +9,18 @@ const prisma = new PrismaClient();
 
 // Mirror the same transporter config that email.service.js uses successfully
 const createTransporter = () => {
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465;
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465;
   const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
 
   console.log(`[PASSWORD RESET] SMTP config: host=${process.env.SMTP_HOST}, port=${port}, secure=${secure}, user=${process.env.EMAIL_USER}`);
 
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    host: process.env.SMTP_HOST || 'mail.fixnest.rw',
     port,
     secure,
     auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      user: process.env.SMTP_AUTH_USER || process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD,
     },
     tls: {
       rejectUnauthorized: false,
