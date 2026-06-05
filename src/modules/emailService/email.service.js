@@ -767,7 +767,8 @@ module.exports = {
       });
 
       // Send to the same stakeholder set: admins, managers, and clients.
-      const companyEmails = await this.getAdminManagerClientEmails(companyName);
+      const notificationCompanyName = companyName || requestData.companyName;
+      const companyEmails = await this.getAdminManagerClientEmails(notificationCompanyName);
       const allRecipients = uniqueEmails(companyEmails, clientData?.email, requestData?.email);
       
       console.log('Recipients found:', allRecipients.length, '(admins/managers/client)');
@@ -956,7 +957,7 @@ module.exports = {
      
      const filter = {
        role: { in: roles },
-       status: 'active'
+       status: { in: ['active', 'Active'] }
      };
      
      if (companyName) {
