@@ -64,7 +64,10 @@ module.exports = {
     if (items && items.length > 0) {
       const toCreate = items.map((it) => ({
         materialId: it.materialId || it.title || `ITEM-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-        quantity: it.quantity || 1,
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        unitOfMeasurement: it.unitOfMeasurement || it.unit || it.uom || null,
+        unitCost: Number(it.unitCost ?? it.cost ?? it.price ?? 0) || 0,
+        amount: Number(it.amount ?? ((Number(it.quantity) || 1) * (Number(it.unitCost ?? it.cost ?? it.price ?? 0) || 0))) || 0,
         materialRequestId: created.id
       }));
       for (const item of toCreate) {

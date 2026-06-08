@@ -107,9 +107,28 @@ async function create(req, res) {
     if (payload.title || payload.items || payload.quantity) {
       const items = [];
       if (payload.items && Array.isArray(payload.items)) {
-        items.push(...payload.items.map(i => ({ materialId: i.materialId, quantity: i.quantity })));
+        items.push(...payload.items
+          .map(i => ({
+            materialId: String(i.materialId || i.partId || i.title || '').trim(),
+            quantity: Math.max(1, Number(i.quantity) || 1),
+            unitOfMeasurement: String(i.unitOfMeasurement || i.unit || i.uom || '').trim() || null,
+            unitCost: Number(i.unitCost ?? i.cost ?? i.price ?? 0) || 0,
+            amount: Number(i.amount ?? ((Number(i.quantity) || 1) * (Number(i.unitCost ?? i.cost ?? i.price ?? 0) || 0))) || 0
+          }))
+          .filter(i => i.materialId));
       } else {
-        items.push({ title: payload.title, quantity: payload.quantity || 1 });
+        const title = String(payload.title || '').trim();
+        if (title) {
+          const quantity = Math.max(1, Number(payload.quantity) || 1);
+          const unitCost = Number(payload.unitCost ?? payload.cost ?? payload.price ?? 0) || 0;
+          items.push({
+            title,
+            quantity,
+            unitOfMeasurement: String(payload.unitOfMeasurement || payload.unit || payload.uom || '').trim() || null,
+            unitCost,
+            amount: Number(payload.amount ?? (quantity * unitCost)) || 0
+          });
+        }
       }
       const created = await service.createWithItems(createData, items);
       return sendJson(res, enrichRequest(created), 201);
@@ -209,6 +228,9 @@ function enrichRequest(r) {
     id: it.id,
     materialId: it.materialId,
     quantity: it.quantity,
+    unitOfMeasurement: it.unitOfMeasurement || it.unit || it.uom || '',
+    unitCost: Number(it.unitCost ?? it.cost ?? it.price ?? 0) || 0,
+    amount: Number(it.amount ?? ((Number(it.quantity) || 0) * (Number(it.unitCost ?? it.cost ?? it.price ?? 0) || 0))) || 0,
     title: it.title || it.materialId || ''
   }));
   return out;
@@ -220,6 +242,7 @@ const buildPurchaseOrderItemsFromStock = (stockItems = [], includeAll = false) =
     .map((item) => ({
       name: item.materialName || item.materialId || 'Material',
       quantity: Math.max(1, Number((item.needsPurchase ? item.shortage : item.quantityNeeded) || item.quantityNeeded || 1)),
+      unitOfMeasurement: item.unitOfMeasurement || item.unit || item.uom || '',
       unitCost: Number(item.unitCost || 0),
       partId: /^[a-f\d]{24}$/i.test(String(item.partId || '')) ? item.partId : undefined,
       notes: `Raised from approved material request. Needed ${Number(item.quantityNeeded || 1)}, available ${Number(item.availableStock || 0)}.`

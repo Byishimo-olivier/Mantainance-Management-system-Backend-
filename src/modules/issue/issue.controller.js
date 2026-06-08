@@ -1383,9 +1383,9 @@ exports.create = async (req, res) => {
 
     console.log('[CREATE ISSUE] Issue created with id:', created?.id, 'userId:', created?.userId);
 
-    res.status(201).json(normalizeExtendedJSON(created));
+    const responsePayload = normalizeExtendedJSON(created);
 
-    void (async () => {
+    await (async () => {
     // Send email notification to admins/managers on request/issue creation
     try {
       if (created && created.companyName) {
@@ -1633,6 +1633,7 @@ exports.create = async (req, res) => {
     }
 
     })();
+    res.status(201).json(responsePayload);
     return;
   } catch (err) {
     console.error('[CREATE ISSUE CRASH PREVENTED]', {

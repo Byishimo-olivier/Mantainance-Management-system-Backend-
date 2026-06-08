@@ -344,6 +344,9 @@ model MaterialRequestItem {
   id                String @id @default(auto()) @map("_id") @db.ObjectId
   materialId        String
   quantity          Int
+  unitOfMeasurement String?
+  unitCost          Float?
+  amount            Float?
   materialRequestId String
 }
 

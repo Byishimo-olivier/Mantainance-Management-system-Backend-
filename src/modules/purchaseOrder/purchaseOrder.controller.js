@@ -29,13 +29,19 @@ const normalizeItems = (items = []) => {
   if (!Array.isArray(items)) return [];
   return items
     .filter(i => i && (i.name || i.partName || i.title))
-    .map(i => ({
-      name: i.name || i.partName || i.title || 'Item',
-      quantity: Number(i.quantity || i.qty || 1),
-      unitCost: Number(i.unitCost || i.cost || i.price || 0),
-      partId: i.partId || i.part || i.part_id || undefined,
-      notes: i.notes || ''
-    }));
+    .map(i => {
+      const quantity = Math.max(1, Number(i.quantity || i.qty || 1) || 1);
+      const unitCost = Number(i.unitCost ?? i.cost ?? i.price ?? 0) || 0;
+      return {
+        name: i.name || i.partName || i.title || 'Item',
+        quantity,
+        unitOfMeasurement: String(i.unitOfMeasurement || i.unit || i.uom || '').trim(),
+        unitCost,
+        amount: Number(i.amount ?? (quantity * unitCost)) || 0,
+        partId: i.partId || i.part || i.part_id || undefined,
+        notes: i.notes || ''
+      };
+    });
 };
 
 const buildCreatedBy = (req, payload = {}) => {
@@ -89,7 +95,9 @@ const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '', exp
     <tr>
       <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.name || 'Item'}</td>
       <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${Number(item.quantity || 0)}</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.unitOfMeasurement || '—'}</td>
       <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${Number(item.unitCost || 0).toFixed(2)}</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${Number(item.amount || ((Number(item.quantity || 0)) * (Number(item.unitCost || 0)))).toFixed(2)}</td>
     </tr>
   `).join('');
 
@@ -115,7 +123,9 @@ const sendVendorPurchaseOrderEmail = async (poDoc, explicitVendorEmail = '', exp
             <tr style="background:#eff6ff;">
               <th style="text-align:left;padding:8px;">Item</th>
               <th style="text-align:left;padding:8px;">Qty</th>
+              <th style="text-align:left;padding:8px;">Unit</th>
               <th style="text-align:left;padding:8px;">Unit Cost</th>
+              <th style="text-align:left;padding:8px;">Amount</th>
             </tr>
           </thead>
           <tbody>${itemsHtml}</tbody>
@@ -179,7 +189,9 @@ const notifyCompanyPurchaseOrderResponse = async (poDoc, response, note = '') =>
       <tr>
         <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.name || 'Item'}</td>
         <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${Number(item.quantity || 0)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.unitOfMeasurement || '—'}</td>
         <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${Number(item.unitCost || 0).toFixed(2)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${Number(item.amount || ((Number(item.quantity || 0)) * (Number(item.unitCost || 0)))).toFixed(2)}</td>
       </tr>
     `).join('');
 
@@ -204,7 +216,9 @@ const notifyCompanyPurchaseOrderResponse = async (poDoc, response, note = '') =>
               <tr style="background:#eff6ff;">
                 <th style="text-align:left;padding:8px;">Item</th>
                 <th style="text-align:left;padding:8px;">Qty</th>
+                <th style="text-align:left;padding:8px;">Unit</th>
                 <th style="text-align:left;padding:8px;">Unit Cost</th>
+                <th style="text-align:left;padding:8px;">Amount</th>
               </tr>
             </thead>
             <tbody>${itemsHtml}</tbody>

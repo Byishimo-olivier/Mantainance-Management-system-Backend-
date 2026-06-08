@@ -486,29 +486,56 @@ const generateWorkOrderForPM = async (schedule, pmInstance, sendNotification = t
         
         if (recipients.length === 0) {
           console.log('[PM Auto Gen] No recipients found for work-order generated email:', scheduleId);
+        } else {
+          // Send work order created notifications using the standard email template
+          console.log('[PM Auto Gen] Sending work order created emails to', recipients.length, 'recipients');
+          
+          try {
+            // Use the standard sendWorkOrderCreatedNotification which has proper templates and error handling
+            await emailService.sendWorkOrderCreatedNotification(
+              issueData,
+              null,
+              schedule.companyName || schedule.company
+            );
+            console.log('[PM Auto Gen] Work order created emails sent successfully');
+          } catch (emailError) {
+            console.error('[PM Auto Gen] Failed to send work order created emails via standard template:', emailError.message);
+            // Fallback to direct email sending for individual recipients
+            console.log('[PM Auto Gen] Attempting fallback email sending to individual recipients');
+            for (const notifyUser of recipients) {
+              try {
+                await emailService.sendEmail({
+                  to: notifyUser.email,
+                  fromName: 'Fixnest',
+                  subject: buildTriggeredWorkOrderSubject(issueData, schedule),
+                  html: buildTriggeredWorkOrderEmail({ issueData, schedule, notifyUser, workOrderId }),
+                });
+              } catch (singleEmailError) {
+                console.error(`[PM Auto Gen] Failed to send email to ${notifyUser.email}:`, singleEmailError.message);
+              }
+            }
+          }
         }
 
+        // Send in-app notifications
         for (const notifyUser of recipients) {
           if (notifyUser.id) {
-            await notificationService.createNotification({
-              userId: notifyUser.id,
-              type: 'workorder-created',
-              title: `Work Order Created: ${issueData.title}`,
-              message: `A new work order has been created for PM schedule: ${schedule.name}`,
-              relatedItemId: workOrderId,
-              relatedItemType: 'WorkOrder',
-            });
+            try {
+              await notificationService.createNotification({
+                userId: notifyUser.id,
+                type: 'workorder-created',
+                title: `Work Order Created: ${issueData.title}`,
+                message: `A new work order has been created for PM schedule: ${schedule.name}`,
+                relatedItemId: workOrderId,
+                relatedItemType: 'WorkOrder',
+              });
+            } catch (notifError) {
+              console.error(`[PM Auto Gen] Failed to create in-app notification for user ${notifyUser.id}:`, notifError.message);
+            }
           }
-
-          await emailService.sendEmail({
-            to: notifyUser.email,
-            fromName: 'Fixnest',
-            subject: buildTriggeredWorkOrderSubject(issueData, schedule),
-            html: buildTriggeredWorkOrderEmail({ issueData, schedule, notifyUser, workOrderId }),
-          });
         }
       } catch (notificationError) {
-        console.warn('[PM Auto Gen] Failed to send notification:', notificationError.message);
+        console.error('[PM Auto Gen] Failed to send notification:', notificationError.message);
       }
     }
 

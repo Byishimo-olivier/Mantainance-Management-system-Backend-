@@ -5,7 +5,9 @@ const ItemSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     quantity: { type: Number, default: 1 },
+    unitOfMeasurement: { type: String, default: '' },
     unitCost: { type: Number, default: 0 },
+    amount: { type: Number, default: 0 },
     partId: { type: mongoose.Schema.Types.ObjectId, ref: 'Part' },
     notes: { type: String, default: '' }
   },
@@ -70,7 +72,11 @@ const PurchaseOrderSchema = new mongoose.Schema(
 );
 
 const computeTotal = (items = []) =>
-  items.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unitCost) || 0), 0);
+  items.reduce((sum, i) => {
+    const explicitAmount = Number(i.amount);
+    if (Number.isFinite(explicitAmount) && explicitAmount > 0) return sum + explicitAmount;
+    return sum + (Number(i.quantity) || 0) * (Number(i.unitCost) || 0);
+  }, 0);
 
 // Keep totals & identifiers in sync even when caller omits them
 PurchaseOrderSchema.pre('validate', function () {
