@@ -748,7 +748,7 @@ exports.updateUser = async (req, res) => {
     }
 
     const updates = {};
-    ['name', 'phone', 'role', 'status', 'companyName', 'accessLevel', 'branchName', 'branchDetails', 'companyType'].forEach((field) => {
+    ['name', 'phone', 'phoneNumber', 'jobTitle', 'hourlyRate', 'role', 'status', 'companyName', 'accessLevel', 'branchName', 'branchDetails', 'companyType', 'categories'].forEach((field) => {
       if (req.body?.[field] !== undefined) updates[field] = req.body[field];
     });
     if (req.body?.email !== undefined) updates.email = normalizeEmail(req.body.email);
