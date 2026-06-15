@@ -1,27 +1,17 @@
 const nodemailer = require('nodemailer');
-const path = require('path');
-const fs = require('fs');
 
-// Load environment variables with explicit path
-const envPath = path.join(__dirname, '../../.env');
-console.log(`[EMAIL] Attempting to load .env from: ${envPath}`);
-if (fs.existsSync(envPath)) {
-  console.log(`[EMAIL] ✓ .env file exists`);
-  require('dotenv').config({ path: envPath });
-} else {
-  console.warn(`[EMAIL] ⚠️ .env file not found at ${envPath}, trying default`);
-  require('dotenv').config();
-}
+// NOTE: .env is already loaded by index.js at startup
+// We just use process.env directly here
 
 // Debug: Check all email-related env vars
-console.log('🔍 [EMAIL] Environment Variables:');
+console.log('\n🔍 [EMAIL] ENVIRONMENT CHECK:');
 console.log(`  EMAIL_SERVICE: "${process.env.EMAIL_SERVICE || 'NOT SET'}"`);
 console.log(`  SMTP_HOST: "${process.env.SMTP_HOST || 'NOT SET'}"`);
 console.log(`  SMTP_PORT: "${process.env.SMTP_PORT || 'NOT SET'}"`);
 console.log(`  SMTP_SECURE: "${process.env.SMTP_SECURE || 'NOT SET'}"`);
 console.log(`  SMTP_AUTH_USER: "${process.env.SMTP_AUTH_USER || 'NOT SET'}"`);
 console.log(`  EMAIL_USER: "${process.env.EMAIL_USER || 'NOT SET'}"`);
-console.log(`  EMAIL_PASS: ${process.env.EMAIL_PASS ? '✓ Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET'}`);
+console.log(`  EMAIL_PASS: ${process.env.EMAIL_PASS ? '✓ Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET'}\n`);
 
 const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 465 } = {}) => {
   try {
