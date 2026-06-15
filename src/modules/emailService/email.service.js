@@ -10,43 +10,60 @@ console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'Set (length: ' + process.en
 console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'gmail');
 
 const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 465 } = {}) => {
-  const host = process.env.SMTP_HOST || defaultHost;
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : defaultPort;
-  const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
+  try {
+    const host = process.env.SMTP_HOST || defaultHost;
+    const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : defaultPort;
+    const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
+    const user = process.env.SMTP_AUTH_USER || process.env.EMAIL_USER;
+    const pass = process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD;
 
-  console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure})`);
+    if (!user || !pass) {
+      console.warn(`[EMAIL] ⚠️ Missing credentials - SMTP_AUTH_USER/EMAIL_USER or EMAIL_PASS not set`);
+    }
 
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: {
-      user: process.env.SMTP_AUTH_USER || process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD
-    },
-    tls: {
-      rejectUnauthorized: false,
-      minVersion: 'TLSv1.2'
-    },
-    debug: process.env.NODE_ENV !== 'production',
-    logger: process.env.NODE_ENV !== 'production',
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000
-  });
+    console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure}, user: ${user ? 'set' : 'MISSING'})`);
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: {
+        user,
+        pass
+      },
+      tls: {
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2'
+      },
+      debug: process.env.NODE_ENV !== 'production',
+      logger: process.env.NODE_ENV !== 'production',
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 15000
+    });
+
+    console.log(`[EMAIL] ✅ SMTP transporter created successfully`);
+    return transporter;
+  } catch (error) {
+    console.error(`[EMAIL] ❌ Error creating SMTP transporter:`, error.message);
+    return null;
+  }
 };
 
 // Create transporter with service-specific configuration
 let transporter;
 
 const emailService = process.env.EMAIL_SERVICE || 'gmail';
+console.log(`[EMAIL] SERVICE: ${emailService}`);
 
 if (emailService === 'gmail') {
+  console.log('[EMAIL] Initializing Gmail SMTP');
   transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
 } else if (emailService === 'cpanel' || emailService === 'smtp') {
+  console.log('[EMAIL] Initializing cPanel SMTP');
   transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
 } else if (emailService === 'outlook' || emailService === 'hotmail') {
-  // Outlook/Hotmail configuration
+  console.log('[EMAIL] Initializing Outlook/Hotmail');
   transporter = nodemailer.createTransport({
     service: 'outlook',
     auth: {
@@ -59,21 +76,21 @@ if (emailService === 'gmail') {
     }
   });
 } else if (emailService === 'sendgrid') {
-  // SendGrid configuration
+  console.log('[EMAIL] Initializing SendGrid');
   transporter = nodemailer.createTransport({
     host: 'smtp.sendgrid.net',
     port: 587,
     secure: false,
     auth: {
-      user: 'apikey', // SendGrid requires 'apikey' as username
-      pass: process.env.EMAIL_PASS // Your SendGrid API key
+      user: 'apikey',
+      pass: process.env.EMAIL_PASS
     },
     tls: {
       ciphers: 'SSLv3'
     }
   });
 } else if (emailService === 'ethereal') {
-  // Ethereal Email (fake SMTP for testing - emails are captured in web interface)
+  console.log('[EMAIL] Initializing Ethereal (test)');
   transporter = nodemailer.createTransport({
     host: 'smtp.ethereal.email',
     port: 587,
@@ -84,7 +101,7 @@ if (emailService === 'gmail') {
     }
   });
 } else {
-  console.warn(`⚠️ Unrecognized EMAIL_SERVICE: "${emailService}". Defaulting to Gmail SMTP.`);
+  console.warn(`[EMAIL] ⚠️ Unrecognized EMAIL_SERVICE: "${emailService}". Defaulting to Gmail SMTP.`);
   transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
 }
 
