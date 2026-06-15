@@ -84,6 +84,8 @@ if (emailService === 'gmail') {
     }
   });
 } else {
+  console.warn(`⚠️ Unrecognized EMAIL_SERVICE: "${emailService}". Defaulting to Gmail SMTP.`);
+  transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
 }
 
 // Verify transporter configuration (async, non-blocking)
@@ -487,6 +489,7 @@ module.exports = {
       if (!to) throw new Error('Recipient email (to) is required');
       if (!subject) throw new Error('Email subject is required');
       if (!html && !text) throw new Error('Email body (html or text) is required');
+      if (!transporter) throw new Error('Email transporter is not initialized. Check EMAIL_SERVICE configuration.');
 
       const senderName = fromName || process.env.EMAIL_FROM_NAME;
       const from = senderName
@@ -1041,6 +1044,12 @@ module.exports = {
   // Send reminder emails for routine maintenance
   async sendMaintenanceReminder(schedule, recipients) {
     try {
+      if (!transporter) throw new Error('Email transporter is not initialized. Check EMAIL_SERVICE configuration.');
+      if (!recipients || recipients.length === 0) {
+        console.log('No recipients provided for maintenance reminder, skipping.');
+        return;
+      }
+
       const subject = `Maintenance Reminder: ${schedule.name}`;
       const reminderLeadMinutes = Number(schedule.reminderLeadMinutes || 60);
       const html = `
@@ -1057,11 +1066,6 @@ module.exports = {
           <p>Please ensure the routine maintenance task is performed on time.</p>
         </div>
       `;
-
-      if (!recipients || recipients.length === 0) {
-        console.log('No recipients provided for maintenance reminder, skipping.');
-        return;
-      }
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
