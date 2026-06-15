@@ -3,16 +3,16 @@ const os = require('os');
 const dotenv = require('dotenv');
 
 [
-  path.resolve(__dirname, '../.env'),
-  path.join(os.homedir(), '.env')
-].forEach((envPath, index) => {
+  { path: path.join(os.homedir(), '.env'), override: false },
+  { path: path.resolve(__dirname, '../.env'), override: true }
+].forEach((envFile) => {
   const result = dotenv.config({
-    path: envPath,
-    override: index > 0
+    path: envFile.path,
+    override: envFile.override
   });
 
   if (result.error && result.error.code !== 'ENOENT') {
-    console.warn(`[env] Failed to load ${envPath}: ${result.error.message}`);
+    console.warn(`[env] Failed to load ${envFile.path}: ${result.error.message}`);
   }
 });
 
@@ -74,21 +74,29 @@ const { auditRequests } = require('./middleware/audit');
 
 const app = express();
 
+const parseOriginList = (value = '') => String(value)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 // CORS configuration
 const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
+  'https://fixnest.rw',
+  'https://www.fixnest.rw',
+  'https://api.fixnest.rw',
   process.env.FRONTEND_URL,
-  // 'https://fixnest.rw',
-  // 'https://www.fixnest.rw',
+  process.env.BACKEND_URL,
+  ...parseOriginList(process.env.CORS_ORIGIN),
   'https://mms-frontend.vercel.app',
 ].filter(Boolean);
 
 console.log('Allowed Origins:', allowedOrigins);
 
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
@@ -109,8 +117,12 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));

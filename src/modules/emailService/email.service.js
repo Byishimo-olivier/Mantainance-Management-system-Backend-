@@ -11,7 +11,7 @@ console.log(`  SMTP_PORT: "${process.env.SMTP_PORT || 'NOT SET'}"`);
 console.log(`  SMTP_SECURE: "${process.env.SMTP_SECURE || 'NOT SET'}"`);
 console.log(`  SMTP_AUTH_USER: "${process.env.SMTP_AUTH_USER || 'NOT SET'}"`);
 console.log(`  EMAIL_USER: "${process.env.EMAIL_USER || 'NOT SET'}"`);
-console.log(`  EMAIL_PASS: ${process.env.EMAIL_PASS ? '✓ Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET'}\n`);
+console.log(`  SMTP_AUTH_PASS/EMAIL_PASS: ${process.env.SMTP_AUTH_PASS || process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD ? '✓ Set (length: ' + (process.env.SMTP_AUTH_PASS || process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD).length + ')' : 'NOT SET'}\n`);
 
 const createSmtpTransporter = ({ defaultHost = 'whm-market05.aos.rw', defaultPort = 465 } = {}) => {
   try {
@@ -19,7 +19,7 @@ const createSmtpTransporter = ({ defaultHost = 'whm-market05.aos.rw', defaultPor
     const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : defaultPort;
     const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
     const user = process.env.SMTP_AUTH_USER || process.env.EMAIL_USER;
-    const pass = process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD;
+    const pass = process.env.SMTP_AUTH_PASS || process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD;
     
     console.log(`[EMAIL] Creating transporter: host=${host}, port=${port}, secure=${secure}, user=${user}`);
     if (!process.env.SMTP_HOST) {
@@ -27,7 +27,7 @@ const createSmtpTransporter = ({ defaultHost = 'whm-market05.aos.rw', defaultPor
     }
 
     if (!user || !pass) {
-      console.warn(`[EMAIL] ⚠️ Missing credentials - SMTP_AUTH_USER/EMAIL_USER or EMAIL_PASS not set`);
+      console.warn(`[EMAIL] ⚠️ Missing credentials - SMTP_AUTH_USER/EMAIL_USER or SMTP_AUTH_PASS/EMAIL_PASS not set`);
     }
 
     console.log(`[EMAIL] Configuring SMTP: ${host}:${port} (secure: ${secure}, user: ${user ? 'set' : 'MISSING'})`);
@@ -135,9 +135,10 @@ setTimeout(() => {
     if (error) {
       console.error('❌ Email transporter verification failed:', error.message);
       console.error('This may be due to SMTP credentials or network restrictions. Please check:');
-      console.error(' - EMAIL_USER and EMAIL_PASS are set in the environment');
-      console.error(' - If using Gmail, enable 2FA and create an App Password for EMAIL_PASS');
-      console.error(' - Hosting provider may block outbound SMTP; consider SendGrid/Sendinblue as alternative');
+      console.error(' - SMTP_AUTH_USER is the full cPanel mailbox address, for example info@fixnest.rw');
+      console.error(' - SMTP_AUTH_PASS or EMAIL_PASS exactly matches the mailbox password from cPanel');
+      console.error(' - SMTP_HOST, SMTP_PORT, and SMTP_SECURE match the provider mail settings');
+      console.error(' - If auth still fails, reset the mailbox password in cPanel and update the server .env');
     } else {
       console.log('✅ Email transporter is ready to send messages');
     }
