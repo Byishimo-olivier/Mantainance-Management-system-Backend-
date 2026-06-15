@@ -28,11 +28,11 @@ const getReplyToAddress = () => {
 };
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  host: process.env.SMTP_HOST || 'whm-market05.aos.rw',
   port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
   secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : true,
   auth: {
-    user: process.env.EMAIL_USER,
+    user: process.env.SMTP_AUTH_USER || process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD
   },
   tls: {

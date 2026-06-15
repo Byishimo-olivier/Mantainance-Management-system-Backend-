@@ -2,12 +2,21 @@ const ContactMessage = require('./contactMessage.model');
 const User = require('../user/user.model');
 const nodemailer = require('nodemailer');
 
+const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465;
+const smtpSecure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : smtpPort === 465;
+
 // Email transporter configuration
 const transporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE || 'gmail',
+  host: process.env.SMTP_HOST || 'whm-market05.aos.rw',
+  port: smtpPort,
+  secure: smtpSecure,
   auth: {
-    user: process.env.EMAIL_USER,
+    user: process.env.SMTP_AUTH_USER || process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD
+  },
+  tls: {
+    rejectUnauthorized: false,
+    minVersion: 'TLSv1.2'
   }
 });
 

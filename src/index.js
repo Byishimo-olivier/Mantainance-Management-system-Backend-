@@ -1,4 +1,21 @@
-require('dotenv').config();
+const path = require('path');
+const os = require('os');
+const dotenv = require('dotenv');
+
+[
+  path.resolve(__dirname, '../.env'),
+  path.join(os.homedir(), '.env')
+].forEach((envPath, index) => {
+  const result = dotenv.config({
+    path: envPath,
+    override: index > 0
+  });
+
+  if (result.error && result.error.code !== 'ENOENT') {
+    console.warn(`[env] Failed to load ${envPath}: ${result.error.message}`);
+  }
+});
+
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
