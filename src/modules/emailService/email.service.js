@@ -1,13 +1,27 @@
 const nodemailer = require('nodemailer');
+const path = require('path');
+const fs = require('fs');
 
-// Load environment variables
-require('dotenv').config();
+// Load environment variables with explicit path
+const envPath = path.join(__dirname, '../../.env');
+console.log(`[EMAIL] Attempting to load .env from: ${envPath}`);
+if (fs.existsSync(envPath)) {
+  console.log(`[EMAIL] ✓ .env file exists`);
+  require('dotenv').config({ path: envPath });
+} else {
+  console.warn(`[EMAIL] ⚠️ .env file not found at ${envPath}, trying default`);
+  require('dotenv').config();
+}
 
-// Debug: Check if email credentials are loaded
-console.log('🔍 Email credentials check:');
-console.log('EMAIL_USER:', process.env.EMAIL_USER ? 'Set' : 'NOT SET');
-console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET');
-console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'gmail');
+// Debug: Check all email-related env vars
+console.log('🔍 [EMAIL] Environment Variables:');
+console.log(`  EMAIL_SERVICE: "${process.env.EMAIL_SERVICE || 'NOT SET'}"`);
+console.log(`  SMTP_HOST: "${process.env.SMTP_HOST || 'NOT SET'}"`);
+console.log(`  SMTP_PORT: "${process.env.SMTP_PORT || 'NOT SET'}"`);
+console.log(`  SMTP_SECURE: "${process.env.SMTP_SECURE || 'NOT SET'}"`);
+console.log(`  SMTP_AUTH_USER: "${process.env.SMTP_AUTH_USER || 'NOT SET'}"`);
+console.log(`  EMAIL_USER: "${process.env.EMAIL_USER || 'NOT SET'}"`);
+console.log(`  EMAIL_PASS: ${process.env.EMAIL_PASS ? '✓ Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET'}`);
 
 const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 465 } = {}) => {
   try {
@@ -16,6 +30,11 @@ const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 4
     const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465;
     const user = process.env.SMTP_AUTH_USER || process.env.EMAIL_USER;
     const pass = process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD;
+    
+    console.log(`[EMAIL] Creating transporter: host=${host}, port=${port}, secure=${secure}, user=${user}`);
+    if (!process.env.SMTP_HOST) {
+      console.warn(`[EMAIL] ⚠️ SMTP_HOST not set, using default: ${defaultHost}`);
+    }
 
     if (!user || !pass) {
       console.warn(`[EMAIL] ⚠️ Missing credentials - SMTP_AUTH_USER/EMAIL_USER or EMAIL_PASS not set`);
@@ -53,17 +72,20 @@ const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 4
 // Create transporter with service-specific configuration
 let transporter;
 
-const emailService = process.env.EMAIL_SERVICE || 'gmail';
-console.log(`[EMAIL] SERVICE: ${emailService}`);
+const emailService = (process.env.EMAIL_SERVICE || '').toLowerCase().trim();
+console.log(`[EMAIL] 🔄 SERVICE SELECTION: emailService="${emailService}"`);
 
-if (emailService === 'gmail') {
-  console.log('[EMAIL] Initializing Gmail SMTP');
-  transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
-} else if (emailService === 'cpanel' || emailService === 'smtp') {
-  console.log('[EMAIL] Initializing cPanel SMTP');
+if (emailService === 'cpanel') {
+  console.log('[EMAIL] ✅ SELECTED: cPanel SMTP');
   transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
+} else if (emailService === 'smtp') {
+  console.log('[EMAIL] ✅ SELECTED: SMTP');
+  transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
+} else if (emailService === 'gmail') {
+  console.log('[EMAIL] ✅ SELECTED: Gmail SMTP');
+  transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
 } else if (emailService === 'outlook' || emailService === 'hotmail') {
-  console.log('[EMAIL] Initializing Outlook/Hotmail');
+  console.log('[EMAIL] ✅ SELECTED: Outlook/Hotmail');
   transporter = nodemailer.createTransport({
     service: 'outlook',
     auth: {
@@ -76,7 +98,7 @@ if (emailService === 'gmail') {
     }
   });
 } else if (emailService === 'sendgrid') {
-  console.log('[EMAIL] Initializing SendGrid');
+  console.log('[EMAIL] ✅ SELECTED: SendGrid');
   transporter = nodemailer.createTransport({
     host: 'smtp.sendgrid.net',
     port: 587,
@@ -90,7 +112,7 @@ if (emailService === 'gmail') {
     }
   });
 } else if (emailService === 'ethereal') {
-  console.log('[EMAIL] Initializing Ethereal (test)');
+  console.log('[EMAIL] ✅ SELECTED: Ethereal (test)');
   transporter = nodemailer.createTransport({
     host: 'smtp.ethereal.email',
     port: 587,
@@ -101,8 +123,8 @@ if (emailService === 'gmail') {
     }
   });
 } else {
-  console.warn(`[EMAIL] ⚠️ Unrecognized EMAIL_SERVICE: "${emailService}". Defaulting to Gmail SMTP.`);
-  transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
+  console.warn(`[EMAIL] ⚠️ Unrecognized EMAIL_SERVICE: "${emailService}". Defaulting to cPanel SMTP.`);
+  transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
 }
 
 // Verify transporter configuration (async, non-blocking)
