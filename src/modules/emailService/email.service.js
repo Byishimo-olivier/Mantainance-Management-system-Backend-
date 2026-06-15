@@ -13,7 +13,7 @@ console.log(`  SMTP_AUTH_USER: "${process.env.SMTP_AUTH_USER || 'NOT SET'}"`);
 console.log(`  EMAIL_USER: "${process.env.EMAIL_USER || 'NOT SET'}"`);
 console.log(`  EMAIL_PASS: ${process.env.EMAIL_PASS ? '✓ Set (length: ' + process.env.EMAIL_PASS.length + ')' : 'NOT SET'}\n`);
 
-const createSmtpTransporter = ({ defaultHost = 'smtp.gmail.com', defaultPort = 465 } = {}) => {
+const createSmtpTransporter = ({ defaultHost = 'whm-market05.aos.rw', defaultPort = 465 } = {}) => {
   try {
     const host = process.env.SMTP_HOST || defaultHost;
     const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : defaultPort;
@@ -67,10 +67,10 @@ console.log(`[EMAIL] 🔄 SERVICE SELECTION: emailService="${emailService}"`);
 
 if (emailService === 'cpanel') {
   console.log('[EMAIL] ✅ SELECTED: cPanel SMTP');
-  transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
+  transporter = createSmtpTransporter({ defaultHost: 'whm-market05.aos.rw', defaultPort: 465 });
 } else if (emailService === 'smtp') {
   console.log('[EMAIL] ✅ SELECTED: SMTP');
-  transporter = createSmtpTransporter({ defaultHost: 'mail.fixnest.rw', defaultPort: 465 });
+  transporter = createSmtpTransporter({ defaultHost: 'whm-market05.aos.rw', defaultPort: 465 });
 } else if (emailService === 'gmail') {
   console.log('[EMAIL] ✅ SELECTED: Gmail SMTP');
   transporter = createSmtpTransporter({ defaultHost: 'smtp.gmail.com', defaultPort: 465 });
