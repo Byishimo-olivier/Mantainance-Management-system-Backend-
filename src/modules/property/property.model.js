@@ -109,8 +109,14 @@ const sanitizePropertyData = (data) => {
   const cleaned = {};
 
   for (const [key, rawVal] of Object.entries(data)) {
-    if (!module.exports._prismaFields.has(key)) continue;
+    if (!module.exports._prismaFields.has(key) && key !== 'Bathroom' && key !== 'bathroom') continue;
     if (rawVal === '' || rawVal === undefined) continue;
+
+    if (key === 'Bathroom' || key === 'bathroom') {
+      const num = Number(rawVal);
+      if (!Number.isNaN(num)) cleaned.baths = num;
+      continue;
+    }
 
     if (NUMERIC_FIELDS.has(key)) {
       const num = Number(rawVal);
@@ -283,14 +289,14 @@ module.exports = {
     }
   },
   update: async (id, data) => {
+    const prismaData = sanitizePropertyData(data);
     const col = getRawCollection('Property');
     if (col) {
       const { ObjectId } = require('mongodb');
-      await col.updateOne({ _id: new ObjectId(id) }, { $set: data });
+      await col.updateOne({ _id: new ObjectId(id) }, { $set: prismaData });
       const updated = await col.findOne({ _id: new ObjectId(id) });
       if (updated) return mapRecord(updated);
     }
-    const prismaData = sanitizePropertyData(data);
     try {
       return await prisma.property.update({ where: { id }, data: prismaData });
     } catch (err) {

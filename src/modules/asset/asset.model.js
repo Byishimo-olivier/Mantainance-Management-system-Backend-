@@ -325,6 +325,7 @@ module.exports = {
   },
   update: async (id, data) => {
     const payload = { ...data };
+    const existingAsset = await prisma.asset.findUnique({ where: { id } }).catch(() => null);
     delete payload.companyName;
     if (Object.prototype.hasOwnProperty.call(payload, 'name')) payload.name = toTrimmedString(payload.name);
     if (Object.prototype.hasOwnProperty.call(payload, 'type')) payload.type = toTrimmedString(payload.type) || 'General';
@@ -339,7 +340,12 @@ module.exports = {
     if (Object.prototype.hasOwnProperty.call(payload, 'warrantyUntil')) payload.warrantyUntil = toOptionalDate(payload.warrantyUntil);
     if (Object.prototype.hasOwnProperty.call(payload, 'photos')) payload.photos = toStringArray(payload.photos);
     if (Object.prototype.hasOwnProperty.call(payload, 'documents')) payload.documents = toStringArray(payload.documents);
-    if (Object.prototype.hasOwnProperty.call(payload, 'identifiers')) payload.identifiers = normalizeIdentifiersPayload(payload.identifiers);
+    if (Object.prototype.hasOwnProperty.call(payload, 'identifiers')) {
+      payload.identifiers = normalizeIdentifiersPayload({
+        ...((existingAsset && existingAsset.identifiers && typeof existingAsset.identifiers === 'object') ? existingAsset.identifiers : {}),
+        ...(payload.identifiers || {}),
+      });
+    }
     const rel = {};
     if (Object.prototype.hasOwnProperty.call(payload, 'propertyId')) {
       if (payload.propertyId) {
@@ -352,8 +358,18 @@ module.exports = {
     }
 
     // Merge building/block into the location JSON field for updates
-    let location = payload.location ? { ...payload.location } : {};
-    let hadLocation = false;
+    let location = (existingAsset && existingAsset.location && typeof existingAsset.location === 'object' && !Array.isArray(existingAsset.location))
+      ? { ...existingAsset.location }
+      : {};
+    let hadLocation = Object.prototype.hasOwnProperty.call(payload, 'location');
+    if (hadLocation) {
+      if (payload.location && typeof payload.location === 'object' && !Array.isArray(payload.location)) {
+        location = { ...location, ...payload.location };
+      } else if (payload.location === null) {
+        location = {};
+      }
+      delete payload.location;
+    }
     if (Object.prototype.hasOwnProperty.call(payload, 'building')) {
       if (payload.building !== undefined && payload.building !== null && payload.building !== '') {
         location.building = payload.building;
@@ -406,7 +422,7 @@ module.exports = {
       const incomingNorm = incomingArr.map(String).map(s => s.trim()).filter(Boolean);
       // fetch existing asset to merge
       try {
-        const existing = await prisma.asset.findUnique({ where: { id } });
+        const existing = existingAsset || await prisma.asset.findUnique({ where: { id } });
         let existingBlocks = [];
         if (existing && existing.location) {
           const eloc = existing.location;
