@@ -44,6 +44,7 @@ const privateNoteRoutes = require('./modules/privateNote/privateNote.routes');
 const subscriptionRoutes = require('./modules/subscription/subscription.routes');
 const meterRoutes = require('./modules/meter/meter.routes');
 const deviceRoutes = require('./modules/device/device.routes');
+const edgeIngestionService = require('./modules/device/edgeIngestion.service');
 const peopleRoutes = require('./modules/people/people.routes');
 const teamRoutes = require('./modules/team/team.routes');
 const checklistRoutes = require('./modules/checklist/checklist.routes');
@@ -249,6 +250,13 @@ mongoose.connection.once('open', () => {
     console.log('[bootstrap] PM Auto-Generation service started');
   } catch (err) {
     console.error('[bootstrap] Failed to start PM Auto-Generation service:', err);
+  }
+
+  try {
+    edgeIngestionService.startEdgeIngestionCron(cronService);
+    console.log('[bootstrap] Edge ingestion worker started');
+  } catch (err) {
+    console.error('[bootstrap] Failed to start edge ingestion worker:', err);
   }
   
   const { PrismaClient } = require('@prisma/client');

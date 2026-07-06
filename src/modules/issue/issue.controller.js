@@ -132,7 +132,22 @@ const issueHasAssignment = (issue) => {
 const getIssueRecordType = (issue) => {
   const referenceType = String(issue?.referenceType || issue?.recordType || '').toLowerCase();
   const tags = Array.isArray(issue?.tags) ? issue.tags.map((tag) => String(tag || '').toLowerCase()) : [];
-  if (issue?.createdBySchedule || issue?.isPreventive || issue?.pmTrigger || tags.some((tag) => tag.includes('prevent') || tag.includes('recurring-pm'))) {
+  if (
+    issue?.createdBySchedule
+    || issue?.createdByEdgeAlert
+    || issue?.sourceType === 'edge-gateway'
+    || issue?.isPreventive
+    || issue?.pmTrigger
+    || issue?.preventiveMaintenanceName
+    || issue?.scheduleName
+    || issue?.scheduleId
+    || issue?.parentScheduleId
+    || issue?.maintenanceScheduleId
+    || issue?.pmId
+    || issue?.pmInstanceId
+    || issue?.pmName
+    || tags.some((tag) => tag.includes('prevent') || tag.includes('recurring-pm') || tag.includes('edge') || tag.includes('alert'))
+  ) {
     return 'Triggered Work Order';
   }
   if (referenceType.includes('workorder') || referenceType.includes('work order')) {

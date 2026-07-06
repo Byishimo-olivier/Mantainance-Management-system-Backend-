@@ -205,6 +205,18 @@ function syncCalendarScheduleMetadata(target, existing = null) {
   const merged = { ...(existing || {}), ...target };
   if (!merged.calendarRule) return target;
 
+  if (merged.calendarRule.recurrenceType && !merged.calendarRule.unit) {
+    const recurrenceType = String(merged.calendarRule.recurrenceType).toLowerCase();
+    const unitMap = {
+      daily: 'day',
+      weekly: 'week',
+      monthly: 'month',
+      yearly: 'year'
+    };
+    merged.calendarRule.unit = unitMap[recurrenceType] || merged.calendarRule.unit || 'day';
+    target.calendarRule = { ...merged.calendarRule };
+  }
+
   const computedNextDate = maintenanceReminderService.getNextCalendarOccurrence(merged, new Date());
   if (computedNextDate && !Number.isNaN(computedNextDate.getTime())) {
     target.nextDate = computedNextDate;

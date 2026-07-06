@@ -133,6 +133,22 @@ class MaintenanceReminderService {
 
   getNextCalendarOccurrence(schedule, now) {
     const rule = schedule.calendarRule || {};
+    const recurrenceType = String(rule.recurrenceType || '').toLowerCase();
+    const nextDate = schedule.nextDate ? new Date(schedule.nextDate) : null;
+
+    if (nextDate && !Number.isNaN(nextDate.getTime())) {
+      if (nextDate > now) {
+        return nextDate;
+      }
+
+      if (recurrenceType && recurrenceType !== 'none') {
+        const nextInstance = pmRecurrenceService.calculateNextOccurrence(nextDate, rule);
+        if (nextInstance && !Number.isNaN(nextInstance.getTime())) {
+          return nextInstance;
+        }
+      }
+    }
+
     const every = Math.max(1, Number(rule.every) || 1);
     const unit = String(rule.unit || 'day').toLowerCase();
     const offsetMinutes = this.parseTimezoneOffsetMinutes(schedule.timezone || schedule.assetsRows?.[0]?.timezone);

@@ -1,4 +1,5 @@
 const service = require('./device.service');
+const edgeIngestionService = require('./edgeIngestion.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
 exports.getAll = async (req, res) => {
@@ -54,6 +55,16 @@ exports.delete = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('[device.delete]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.ingest = async (req, res) => {
+  try {
+    const results = await edgeIngestionService.pollAllGateways();
+    res.status(200).json(normalizeExtendedJSON(results));
+  } catch (err) {
+    console.error('[device.ingest]', err);
     res.status(500).json({ error: err.message });
   }
 };
