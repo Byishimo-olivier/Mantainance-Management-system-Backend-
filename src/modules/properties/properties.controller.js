@@ -15,7 +15,10 @@ exports.getAll = async (req, res) => {
     if (err instanceof Error && err.stack) {
       console.error('Stack trace:', err.stack);
     }
-    res.status(500).json({ error: err.message, details: err.stack });
+    res.status(500).json({
+      error: process.env.NODE_ENV === 'production' ? 'Failed to load properties' : err.message,
+      ...(process.env.NODE_ENV === 'production' ? {} : { details: err.stack })
+    });
   }
 };
 

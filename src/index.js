@@ -2,6 +2,11 @@ const path = require('path');
 const os = require('os');
 const dotenv = require('dotenv');
 
+// NODE_ENV set by the host (PM2, systemd, Docker, hosting panel) must win over
+// the value in .env, otherwise a leftover NODE_ENV=development in .env silently
+// puts production into debug mode (stack traces in responses, open CORS).
+const runtimeNodeEnv = process.env.NODE_ENV;
+
 [
   { path: path.join(os.homedir(), '.env'), override: false },
   { path: path.resolve(__dirname, '../.env'), override: true }
@@ -15,6 +20,11 @@ const dotenv = require('dotenv');
     console.warn(`[env] Failed to load ${envFile.path}: ${result.error.message}`);
   }
 });
+
+if (runtimeNodeEnv) {
+  process.env.NODE_ENV = runtimeNodeEnv;
+}
+console.log(`[env] NODE_ENV=${process.env.NODE_ENV || '(unset)'} | Node.js ${process.version}`);
 
 const express = require('express');
 const cors = require('cors');
@@ -356,6 +366,20 @@ app.use('/api/reports', dailyReportRoutes);
 app.use('/api/quote-requests', quoteRequestRoutes);
 app.use('/', demoRequestRoutes);
 app.use('/', contactMessageRoutes);
+
+// Final error handler: replaces Express's default handler, which returns full
+// stack traces whenever NODE_ENV is not 'production'.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[unhandled error]', req.method, req.originalUrl, err);
+  if (res.headersSent) return;
+  const status = err.status || err.statusCode || 500;
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.status(status).json({
+    error: status < 500 || !isProduction ? err.message : 'Internal server error',
+    ...(isProduction ? {} : { stack: err.stack })
+  });
+});
 
 const PORT = process.env.PORT || 5000;
 

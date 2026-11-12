@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "src/index.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "scripts": {
     "dev": "nodemon src/index.js",
