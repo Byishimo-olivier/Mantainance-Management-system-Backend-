@@ -24,6 +24,7 @@ const resolveCompanyName = async (req) => {
 
 exports.getAll = async (req, res) => {
   try {
+    if (!req.user) return res.json([]);
     const companyName = await resolveCompanyName(req);
     const items = await service.findAll(companyName, {
       search: req.query?.search,

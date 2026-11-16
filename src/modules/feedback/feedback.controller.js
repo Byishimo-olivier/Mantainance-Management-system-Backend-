@@ -1,10 +1,15 @@
 const feedbackService = require('./feedback.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
+const { isSuperAdmin } = require('../../utils/tenantScope');
 
 // GET /api/feedback/client/:userId
 exports.getFeedbackForClient = async (req, res) => {
   try {
     const { userId } = req.params;
+    // Only the user themself (or a superadmin) may read their feedback.
+    if (!isSuperAdmin(req.user) && String(req.user?.userId || '') !== String(userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const feedbacks = await feedbackService.getFeedbackForClient(userId);
     res.json(normalizeExtendedJSON(feedbacks));
   } catch (err) {

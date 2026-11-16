@@ -735,6 +735,16 @@ exports.acceptInvite = async (req, res) => {
   }
 };
 
+const ASSIGNABLE_ROLES = ['superadmin', 'admin', 'manager', 'technician', 'client', 'requestor', 'staff'];
+const ASSIGNABLE_STATUSES = ['active', 'inactive', 'locked', 'pending'];
+
+// Non-superadmins may only act on users of their own (non-empty) company.
+const canManageUserRecord = (actorRole, actorCompany, target) => {
+  if (actorRole === 'superadmin') return true;
+  if (!actorCompany) return false;
+  return String(target.companyName || '').trim().toLowerCase() === actorCompany.toLowerCase();
+};
+
 exports.updateUser = async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
@@ -743,7 +753,7 @@ exports.updateUser = async (req, res) => {
     const existing = await User.findById(id);
     if (!existing) return res.status(404).json({ error: 'User not found' });
 
-    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+    if (!canManageUserRecord(actorRole, actorCompany, existing)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -752,6 +762,30 @@ exports.updateUser = async (req, res) => {
       if (req.body?.[field] !== undefined) updates[field] = req.body[field];
     });
     if (req.body?.email !== undefined) updates.email = normalizeEmail(req.body.email);
+
+    if (updates.role !== undefined) {
+      updates.role = String(updates.role || '').trim().toLowerCase();
+      if (!ASSIGNABLE_ROLES.includes(updates.role)) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+      if (updates.role === 'superadmin' && actorRole !== 'superadmin') {
+        return res.status(403).json({ error: 'Only a superadmin can grant the superadmin role' });
+      }
+      if (String(existing.role || '').toLowerCase() === 'superadmin' && actorRole !== 'superadmin') {
+        return res.status(403).json({ error: 'Only a superadmin can change a superadmin account' });
+      }
+    }
+    if (updates.status !== undefined) {
+      updates.status = String(updates.status || '').trim().toLowerCase();
+      if (!ASSIGNABLE_STATUSES.includes(updates.status)) {
+        return res.status(400).json({ error: 'Invalid status' });
+      }
+    }
+    // Moving a user to another company is a platform-level change.
+    if (updates.companyName !== undefined && actorRole !== 'superadmin'
+      && String(updates.companyName || '').trim().toLowerCase() !== String(existing.companyName || '').trim().toLowerCase()) {
+      return res.status(403).json({ error: 'Only a superadmin can move a user to another company' });
+    }
 
     const updated = await User.findByIdAndUpdate(id, { $set: updates }, { new: true }).select('-password');
     res.json(updated);
@@ -768,8 +802,14 @@ exports.deleteUser = async (req, res) => {
     const existing = await User.findById(id);
     if (!existing) return res.status(404).json({ error: 'User not found' });
 
-    if (actorRole !== 'superadmin' && actorCompany && String(existing.companyName || '').trim() !== actorCompany) {
+    if (!canManageUserRecord(actorRole, actorCompany, existing)) {
       return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (String(existing._id) === String(req.user?.userId || req.user?.id || '')) {
+      return res.status(400).json({ error: 'You cannot delete your own account' });
+    }
+    if (String(existing.role || '').toLowerCase() === 'superadmin' && actorRole !== 'superadmin') {
+      return res.status(403).json({ error: 'Only a superadmin can delete a superadmin account' });
     }
 
     await User.findByIdAndDelete(id);

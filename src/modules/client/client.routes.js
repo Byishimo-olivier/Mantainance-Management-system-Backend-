@@ -7,6 +7,6 @@ const router = express.Router();
 router.get('/', authenticate, controller.listClients);
 router.post('/', authenticate, controller.createClient);
 router.post('/bulk', authenticate, controller.bulk);
-router.delete('/:id', controller.remove);
+router.delete('/:id', authenticate, controller.remove);
 
 module.exports = router;

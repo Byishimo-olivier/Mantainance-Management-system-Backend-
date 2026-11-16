@@ -1,4 +1,5 @@
 const service = require('./subscription.service');
+const { canAccessSubscription } = require('./subscription.access');
 const paymentService = require('./payment.service');
 const companySubscriptionService = require('./company-subscription.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
@@ -20,8 +21,8 @@ exports.createSubscription = async (req, res) => {
       });
     }
 
+    // clientId/secretId below are the app credentials checked by the service.
     const subscription = await service.createSubscription({
-      clientId: subscriptionClientId,
       userId,
       email: managerEmail || email,
       plan,
@@ -58,7 +59,7 @@ exports.getSubscriptionByClientId = async (req, res) => {
 
     const subscription = await service.getSubscriptionByClientId(clientId);
 
-    if (!subscription) {
+    if (!subscription || !(await canAccessSubscription(req.user, subscription))) {
       return res.status(404).json({ error: 'Subscription not found' });
     }
 

@@ -6,12 +6,12 @@ const router = express.Router();
 
 router.get('/', authenticate, controller.list);
 router.post('/bulk', authenticate, controller.bulk);
-router.get('/:id', controller.getById);
+router.get('/:id', authenticate, controller.getById);
 router.get('/:id/sets', authenticate, controller.getSets);
 router.post('/', authenticate, controller.create);
 router.put('/:id', authenticate, controller.update);
 router.post('/:id/adjust', authenticate, controller.adjustQuantity);
 router.put('/:id/record-allocation', authenticate, controller.recordAllocation);
-router.delete('/:id', controller.remove);
+router.delete('/:id', authenticate, controller.remove);
 
 module.exports = router;

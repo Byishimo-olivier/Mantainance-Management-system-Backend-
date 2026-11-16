@@ -48,7 +48,9 @@ module.exports = {
     try {
       const user = req.user;
       let properties;
-      if (!user || user.role === 'superadmin') {
+      if (!user) {
+        properties = [];
+      } else if (user.role === 'superadmin') {
         properties = await propertyModel.findAll();
       } else if ((user.role === 'admin' || user.role === 'manager' || user.role === 'client' || user.role === 'requestor') && user.companyName) {
         const companyUserIds = await getCompanyUserIds(user.companyName);

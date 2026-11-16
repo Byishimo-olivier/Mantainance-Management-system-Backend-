@@ -59,6 +59,9 @@ module.exports = {
       if (q.propertyId) filter.propertyId = q.propertyId;
       else if (q.property) filter.propertyId = q.property;
       const user = req.user;
+      if (!user && !filter.propertyId) {
+        return res.json([]);
+      }
       if (user && user.role !== 'superadmin') {
         let scopedPropertyIds = [];
 

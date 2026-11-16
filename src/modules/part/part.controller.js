@@ -1,4 +1,15 @@
 const Part = require('./part.model');
+const { isSuperAdmin } = require('../../utils/tenantScope');
+
+// Only superadmins may delete across companies; everyone else is limited to
+// records whose companyName matches their own.
+const canDeleteCompanyRecord = (user, record) => {
+  if (!user) return false;
+  if (String(user.role || '').toLowerCase() === 'superadmin') return true;
+  const userCompany = String(user.companyName || '').toLowerCase().trim();
+  const recordCompany = String(record.companyName || record.company || '').toLowerCase().trim();
+  return Boolean(userCompany) && userCompany === recordCompany;
+};
 
 const derivePartStatus = (data = {}) => {
   if (data.nonStock) return 'NON_STOCK';
@@ -58,7 +69,12 @@ module.exports = {
         return res.json([]);
       }
       
-      // ALWAYS filter by company, regardless of user role
+      // Superadmins see every company's parts.
+      if (isSuperAdmin(user)) {
+        return res.json(items || []);
+      }
+
+      // Everyone else only sees their own company's parts.
       if (!user.companyName) {
         console.warn('[Parts.list] User has no companyName. Returning empty array.');
         return res.json([]);
@@ -225,8 +241,12 @@ module.exports = {
 
   async remove(req, res) {
     try {
-      const removed = await Part.findByIdAndDelete(req.params.id);
-      if (!removed) return res.status(404).json({ error: 'Not found' });
+      const existing = await Part.findById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      if (!canDeleteCompanyRecord(req.user, existing)) {
+        return res.status(403).json({ error: "You can only delete records that belong to your company" });
+      }
+      await Part.findByIdAndDelete(req.params.id);
       res.json({ success: true });
     } catch (err) {
       res.status(400).json({ error: err.message });

@@ -49,6 +49,8 @@ const cronService = require('./services/cron.service');
 const emailRoutes = require('./modules/emailService/email.routes');
 const materialRequestRoutes = require('./modules/materialRequest/materialRequest.routes');
 const aiRoutes = require('./modules/ai/ai.routes');
+const studioRoutes = require('./modules/studio/studio.routes');
+const studioAutomation = require('./modules/studio/studio.automation');
 const notificationRoutes = require('./modules/notification/notification.routes');
 const privateNoteRoutes = require('./modules/privateNote/privateNote.routes');
 const subscriptionRoutes = require('./modules/subscription/subscription.routes');
@@ -340,6 +342,8 @@ app.use('/api/maintenance-schedules', maintenanceScheduleRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/material-requests', materialRequestRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/studio', studioRoutes);
+studioAutomation.start(); // reminders for published Studio automations (every 15 min)
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/private-notes', privateNoteRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);

@@ -1,11 +1,12 @@
 const service = require('./meter.service');
+const { scopeCompanyFor, isSuperAdmin } = require('../../utils/tenantScope');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 const notificationService = require('../notification/notification.service');
 const emailService = require('../emailService/email.service');
 
 exports.getAll = async (req, res) => {
   try {
-    const meters = await service.findAll(req.user?.companyName || '');
+    const meters = await service.findAll(scopeCompanyFor(req.user));
     res.json(normalizeExtendedJSON(meters));
   } catch (err) {
     console.error('[meter.getAll]', err);
@@ -15,7 +16,7 @@ exports.getAll = async (req, res) => {
 
 exports.getById = async (req, res) => {
   try {
-    const m = await service.findById(req.params.id, req.user?.companyName || '');
+    const m = await service.findById(req.params.id, scopeCompanyFor(req.user));
     if (!m) return res.status(404).json({ error: 'Not found' });
     res.json(normalizeExtendedJSON(m));
   } catch (err) {
@@ -40,11 +41,11 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
-    const companyName = req.user?.companyName || '';
+    const companyName = scopeCompanyFor(req.user);
     const existing = await service.findById(req.params.id, companyName);
     if (!existing) return res.status(404).json({ error: 'Not found' });
 
-    const nextPayload = { ...(req.body || {}), companyName: companyName || existing?.companyName || '' };
+    const nextPayload = { ...(req.body || {}), companyName: (isSuperAdmin(req.user) ? '' : companyName) || existing?.companyName || '' };
     const previousTriggerIds = new Set(
       (Array.isArray(existing.triggers) ? existing.triggers : [])
         .map((trigger) => String(trigger?.id || trigger?._id || ''))
@@ -93,7 +94,7 @@ exports.update = async (req, res) => {
 
 exports.addReading = async (req, res) => {
   try {
-    const updated = await service.addReading(req.params.id, req.body || {}, req.user?.companyName || '');
+    const updated = await service.addReading(req.params.id, req.body || {}, scopeCompanyFor(req.user));
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.status(201).json(normalizeExtendedJSON(updated));
   } catch (err) {
@@ -104,7 +105,7 @@ exports.addReading = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    const result = await service.delete(req.params.id, req.user?.companyName || '');
+    const result = await service.delete(req.params.id, scopeCompanyFor(req.user));
     res.json(result);
   } catch (err) {
     console.error('[meter.delete]', err);

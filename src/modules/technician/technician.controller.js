@@ -1,6 +1,16 @@
 const service = require('./technician.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
+// Never send credential fields to the client.
+const SECRET_FIELDS = ['password', 'resetPasswordToken', 'resetPasswordExpires', 'inviteToken', 'activationToken'];
+const stripSecrets = (record) => {
+  if (!record || typeof record !== 'object') return record;
+  const obj = record.toObject ? record.toObject() : { ...record };
+  SECRET_FIELDS.forEach((field) => { delete obj[field]; });
+  return obj;
+};
+const isSuperAdminUser = (user) => ['superadmin', 'super-admin'].includes(String(user?.role || '').toLowerCase());
+
 // Invite an external technician (admin only)
 exports.invite = async (req, res) => {
   try {
@@ -39,7 +49,7 @@ exports.invite = async (req, res) => {
       console.error('Error sending technician invite email:', emailErr);
     }
 
-    res.status(201).json(normalizeExtendedJSON({ tech, invite }));
+    res.status(201).json(normalizeExtendedJSON({ tech: stripSecrets(tech), invite }));
   } catch (err) {
     console.error('[technician.invite] error:', err);
     res.status(500).json({ error: err.message });
@@ -48,10 +58,16 @@ exports.invite = async (req, res) => {
 // Returns external technicians (from Prisma Technician model)
 exports.getAll = async (req, res) => {
   try {
-    const companyName = String(req.user?.companyName || req.query?.companyName || '').trim();
+    // Anonymous callers see nothing; company users see only their company;
+    // superadmins see everything (optionally filtered with ?companyName=).
+    if (!req.user) return res.json([]);
+    const companyName = isSuperAdminUser(req.user)
+      ? String(req.query?.companyName || '').trim()
+      : String(req.user.companyName || '').trim();
+    if (!isSuperAdminUser(req.user) && !companyName) return res.json([]);
     const technicians = await service.getAll(companyName ? { companyName } : {});
     const mapped = technicians.map(t => {
-      const obj = t.toObject ? t.toObject() : t;
+      const obj = stripSecrets(t);
       const id = obj._id ? obj._id.toString() : obj.id;
       return {
         ...obj,
@@ -69,9 +85,18 @@ exports.getAll = async (req, res) => {
 };
 
 exports.getById = async (req, res) => {
-  const technician = await service.getById(req.params.id);
+  let technician;
+  try {
+    technician = await service.getById(req.params.id);
+  } catch (err) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   if (!technician) return res.status(404).json({ error: 'Not found' });
-  res.json(normalizeExtendedJSON(technician));
+  if (!isSuperAdminUser(req.user)
+    && String(technician.companyName || '').trim().toLowerCase() !== String(req.user?.companyName || '').trim().toLowerCase()) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  res.json(normalizeExtendedJSON(stripSecrets(technician)));
 };
 
 exports.create = async (req, res) => {
@@ -106,7 +131,7 @@ exports.create = async (req, res) => {
       console.error('Error sending technician creation email:', emailErr);
     }
 
-    res.status(201).json(normalizeExtendedJSON(created));
+    res.status(201).json(normalizeExtendedJSON(stripSecrets(created)));
   } catch (err) {
     console.error('[technician.create] error:', err);
     res.status(500).json({ error: err.message });
@@ -114,8 +139,19 @@ exports.create = async (req, res) => {
 };
 
 exports.update = async (req, res) => {
-  const updated = await service.update(req.params.id, req.body);
-  res.json(normalizeExtendedJSON(updated));
+  try {
+    const existing = await service.getById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Technician not found' });
+    if (!isSuperAdminUser(req.user)
+      && String(existing.companyName || '').trim().toLowerCase() !== String(req.user?.companyName || '').trim().toLowerCase()) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const updated = await service.update(req.params.id, req.body);
+    res.json(normalizeExtendedJSON(stripSecrets(updated)));
+  } catch (err) {
+    console.error('[technician.update] error:', err);
+    res.status(500).json({ error: 'Failed to update technician' });
+  }
 };
 
 exports.delete = async (req, res) => {

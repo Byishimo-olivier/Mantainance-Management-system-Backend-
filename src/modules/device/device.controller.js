@@ -1,10 +1,11 @@
 const service = require('./device.service');
+const { scopeCompanyFor, isSuperAdmin } = require('../../utils/tenantScope');
 const edgeIngestionService = require('./edgeIngestion.service');
 const { normalizeExtendedJSON } = require('../../utils/normalize');
 
 exports.getAll = async (req, res) => {
   try {
-    const items = await service.findAll(req.user?.companyName || '');
+    const items = await service.findAll(scopeCompanyFor(req.user));
     res.json(normalizeExtendedJSON(items));
   } catch (err) {
     console.error('[device.getAll]', err);
@@ -14,7 +15,7 @@ exports.getAll = async (req, res) => {
 
 exports.getById = async (req, res) => {
   try {
-    const d = await service.findById(req.params.id, req.user?.companyName || '');
+    const d = await service.findById(req.params.id, scopeCompanyFor(req.user));
     if (!d) return res.status(404).json({ error: 'Not found' });
     res.json(normalizeExtendedJSON(d));
   } catch (err) {
@@ -41,7 +42,7 @@ exports.update = async (req, res) => {
     const updated = await service.update(req.params.id, {
       ...(req.body || {}),
       companyName: req.user?.companyName || req.body?.companyName || ''
-    }, req.user?.companyName || '');
+    }, scopeCompanyFor(req.user));
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {
     console.error('[device.update]', err);
@@ -51,7 +52,7 @@ exports.update = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    const result = await service.delete(req.params.id, req.user?.companyName || '');
+    const result = await service.delete(req.params.id, scopeCompanyFor(req.user));
     res.json(result);
   } catch (err) {
     console.error('[device.delete]', err);
@@ -72,7 +73,7 @@ exports.ingest = async (req, res) => {
 exports.action = async (req, res) => {
   try {
     const { action } = req.params;
-    const updated = await service.performAction(req.params.id, action, req.user?.companyName || '');
+    const updated = await service.performAction(req.params.id, action, scopeCompanyFor(req.user));
     if (!updated) return res.status(404).json({ error: 'Device not found' });
     res.json(normalizeExtendedJSON(updated));
   } catch (err) {

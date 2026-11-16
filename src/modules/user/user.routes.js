@@ -47,7 +47,8 @@ router.post('/accept-invite', acceptInvite);
 // Manage invites
 router.get('/invites', authenticate, authorizeRoles('admin', 'manager', 'client'), listInvites);
 router.delete('/invites/:id', authenticate, authorizeRoles('admin', 'manager', 'client'), deleteInvite);
-router.patch('/company/manage', authenticate, authorizeRoles('superadmin', 'admin', 'manager'), manageCompany);
+// Renaming / suspending a whole company is a platform-level action.
+router.patch('/company/manage', authenticate, authorizeRoles('superadmin'), manageCompany);
 router.patch('/:id', authenticate, authorizeRoles('superadmin', 'admin', 'manager'), updateUser);
 router.delete('/:id', authenticate, authorizeRoles('superadmin', 'admin', 'manager', 'client'), deleteUser);
 

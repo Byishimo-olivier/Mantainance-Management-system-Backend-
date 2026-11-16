@@ -59,7 +59,16 @@ const authenticate = (req, res, next) => {
       // Check if user account is active (payment-activated)
       if (req.user.userId) {
         try {
-          const user = await User.findById(req.user.userId).select('isActive paymentPendingActivation');
+          const user = await User.findById(req.user.userId).select('isActive paymentPendingActivation status');
+          // Suspended or locked accounts lose access immediately, even with a still-valid token.
+          const accountStatus = String(user?.status || '').toLowerCase();
+          if (user && (accountStatus === 'inactive' || accountStatus === 'locked')) {
+            return res.status(403).json({
+              error: 'Account suspended',
+              status: 'account_suspended',
+              message: 'Your account is inactive. Please contact your administrator.'
+            });
+          }
           if (user && !user.isActive) {
             return res.status(403).json({ 
               error: 'Account not activated',

@@ -1,4 +1,15 @@
 const Vendor = require('./vendor.model');
+const { isSuperAdmin } = require('../../utils/tenantScope');
+
+// Only superadmins may delete across companies; everyone else is limited to
+// records whose companyName matches their own.
+const canDeleteCompanyRecord = (user, record) => {
+  if (!user) return false;
+  if (String(user.role || '').toLowerCase() === 'superadmin') return true;
+  const userCompany = String(user.companyName || '').toLowerCase().trim();
+  const recordCompany = String(record.companyName || record.company || '').toLowerCase().trim();
+  return Boolean(userCompany) && userCompany === recordCompany;
+};
 
 const normalizeType = (val, fallback) => {
   const v = String(val || fallback || 'vendor').toLowerCase();
@@ -16,8 +27,8 @@ module.exports = {
         console.warn('[Vendors.listVendors] No authenticated user. Returning empty array.');
         return res.json([]);
       }
-      // Check if user is admin/manager - they see all items
-      const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
+      // Only superadmins see every company's records.
+      const isAdmin = isSuperAdmin(user);
       if (!isAdmin) {
         // Regular users only see items matching their company
         if (!user.companyName) {
@@ -45,8 +56,8 @@ module.exports = {
         console.warn('[Vendors.listClients] No authenticated user. Returning empty array.');
         return res.json([]);
       }
-      // Check if user is admin/manager - they see all items
-      const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
+      // Only superadmins see every company's records.
+      const isAdmin = isSuperAdmin(user);
       if (!isAdmin) {
         // Regular users only see items matching their company
         if (!user.companyName) {
@@ -132,8 +143,12 @@ module.exports = {
 
   async remove(req, res) {
     try {
-      const removed = await Vendor.findByIdAndDelete(req.params.id);
-      if (!removed) return res.status(404).json({ error: 'Not found' });
+      const existing = await Vendor.findById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      if (!canDeleteCompanyRecord(req.user, existing)) {
+        return res.status(403).json({ error: "You can only delete records that belong to your company" });
+      }
+      await Vendor.findByIdAndDelete(req.params.id);
       res.json({ success: true });
     } catch (err) {
       res.status(400).json({ error: err.message });

@@ -7,6 +7,6 @@ const router = express.Router();
 router.get('/', authenticate, controller.listVendors);
 router.post('/', authenticate, controller.createVendor);
 router.post('/bulk', authenticate, controller.bulk);
-router.delete('/:id', controller.remove);
+router.delete('/:id', authenticate, controller.remove);
 
 module.exports = router;

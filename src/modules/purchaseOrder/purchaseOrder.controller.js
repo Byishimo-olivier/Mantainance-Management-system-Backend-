@@ -1,4 +1,5 @@
 const { PurchaseOrder, computeTotal, generatePoNumber } = require('./purchaseOrder.model');
+const { isSuperAdmin } = require('../../utils/tenantScope');
 const Vendor = require('../vendor/vendor.model');
 const emailService = require('../emailService/email.service');
 const smsService = require('../sms/sms.service');
@@ -253,8 +254,8 @@ async function list(req, res) {
       console.warn('[PurchaseOrders.list] No authenticated user. Returning empty array.');
       return res.json([]);
     }
-    // Check if user is admin/manager - they see all items
-    const isAdmin = ['admin', 'manager', 'superadmin'].includes(user.role);
+    // Only superadmins see every company's records.
+    const isAdmin = isSuperAdmin(user);
     if (!isAdmin) {
       // Regular users only see items matching their company
       if (!user.companyName) {

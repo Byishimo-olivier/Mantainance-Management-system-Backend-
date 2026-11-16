@@ -1,4 +1,5 @@
 const service = require('./materialRequest.service');
+const { isSuperAdmin } = require('../../utils/tenantScope');
 const notificationService = require('../notification/notification.service');
 const { PurchaseOrder, computeTotal } = require('../purchaseOrder/purchaseOrder.model');
 const { PrismaClient } = require('@prisma/client');
@@ -31,12 +32,18 @@ const isCompanyMaterialRequest = (item, companyUserIds = []) => {
 
 async function getAll(req, res) {
   try {
-    // Support optional ?clientId= query for client-side fetching
-    if (req.query.clientId && !req.user?.companyName) {
+    if (!req.user) return sendJson(res, []);
+    // Support optional ?clientId= query for client-side fetching (own requests only)
+    if (req.query.clientId && !req.user?.companyName
+      && (isSuperAdmin(req.user) || String(req.query.clientId) === String(req.user.userId))) {
       const items = await service.getByClient(req.query.clientId);
       return sendJson(res, items.map(enrichRequest));
     }
     const user = req.user;
+    if (isSuperAdmin(user)) {
+      const items = await service.getAll();
+      return sendJson(res, items.map(enrichRequest));
+    }
     if (user?.companyName) {
       const allItems = await service.getAll();
       const companyUserIds = await getCompanyUserIds(user.companyName);
@@ -47,8 +54,8 @@ async function getAll(req, res) {
       const items = await service.getByClient(user.userId);
       return sendJson(res, items.map(enrichRequest));
     }
-    const items = await service.getAll();
-    return sendJson(res, items.map(enrichRequest));
+    // Signed-in user with no company and not a client: nothing to show.
+    return sendJson(res, []);
   } catch (err) {
     console.error('[materialRequest.getAll]', err);
     return res.status(500).json({ error: 'Internal server error' });

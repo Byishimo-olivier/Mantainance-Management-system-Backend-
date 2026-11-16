@@ -730,6 +730,11 @@ const login = async (req, res) => {
     return res.status(423).json({ error: supportMessage });
   }
 
+  // Suspended accounts (e.g. a suspended company) cannot sign in.
+  if (accountStatus === 'inactive') {
+    return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
+  }
+
   if (systemSettings?.platform?.maintenanceMode && role !== 'superadmin') {
     await auditService.logEvent({
       actorId: String(userId),

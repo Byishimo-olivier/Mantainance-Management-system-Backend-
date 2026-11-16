@@ -1,6 +1,10 @@
 const express = require('express');
 const ctrl = require('./people.controller');
+const { authenticate } = require('../../middleware/auth');
 const router = express.Router();
+
+// Company-owned records: sign-in required, scoped in the controller.
+router.use(authenticate);
 
 router.get('/', ctrl.getAll);
 router.get('/:id', ctrl.getById);

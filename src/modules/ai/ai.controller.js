@@ -1,4 +1,6 @@
 const aiService = require("./ai.service");
+const miaClient = require("./mia/mia.client");
+const miaEngine = require("./mia/mia.engine");
 const { PrismaClient } = require("@prisma/client");
 const assetModel = require("../asset/asset.model");
 const issueService = require("../issue/issue.service");
@@ -947,7 +949,40 @@ class AIController {
 
             // Resolve company name to see if we can provide personalized data
             const companyName = await resolveCompanyName(req).catch(() => null);
-            
+
+            // FixNest's own AI (MIA). When configured it answers every chat message; no
+            // third-party model is called on this path.
+            if (miaClient.isEnabled()) {
+                try {
+                    const scoped = companyName ? await getCompanyScopedData(companyName) : null;
+                    let response = await miaEngine.handleChat({
+                        message: String(message).slice(0, 1000),
+                        user: req.user,
+                        companyName,
+                        scopedData: scoped,
+                        conversationId: typeof req.body.conversationId === 'string' ? req.body.conversationId.slice(0, 64) : undefined,
+                        localHour: Number.isInteger(req.body.localHour) ? req.body.localHour : undefined,
+                        attachment: req.body.attachment && typeof req.body.attachment === 'object' ? req.body.attachment : undefined,
+                    });
+                    if (response === null) {
+                        // Not understood by MIA: plain lists of assets, technicians, locations… still work.
+                        const entity = scoped ? detectTableEntity(message) : null;
+                        if (entity) {
+                            response = await buildTableResponse(entity, { ...scoped, companyName });
+                        }
+                    }
+                    return res.json({ response: response || miaEngine.fallbackReply(), engine: 'mia' });
+                } catch (miaErr) {
+                    console.error("MIA chat error:", miaErr.message);
+                    const offline = miaErr instanceof miaClient.MiaUnavailableError;
+                    return res.status(offline ? 503 : 500).json({
+                        message: offline
+                            ? "The FixNest assistant is offline right now. Please try again shortly."
+                            : "I couldn't process that request. Please try rephrasing it.",
+                    });
+                }
+            }
+
             let sanitizedHistory = (Array.isArray(history) ? history : [])
                 .filter((entry) => entry && typeof entry.content === 'string' && entry.content.trim().length > 0)
                 .map((entry) => ({

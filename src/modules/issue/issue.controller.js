@@ -4,6 +4,8 @@ const notificationService = require('../notification/notification.service');
 const smsService = require('../sms/sms.service');
 
 const { normalizeExtendedJSON } = require('../../utils/normalize');
+const studioAutomation = require('../studio/studio.automation');
+const studioWorkflow = require('../studio/studio.workflow');
 
 function normalizeId(val) {
   if (val === undefined || val === null) return null;
@@ -756,10 +758,10 @@ exports.assignToTech = async (req, res) => {
 
   const updated = await service.update(id, updateData);
   console.log('[assignToTech] updated issue:', updated);
+  // Recipient for the email and SMS below (declared outside the try so the SMS step can use it).
+  const techRecipient = tech || externalTech || {};
   // Send email notification to technician
   try {
-    // Prepare recipient data for email notification
-    const techRecipient = tech || externalTech || {};
     await emailService.sendIssueAssignedNotification(
       {
         title: updated.title,
@@ -796,6 +798,7 @@ exports.assignToTech = async (req, res) => {
   } catch (notifyErr) {
     console.error('Error creating in-app assignment notification:', notifyErr);
   }
+  studioAutomation.emit('issue.assigned', updated, { assigneeId: techId });
   res.json(normalizeExtendedJSON(updated));
 };
 // Assign an issue to an internal technician (property staff)
@@ -1054,8 +1057,8 @@ exports.getByRole = async (req, res) => {
     issues = await getCompanyScopedIssues(companyName);
     issues = await attachClientNames(issues);
   } else if (user.role === 'admin') {
-    issues = await service.getAll(null);
-    issues = await attachClientNames(issues);
+    // Admin account not linked to a company: nothing to show.
+    issues = [];
   } else if (user.role === 'manager') {
     issues = await service.getByManagerId ? await service.getByManagerId(user.userId) : [];
     issues = await attachClientNames(issues);
@@ -1648,6 +1651,7 @@ exports.create = async (req, res) => {
     }
 
     })();
+    studioAutomation.emit('issue.created', created);
     res.status(201).json(responsePayload);
     return;
   } catch (err) {
@@ -1703,6 +1707,11 @@ exports.update = async (req, res) => {
   normalizeIssueDeadlineAliases(incoming);
 
   const statusFromIncoming = typeof incoming.status === 'string' ? incoming.status.toUpperCase() : null;
+  // Company's published Studio workflow (if any) decides whether this status change is allowed.
+  if (oldIssue && statusFromIncoming && String(oldIssue.status || '').toUpperCase() !== statusFromIncoming) {
+    const verdict = await studioWorkflow.checkTransition({ issue: oldIssue, newStatus: statusFromIncoming, user: req.user });
+    if (!verdict.ok) return res.status(409).json({ error: verdict.error, workflow: true });
+  }
   if (oldIssue && statusFromIncoming && oldIssue.status !== statusFromIncoming) {
     const lifecycleMessage = getStatusLifecycleMessage(statusFromIncoming);
     if (lifecycleMessage) {
@@ -1903,6 +1912,10 @@ exports.update = async (req, res) => {
     // Don't fail the request if email fails
   }
 
+  if (oldIssue && updated && String(oldIssue.status || '').toUpperCase() !== String(updated.status || '').toUpperCase()) {
+    studioAutomation.emit('issue.status_changed', updated, { newStatus: updated.status, oldStatus: oldIssue.status });
+    studioWorkflow.afterChange({ issue: updated, newStatus: updated.status });
+  }
   res.json(normalizeExtendedJSON(updated));
 };
 

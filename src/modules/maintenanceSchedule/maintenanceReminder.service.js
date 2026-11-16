@@ -2,6 +2,7 @@ const nodeCron = require('node-cron');
 const mongoose = require('mongoose');
 const { PrismaClient } = require('@prisma/client');
 const maintenanceScheduleModel = require('./maintenanceSchedule.model');
+const pmRecurrenceService = require('./pmRecurrence.service');
 const emailService = require('../emailService/email.service');
 const User = require('../user/user.model');
 
